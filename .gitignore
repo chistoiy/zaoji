@@ -45,6 +45,9 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
+# ── AI 助手的项目记忆（本机工作文件，不入仓库）──
+.workbuddy/
+
 # ── Node（app/tool/boot_check.cjs / sync_e2e.cjs 的 playwright-core）──
 node_modules/
 package-lock.json
