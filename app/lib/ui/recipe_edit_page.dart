@@ -43,6 +43,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
   late List<TextEditingController> _stepCtrls;
 
   bool _saving = false;
+  bool _saved = false;
 
   // 快捷操作方式标签
   static const _quickMethods = ['爆炒', '水煮', '清蒸', '红烧', '烧烤', '凉拌', '烘焙', '火锅'];
@@ -62,11 +63,21 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
 
     _ingredients = [
       for (final ing in r?.ingredients ?? const [])
-        _IngredientRow(nameCtrl: TextEditingController(text: ing.name), qtyCtrl: TextEditingController(text: ing.qty), isMain: ing.isMain),
+        _IngredientRow(
+          nameCtrl: TextEditingController(text: ing.name),
+          qtyCtrl: TextEditingController(text: ing.qty),
+          isMain: ing.isMain,
+        ),
       // 新建时给 2 个空行
       if (r == null) ...[
-        _IngredientRow(nameCtrl: TextEditingController(), qtyCtrl: TextEditingController()),
-        _IngredientRow(nameCtrl: TextEditingController(), qtyCtrl: TextEditingController()),
+        _IngredientRow(
+          nameCtrl: TextEditingController(),
+          qtyCtrl: TextEditingController(),
+        ),
+        _IngredientRow(
+          nameCtrl: TextEditingController(),
+          qtyCtrl: TextEditingController(),
+        ),
       ],
     ];
 
@@ -103,9 +114,12 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
     // 收集 draft
     final ingredients = <IngredientDraft>[
       for (final row in _ingredients)
-        if (row.nameCtrl.text.trim().isNotEmpty || row.qtyCtrl.text.trim().isNotEmpty)
+        if (row.nameCtrl.text.trim().isNotEmpty ||
+            row.qtyCtrl.text.trim().isNotEmpty)
           IngredientDraft(
-            name: row.nameCtrl.text.trim().isEmpty ? '食材' : row.nameCtrl.text.trim(),
+            name: row.nameCtrl.text.trim().isEmpty
+                ? '食材'
+                : row.nameCtrl.text.trim(),
             qty: row.qtyCtrl.text.trim(),
             isMain: row.isMain,
           ),
@@ -144,13 +158,17 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         await store.updateRecipe(widget.recipe!.id, draft);
       }
       if (mounted) {
+        setState(() {
+          _saved = true;
+          _saving = false;
+        });
         Navigator.of(context).pop(true); // 告诉上一页保存成功
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败：$e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存失败：$e')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -165,7 +183,10 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         title: const Text('放弃编辑？'),
         content: const Text('当前的内容不会保存。'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('继续编辑')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('继续编辑'),
+          ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: ZaojiColors.accent),
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -180,7 +201,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: _saved || _saving,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _confirmPop();
       },
@@ -192,8 +213,15 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
             TextButton(
               onPressed: _saving ? null : _save,
               child: _saving
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('保存', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text(
+                      '保存',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
             ),
           ],
         ),
@@ -242,10 +270,19 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                 Expanded(
                   flex: 2,
                   child: FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: ZaojiColors.accent),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: ZaojiColors.accent,
+                    ),
                     onPressed: _saving ? null : _save,
                     child: _saving
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
                         : const Text('保存菜品'),
                   ),
                 ),
@@ -293,7 +330,9 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                   onPressed: () => setState(() => _difficulty = d),
                   icon: Icon(
                     Icons.local_fire_department,
-                    color: d <= _difficulty ? ZaojiColors.accent : ZaojiColors.muted,
+                    color: d <= _difficulty
+                        ? ZaojiColors.accent
+                        : ZaojiColors.muted,
                     size: 26,
                   ),
                 ),
@@ -374,7 +413,8 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                 width: 16,
                 child: Checkbox(
                   value: _ingredients[i].isMain,
-                  onChanged: (v) => setState(() => _ingredients[i].isMain = v ?? false),
+                  onChanged: (v) =>
+                      setState(() => _ingredients[i].isMain = v ?? false),
                   visualDensity: VisualDensity.compact,
                 ),
               ),
@@ -397,16 +437,23 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                 iconSize: 18,
                 tooltip: '删除这行',
                 onPressed: () => setState(() => _ingredients.removeAt(i)),
-                icon: const Icon(Icons.remove_circle_outline, color: ZaojiColors.muted),
+                icon: const Icon(
+                  Icons.remove_circle_outline,
+                  color: ZaojiColors.muted,
+                ),
               ),
             ],
           ),
         ],
         OutlinedButton.icon(
-          onPressed: () => setState(() => _ingredients.add(_IngredientRow(
+          onPressed: () => setState(
+            () => _ingredients.add(
+              _IngredientRow(
                 nameCtrl: TextEditingController(),
                 qtyCtrl: TextEditingController(),
-              ))),
+              ),
+            ),
+          ),
           icon: const Icon(Icons.add, size: 16),
           label: const Text('添加食材'),
         ),
@@ -439,16 +486,29 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                         color: ZaojiColors.accent.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: Text('${i + 1}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: ZaojiColors.accent)),
+                      child: Text(
+                        '${i + 1}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: ZaojiColors.accent,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    const Text('步骤', style: TextStyle(fontSize: 12, color: ZaojiColors.muted)),
+                    const Text(
+                      '步骤',
+                      style: TextStyle(fontSize: 12, color: ZaojiColors.muted),
+                    ),
                     const Spacer(),
                     IconButton(
                       iconSize: 16,
                       tooltip: '删除',
                       onPressed: () => setState(() => _stepCtrls.removeAt(i)),
-                      icon: const Icon(Icons.delete_outline, color: ZaojiColors.muted),
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: ZaojiColors.muted,
+                      ),
                     ),
                   ],
                 ),
@@ -463,7 +523,8 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
           ),
         ],
         OutlinedButton.icon(
-          onPressed: () => setState(() => _stepCtrls.add(TextEditingController())),
+          onPressed: () =>
+              setState(() => _stepCtrls.add(TextEditingController())),
           icon: const Icon(Icons.add, size: 16),
           label: const Text('添加步骤'),
         ),
@@ -508,8 +569,23 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
-          Text(text, style: ZaojiText.body(fontSize: 12.5, fontWeight: FontWeight.w600, color: ZaojiColors.ink2)),
-          if (required) const Text(' *', style: TextStyle(color: ZaojiColors.accent, fontSize: 13, fontWeight: FontWeight.w600)),
+          Text(
+            text,
+            style: ZaojiText.body(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: ZaojiColors.ink2,
+            ),
+          ),
+          if (required)
+            const Text(
+              ' *',
+              style: TextStyle(
+                color: ZaojiColors.accent,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
         ],
       ),
     );
@@ -529,9 +605,20 @@ class _SectionHead extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
         children: [
-          Text(num, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: ZaojiColors.accent, letterSpacing: 0.5)),
+          Text(
+            num,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: ZaojiColors.accent,
+              letterSpacing: 0.5,
+            ),
+          ),
           const SizedBox(width: 8),
-          Text(title, style: ZaojiText.display(fontSize: 17, fontWeight: FontWeight.w500)),
+          Text(
+            title,
+            style: ZaojiText.display(fontSize: 17, fontWeight: FontWeight.w500),
+          ),
         ],
       ),
     );
@@ -543,5 +630,9 @@ class _IngredientRow {
   final TextEditingController qtyCtrl;
   bool isMain;
 
-  _IngredientRow({required this.nameCtrl, required this.qtyCtrl, this.isMain = false});
+  _IngredientRow({
+    required this.nameCtrl,
+    required this.qtyCtrl,
+    this.isMain = false,
+  });
 }
