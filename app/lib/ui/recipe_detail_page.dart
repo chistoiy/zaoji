@@ -4,6 +4,7 @@ import '../data/store_scope.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/chili_scale.dart';
+import '../widgets/cover_image.dart';
 import '../widgets/time_capsule_text.dart';
 import 'recipe_edit_page.dart';
 import 'timer_sheet.dart';
@@ -76,9 +77,9 @@ class RecipeDetailPage extends StatelessWidget {
   }
 
   void _edit(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => RecipeEditPage(recipe: recipe)),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => RecipeEditPage(recipe: recipe)));
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
@@ -88,9 +89,14 @@ class RecipeDetailPage extends StatelessWidget {
         title: const Text('删除这道菜？'),
         content: const Text('删除后可以在「我的 → 回收站」里恢复。'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('再想想')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('再想想'),
+          ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC33F14)),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFC33F14),
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('删除'),
           ),
@@ -104,9 +110,9 @@ class RecipeDetailPage extends StatelessWidget {
     if (context.mounted) {
       // 成功删除后回到列表页（详情页里的菜谱已经不在了）
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已删除（可在回收站恢复）')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已删除（可在回收站恢复）')));
     }
   }
 }
@@ -121,9 +127,24 @@ class _Hero extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 实拍封面（R16）：有就展示，没有保持原有排版不动
+        if (recipe.coverSha256 != null) ...[
+          ClipRRect(
+            borderRadius: BorderRadius.circular(ZaojiRadius.lg),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: CoverImage(sha: recipe.coverSha256!),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         Text(
           recipe.sub,
-          style: const TextStyle(fontSize: 13.5, height: 1.6, color: ZaojiColors.ink2),
+          style: const TextStyle(
+            fontSize: 13.5,
+            height: 1.6,
+            color: ZaojiColors.ink2,
+          ),
         ),
         const SizedBox(height: 14),
         // 同样用 Wrap：320px 宽时「刻度 + 耗时 + 分量 + 做过」放不下一行。
@@ -156,7 +177,11 @@ class _Hero extends StatelessWidget {
                 Expanded(
                   child: Text(
                     '这道菜由 ${recipe.sourceModel ?? '大模型'} 生成，请核对后再做',
-                    style: const TextStyle(fontSize: 12, height: 1.5, color: ZaojiColors.ai),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: ZaojiColors.ai,
+                    ),
                   ),
                 ),
               ],
@@ -179,7 +204,10 @@ class _Stat extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 10.5, color: ZaojiColors.muted)),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: ZaojiColors.muted),
+        ),
         const SizedBox(height: 2),
         Text(
           value,
@@ -219,14 +247,14 @@ class _SectionTitle extends StatelessWidget {
         const SizedBox(width: 8),
         Text(
           title,
-          style: ZaojiText.display(
-            fontSize: 17,
-            fontWeight: FontWeight.w500,
-          ),
+          style: ZaojiText.display(fontSize: 17, fontWeight: FontWeight.w500),
         ),
         if (trailing != null) ...[
           const Spacer(),
-          Text(trailing!, style: const TextStyle(fontSize: 12, color: ZaojiColors.muted)),
+          Text(
+            trailing!,
+            style: const TextStyle(fontSize: 12, color: ZaojiColors.muted),
+          ),
         ],
       ],
     );
@@ -292,7 +320,10 @@ class _IngredientRow extends StatelessWidget {
             ),
           ),
           // 分量显示**原文**（「半个」不写成「0.5 个」）
-          Text(item.qty, style: const TextStyle(fontSize: 13, color: ZaojiColors.muted)),
+          Text(
+            item.qty,
+            style: const TextStyle(fontSize: 13, color: ZaojiColors.muted),
+          ),
         ],
       ),
     );
@@ -307,7 +338,11 @@ class _StepRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const bodyStyle = TextStyle(fontSize: 14.5, height: 1.85, color: ZaojiColors.ink);
+    const bodyStyle = TextStyle(
+      fontSize: 14.5,
+      height: 1.85,
+      color: ZaojiColors.ink,
+    );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -380,7 +415,11 @@ class _Notes extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 5),
               child: Text(
                 line,
-                style: const TextStyle(fontSize: 13, height: 1.7, color: ZaojiColors.ink2),
+                style: const TextStyle(
+                  fontSize: 13,
+                  height: 1.7,
+                  color: ZaojiColors.ink2,
+                ),
               ),
             ),
         ],

@@ -54,7 +54,8 @@ class ServerConfig {
   ///
   /// 0.3.0：数据底座就位（SQLite + 统一五列 + change_log）。
   /// 0.4.0：同步接口就位（配对鉴权 / 增量拉取 / 幂等推送 / 冲突箱）。
-  static const String version = '0.4.1';
+  /// 0.5.0：媒体接口就位（图片内容寻址上传 / 按需拉取）。
+  static const String version = '0.5.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
@@ -89,7 +90,8 @@ class ServerConfig {
 
   /// 选项没给就用默认值；给了相对路径就挂到 [base] 下。
   static Directory resolveDir(String? option, String fallback, Directory base) {
-    final raw = (option == null || option.trim().isEmpty) ? fallback : option.trim();
+    final raw =
+        (option == null || option.trim().isEmpty) ? fallback : option.trim();
     if (_isAbsolute(raw)) return Directory(raw);
     return Directory('${base.path}${Platform.pathSeparator}$raw');
   }
@@ -119,8 +121,7 @@ class ServerConfig {
           defaultsTo: '$defaultTlsPort', help: 'HTTPS 端口（iOS 必须走这个）')
       ..addOption('data', abbr: 'd', help: '数据目录（默认 ./data）')
       ..addOption('web', abbr: 'w', help: 'Flutter Web 产物目录（可选）')
-      ..addOption('certs',
-          abbr: 'c', help: '证书目录（默认 ./certs）')
+      ..addOption('certs', abbr: 'c', help: '证书目录（默认 ./certs）')
       ..addFlag('help', abbr: 'h', negatable: false, help: '显示帮助');
 
     final ArgResults r;

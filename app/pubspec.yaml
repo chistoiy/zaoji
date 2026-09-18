@@ -29,6 +29,14 @@ dependencies:
   # 同步引擎的 HTTP 层（R13）。只做同步接口的 GET/POST，不引任何重框架。
   http: ^1.2.0
 
+  # ── 图片管线（R16）────────────────────────────────────────────
+  # sha256 计算（封面上传的哈希契约），与服务端 crypto 同族同版
+  crypto: ^3.0.3
+  # 图片解码/缩放/重编码（纯 Dart，Web 也能跑）：选中的照片压到 1600px/q82
+  image: ^4.2.0
+  # 系统相册/相机选图（Web = 文件选择器；Android = Photo Picker）
+  image_picker: ^1.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

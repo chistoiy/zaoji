@@ -6,6 +6,7 @@ import '../data/store_scope.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/chili_scale.dart';
+import '../widgets/cover_image.dart';
 import '../widgets/dish_art.dart';
 import 'recipe_detail_page.dart';
 import 'recipe_edit_page.dart';
@@ -793,6 +794,9 @@ class _RecipeCard extends StatelessWidget {
                     fit: StackFit.expand,
                     children: [
                       DishArt(kind: recipe.art, palette: recipe.palette),
+                      // 实拍封面（R16）：叠在插画上，未拉到时透明退化为插画
+                      if (recipe.coverSha256 != null)
+                        CoverImage(sha: recipe.coverSha256!),
                       const ArtVeil(),
                       if (recipe.isAi)
                         Positioned(

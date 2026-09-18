@@ -1,9 +1,15 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 
 import '../data/recipe_store.dart';
 import '../data/store_scope.dart';
+import '../data/sync/sync_scope.dart';
 import '../models.dart';
 import '../theme.dart';
+import '../widgets/cover_image.dart';
 
 /// 菜谱新建/编辑页。
 ///
@@ -44,6 +50,12 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
 
   bool _saving = false;
   bool _saved = false;
+
+  // 封面（R16）：_coverBytes 是新选的照片（已压缩、待上传）；
+  // _coverSha 是当前生效的封面哈希（原有封面，或新上传后由引擎返回）。
+  Uint8List? _coverBytes;
+  String? _coverSha;
+  bool _coverBusy = false;
 
   // 快捷操作方式标签
   static const _quickMethods = ['爆炒', '水煮', '清蒸', '红烧', '烧烤', '凉拌', '烘焙', '火锅'];
@@ -88,6 +100,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
 
     if (r != null) {
       _selectedMethods.addAll(r.methods);
+      _coverSha = r.coverSha256; // 编辑模式：保留原有封面，除非用户重选/移除
     }
   }
 
@@ -135,23 +148,39 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
       tags['method'] = _selectedMethods.toList();
     }
 
-    final draft = RecipeDraft(
-      name: _nameCtrl.text.trim(),
-      sub: _subCtrl.text.trim(),
-      difficulty: _difficulty,
-      selfTime: int.tryParse(_timeCtrl.text.trim()) ?? 0,
-      servings: int.tryParse(_servingsCtrl.text.trim()) ?? 2,
-      notes: _notesCtrl.text.trim(),
-      ingredients: ingredients,
-      steps: steps,
-      art: DishArtKind.plate,
-      palette: const [],
-      tags: tags,
-    );
-
     setState(() => _saving = true);
     try {
+      final engine = SyncScope.of(context);
       final store = StoreScope.of(context);
+
+      // 封面：选了新照片就先上传（内容寻址）；上传失败不阻塞保存，
+      // 退回原封面哈希（没有就干脆无封面），并在保存后提示。
+      String? coverSha = _coverSha;
+      String? coverWarning;
+      if (_coverBytes != null) {
+        try {
+          coverSha = await engine.uploadMedia(_coverBytes!);
+        } catch (e) {
+          coverSha = _coverSha;
+          coverWarning = '封面上传失败（$e），已保存菜谱但没有封面';
+        }
+      }
+
+      final draft = RecipeDraft(
+        name: _nameCtrl.text.trim(),
+        sub: _subCtrl.text.trim(),
+        difficulty: _difficulty,
+        selfTime: int.tryParse(_timeCtrl.text.trim()) ?? 0,
+        servings: int.tryParse(_servingsCtrl.text.trim()) ?? 2,
+        notes: _notesCtrl.text.trim(),
+        ingredients: ingredients,
+        steps: steps,
+        art: DishArtKind.plate,
+        palette: const [],
+        tags: tags,
+        coverSha256: coverSha,
+      );
+
       if (widget.isNew) {
         await store.createRecipe(draft);
       } else {
@@ -162,6 +191,11 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
           _saved = true;
           _saving = false;
         });
+        if (coverWarning != null) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(coverWarning)));
+        }
         Navigator.of(context).pop(true); // 告诉上一页保存成功
       }
     } catch (e) {
@@ -173,6 +207,45 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// 选封面照片：压到 1600px / q82 再入库上传（计划书 §6 的约定）。
+  /// 压缩用纯 Dart 的 package:image——Web 上没有 Isolate，就在主线程做；
+  /// 一张手机照片约 1~2 秒，用 _coverBusy 挡住重复点击。
+  Future<void> _pickCover() async {
+    try {
+      final x = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (x == null) return;
+
+      setState(() => _coverBusy = true);
+      final raw = await x.readAsBytes();
+      final decoded = img.decodeImage(raw);
+      if (decoded == null) throw const FormatException('无法解码这张图片');
+      final resized = decoded.width > 1600
+          ? img.copyResize(decoded, width: 1600)
+          : decoded;
+      final jpg = Uint8List.fromList(img.encodeJpg(resized, quality: 82));
+
+      if (!mounted) return;
+      setState(() {
+        _coverBytes = jpg;
+        _coverSha = null; // 新照片上传成功后由引擎返回新哈希
+        _coverBusy = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _coverBusy = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('图片处理失败：$e')));
+    }
+  }
+
+  void _removeCover() {
+    setState(() {
+      _coverBytes = null;
+      _coverSha = null; // draft 里会是 null → 落库清除封面引用
+    });
   }
 
   Future<void> _confirmPop() async {
@@ -230,6 +303,8 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
             children: [
+              _coverField(),
+              const SizedBox(height: 18),
               _basicFields(),
               const SizedBox(height: 18),
               _difficultyField(),
@@ -295,6 +370,27 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
   }
 
   // ─────────── 各区块 ───────────
+
+  /// 封面选择。预览优先级：新选的字节 > 原有封面（按 sha 异步拉取）> 虚线占位。
+  Widget _coverField() {
+    if (_coverBytes != null || _coverSha == null) {
+      return CoverPickerBox(
+        preview: _coverBytes,
+        onPick: _coverBusy ? null : _pickCover,
+        onRemove: (_coverBytes != null || _coverSha != null)
+            ? _removeCover
+            : null,
+      );
+    }
+    return FutureBuilder(
+      future: SyncScope.of(context).fetchMediaCached(_coverSha!),
+      builder: (context, snap) => CoverPickerBox(
+        preview: snap.data,
+        onPick: _coverBusy ? null : _pickCover,
+        onRemove: _removeCover,
+      ),
+    );
+  }
 
   Widget _basicFields() {
     return Column(

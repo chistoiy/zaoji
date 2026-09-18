@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
@@ -489,6 +490,55 @@ class SyncEngine extends ChangeNotifier {
         )
         .get();
     return rows.isEmpty ? null : rows.first.data;
+  }
+
+  // ───────────────────────── 媒体（R16） ─────────────────────────
+
+  /// 已拉取的媒体字节缓存。内容寻址 = 同一个 sha256 永远是同一张图，
+  /// 所以缓存不需要失效逻辑，只需限容量。
+  final Map<String, Uint8List> _mediaCache = {};
+  static const int _mediaCacheCap = 64;
+
+  /// 上传图片字节：客户端算 sha256 → `PUT /api/media/<sha>`。
+  ///
+  /// 哈希在**本地**算好当 URL 用——服务端会重算比对，不一致就拒绝，
+  /// 所以这里传错了也传不进去。返回内容哈希，给 `recipe.cover_sha256` 引用。
+  /// 未配对 / 网络失败原样抛（编辑页决定怎么降级：提示后继续保存无封面）。
+  Future<String> uploadMedia(Uint8List bytes) async {
+    final token = await _prefs.token();
+    final serverUrl = await _prefs.serverUrl();
+    if (token == null || serverUrl == null) {
+      throw StateError('尚未配对，无法上传图片');
+    }
+    final sha = crypto.sha256.convert(bytes).toString();
+    await _transportOf(
+      serverUrl,
+    ).putBytes('/api/media/$sha', bytes, token: token);
+    return sha;
+  }
+
+  /// 按内容哈希拉取图片字节（带内存缓存，上限 64 张）。
+  /// 未配对 / 404 / 网络失败都返回 null——显示端降级为封面插画，
+  /// 把「没有封面」当常态处理，而不是当错误弹窗。
+  Future<Uint8List?> fetchMediaCached(String sha) async {
+    final hit = _mediaCache[sha];
+    if (hit != null) return hit;
+
+    final token = await _prefs.token();
+    final serverUrl = await _prefs.serverUrl();
+    if (token == null || serverUrl == null) return null;
+    try {
+      final bytes = await _transportOf(
+        serverUrl,
+      ).getBytes('/api/media/$sha', token: token);
+      if (_mediaCache.length >= _mediaCacheCap) {
+        _mediaCache.remove(_mediaCache.keys.first);
+      }
+      _mediaCache[sha] = bytes;
+      return bytes;
+    } catch (_) {
+      return null;
+    }
   }
 
   // ───────────────────────── 状态与错误 ─────────────────────────

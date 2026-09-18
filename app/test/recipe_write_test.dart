@@ -369,4 +369,60 @@ void main() {
       expect(row['updated_by'], 'local');
     });
   });
+
+  group('R16 封面引用（cover_sha256）', () {
+    late RecipeStore store;
+
+    setUp(() async {
+      store = RecipeStore(executor: _memExecutor());
+      store.nodeIdGetter = () async => 'test-node';
+      await store.init();
+    });
+
+    test('新建带封面 → 落库 + 模型可见', () async {
+      final sha = 'a' * 64;
+      await store.createRecipe(RecipeDraft(name: '有封面的菜', coverSha256: sha));
+
+      final r = store.recipes.last;
+      expect(r.coverSha256, sha);
+
+      final db = store.dbForTest!;
+      final row =
+          (await db
+                  .customSelect(
+                    'SELECT cover_sha256 FROM recipe WHERE id = ?',
+                    variables: [drift.Variable(r.id)],
+                  )
+                  .get())
+              .first
+              .data;
+      expect(row['cover_sha256'], sha);
+    });
+
+    test('编辑可更换封面引用，模型与库一致', () async {
+      await store.createRecipe(
+        RecipeDraft(name: '换封面的菜', coverSha256: 'a' * 64),
+      );
+      final created = store.recipes.last;
+
+      await store.updateRecipe(
+        created.id,
+        RecipeDraft(name: '换封面的菜', coverSha256: 'b' * 64),
+      );
+
+      final updated = store.recipeById(created.id);
+      expect(updated!.coverSha256, 'b' * 64);
+    });
+
+    test('编辑不传封面 → 引用清空（移除封面的落库语义）', () async {
+      await store.createRecipe(
+        RecipeDraft(name: '要移除封面的菜', coverSha256: 'c' * 64),
+      );
+      final created = store.recipes.last;
+
+      await store.updateRecipe(created.id, const RecipeDraft(name: '要移除封面的菜'));
+
+      expect(store.recipeById(created.id)!.coverSha256, isNull);
+    });
+  });
 }

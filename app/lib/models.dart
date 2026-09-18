@@ -67,6 +67,10 @@ class Recipe {
   /// `cuisine` 菜系 / `ingredient` 食材 / `taste` 口味 / `method` 操作方式。
   final Map<String, List<String>> tags;
 
+  /// 封面照片的内容地址（sha256）。null = 还没拍照，显示插画。
+  /// 字节本体不在同步流里，由显示端按 sha256 从服务端按需拉取（R16）。
+  final String? coverSha256;
+
   const Recipe({
     required this.id,
     required this.name,
@@ -85,6 +89,7 @@ class Recipe {
     this.art = DishArtKind.plate,
     this.palette = const [],
     this.tags = const {},
+    this.coverSha256,
   });
 
   bool get isAi => source == RecipeSource.ai;

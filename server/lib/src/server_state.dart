@@ -4,6 +4,7 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'config.dart';
 import 'db.dart';
+import 'media.dart';
 import 'sync.dart';
 
 /// 服务端已实现与规划中的端点。
@@ -13,15 +14,60 @@ import 'sync.dart';
 /// 而不是面对一个只有 `{"ok":true}` 的地址发愣。
 const List<Map<String, Object?>> kEndpoints = [
   {'path': '/', 'method': 'GET', 'title': '服务状态页', 'status': 'ready'},
-  {'path': '/api/ping', 'method': 'GET', 'title': '连通性 + 服务端时间', 'status': 'ready'},
-  {'path': '/api/health', 'method': 'GET', 'title': '健康检查（磁盘、数据库、运行时长）', 'status': 'ready'},
-  {'path': '/api/pair/code', 'method': 'GET',
-    'title': '取配对码（只能从服务端本机取）', 'status': 'ready'},
-  {'path': '/api/pair', 'method': 'POST', 'title': '配对码换 token', 'status': 'ready'},
-  {'path': '/api/changes', 'method': 'GET', 'title': '增量拉取变更（带行载荷）', 'status': 'ready'},
-  {'path': '/api/changes', 'method': 'POST', 'title': '增量推送变更（幂等）', 'status': 'ready'},
-  {'path': '/api/media/{sha256}', 'method': 'GET', 'title': '图片按需拉取', 'status': 'planned'},
-  {'path': '/api/ai/{feature}', 'method': 'POST', 'title': '大模型代理（Web 端专用通道）', 'status': 'planned'},
+  {
+    'path': '/api/ping',
+    'method': 'GET',
+    'title': '连通性 + 服务端时间',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/health',
+    'method': 'GET',
+    'title': '健康检查（磁盘、数据库、运行时长）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/pair/code',
+    'method': 'GET',
+    'title': '取配对码（只能从服务端本机取）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/pair',
+    'method': 'POST',
+    'title': '配对码换 token',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/changes',
+    'method': 'GET',
+    'title': '增量拉取变更（带行载荷）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/changes',
+    'method': 'POST',
+    'title': '增量推送变更（幂等）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/media/{sha256}',
+    'method': 'PUT',
+    'title': '上传图片（内容寻址，哈希不符拒绝）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/media/{sha256}',
+    'method': 'GET',
+    'title': '图片按需拉取',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/{feature}',
+    'method': 'POST',
+    'title': '大模型代理（Web 端专用通道）',
+    'status': 'planned'
+  },
 ];
 
 /// 服务端的运行时状态。
@@ -46,6 +92,11 @@ class ServerState {
   /// 同步服务（配对 / 拉取 / 推送）。延迟创建：它依赖 [db] 与 [serverId]，
   /// 而这两个在构造时已经就位。
   late final SyncService sync = SyncService(db, serverId);
+
+  /// 内容寻址的图片存储（R16）：`data/media/<sha256>`。
+  /// 图片不走 change_log，字节本体由显示端按 sha256 按需拉取。
+  late final MediaStore media = MediaStore(
+      Directory('${config.dataDir.path}${Platform.pathSeparator}media'));
 
   ServerState._(this.config, this.serverId, this.startedAt, this.db);
 
@@ -144,7 +195,9 @@ class ServerState {
   static int _rank(String ip) {
     if (ip.startsWith('192.168.')) return 0;
     if (ip.startsWith('10.')) return 1;
-    if (ip.startsWith('172.1') || ip.startsWith('172.2') || ip.startsWith('172.3')) return 2;
+    if (ip.startsWith('172.1') ||
+        ip.startsWith('172.2') ||
+        ip.startsWith('172.3')) return 2;
     return 3;
   }
 

@@ -8,6 +8,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'config.dart';
+import 'media.dart';
 import 'server_state.dart';
 import 'sync.dart';
 import 'web_pages.dart';
@@ -116,7 +117,12 @@ class ZaojiServer {
       ..post('/api/pair', (Request req) => _pair(state, req))
       // 数据接口一律要 token
       ..get('/api/changes', (Request req) => _pull(state, req))
-      ..post('/api/changes', (Request req) => _push(state, req));
+      ..post('/api/changes', (Request req) => _push(state, req))
+      // 媒体接口（R16）：同样要 token。GET 是显示端按需拉取，PUT 是上传。
+      ..put('/api/media/<sha>',
+          (Request req) => _mediaPut(state, req, req.params['sha']!))
+      ..get('/api/media/<sha>',
+          (Request req) => _mediaGet(state, req, req.params['sha']!));
 
     /// 首页：如果托管了 Flutter Web 产物，让位给它——
     /// 否则用户打开地址看到的永远是状态页，而不是他要的 App。
@@ -365,6 +371,99 @@ class ZaojiServer {
         'message': '缺少或无效的设备 token。请先在 App 里完成配对。',
       }, status: 401);
 
+  // ── 媒体接口（R16）──
+
+  /// 图片上传上限。客户端压到 1600px/q82 后通常 ≤ 500 KB，
+  /// 10 MB 挡的是异常大图与恶意请求，不是正常业务。
+  static const int _maxMediaBytes = 10 * 1024 * 1024;
+
+  /// 读原始字节体（媒体上传用）。超 [_maxMediaBytes] 抛 [_BodyTooLarge]。
+  /// 与 [_readJson] 同一条纪律：不信 Content-Length，逐块计数。
+  static Future<Uint8List> _readBodyBytes(Request req) async {
+    final declared = int.tryParse(req.headers['content-length'] ?? '') ?? 0;
+    if (declared > _maxMediaBytes) throw const _BodyTooLarge();
+
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in req.read()) {
+      builder.add(chunk);
+      if (builder.length > _maxMediaBytes) throw const _BodyTooLarge();
+    }
+    return builder.takeBytes();
+  }
+
+  static Response _mediaBad(String message, {int status = 400}) =>
+      _json({'error': 'bad_request', 'message': message}, status: status);
+
+  /// 上传图片：PUT /api/media/<sha256>，请求体为原始字节。
+  ///
+  /// 四道闸门缺一不可：鉴权 → sha256 格式（挡路径穿越）→ 大小上限 →
+  /// 哈希与格式校验。哈希不匹配必须拒绝——**哈希即内容契约**，
+  /// 收下错图等于让显示端永久引用一张对不上的图。
+  static Future<Response> _mediaPut(
+      ServerState state, Request req, String sha) async {
+    final device = state.sync.authenticate(req.headers['authorization']);
+    if (device == null) return _unauthorized();
+
+    if (!MediaStore.isValidSha(sha)) {
+      return _mediaBad('sha256 必须是 64 位小写十六进制');
+    }
+
+    final Uint8List bytes;
+    try {
+      bytes = await _readBodyBytes(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge('图片超过上限（10 MB）');
+    }
+    if (bytes.isEmpty) return _mediaBad('请求体为空');
+
+    final type = MediaStore.sniffImageType(bytes);
+    if (type == null) {
+      return _mediaBad('只接受 JPEG / PNG / WebP 图片', status: 415);
+    }
+
+    final actual = MediaStore.sha256Hex(bytes);
+    if (actual != sha) {
+      return _json({
+        'error': 'hash_mismatch',
+        'message': '内容哈希与 URL 不一致（URL: $sha，实际: $actual）',
+      }, status: 400);
+    }
+
+    final r = await state.media.put(sha, bytes);
+    return _json({
+      'ok': true,
+      'sha256': r.sha,
+      'size': r.size,
+      'type': r.type,
+      'duplicated': r.duplicated,
+    });
+  }
+
+  /// 拉取图片：GET /api/media/<sha256>。
+  /// 内容寻址 = 内容永不变更，因此可以放心让客户端**长缓存**。
+  static Future<Response> _mediaGet(
+      ServerState state, Request req, String sha) async {
+    final device = state.sync.authenticate(req.headers['authorization']);
+    if (device == null) return _unauthorized();
+
+    if (!MediaStore.isValidSha(sha)) {
+      return _mediaBad('sha256 必须是 64 位小写十六进制');
+    }
+
+    final f = state.media.fileFor(sha);
+    if (!await f.exists()) {
+      return _json({'error': 'not_found', 'message': '没有这张图片'}, status: 404);
+    }
+
+    final bytes = await f.readAsBytes();
+    final type = MediaStore.sniffImageType(bytes) ?? 'application/octet-stream';
+    return Response.ok(bytes, headers: {
+      'content-type': type,
+      // 私有长缓存：图片带 token 才能拉（不应被共享代理缓存），但内容永不变
+      'cache-control': 'private, max-age=31536000, immutable',
+    });
+  }
+
   /// 读 JSON 请求体。解析失败返回 null（调用方给 400），不要抛；
   /// 体积超 [_maxBodyBytes] 抛 [_BodyTooLarge]（调用方给 413）。
   ///
@@ -396,9 +495,9 @@ class ZaojiServer {
     }
   }
 
-  static Response _payloadTooLarge() => _json({
+  static Response _payloadTooLarge([String? detail]) => _json({
         'error': 'payload_too_large',
-        'message': '请求体超过上限（5 MB）',
+        'message': detail ?? '请求体超过上限（5 MB）',
       }, status: 413);
 
   // ── 静态文件 ──

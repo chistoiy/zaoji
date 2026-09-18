@@ -260,6 +260,7 @@ class RecipeStore extends ChangeNotifier {
           ),
       ],
       steps: [for (final r in stepRows) Step('${r['text']}')],
+      coverSha256: row['cover_sha256'] as String?,
     );
   }
 
@@ -389,7 +390,7 @@ class RecipeStore extends ChangeNotifier {
         'source_model': null,
         'source_at': null,
         'last_cooked_at': null,
-        'cover_sha256': null,
+        'cover_sha256': draft.coverSha256,
       });
 
       for (var i = 0; i < draft.ingredients.length; i++) {
@@ -443,6 +444,7 @@ class RecipeStore extends ChangeNotifier {
         art: draft.art,
         palette: draft.palette,
         tags: draft.tags,
+        coverSha256: draft.coverSha256,
       );
 
       // 内存态追加 + 索引 + 通知，**放到事务外**（见下方 createRecipe 尾注）
@@ -484,8 +486,8 @@ class RecipeStore extends ChangeNotifier {
       // recipe 行 UPDATE（rev+1）
       await db.customUpdate(
         'UPDATE recipe SET name = ?, sub = ?, art = ?, pal = ?, difficulty = ?, '
-        'self_time = ?, servings = ?, notes = ?, tags = ?, updated_at = ?, '
-        'updated_by = ?, rev = rev + 1 WHERE id = ? AND deleted_at IS NULL',
+        'self_time = ?, servings = ?, notes = ?, tags = ?, cover_sha256 = ?, '
+        'updated_at = ?, updated_by = ?, rev = rev + 1 WHERE id = ? AND deleted_at IS NULL',
         variables: [
           Variable(draft.name),
           Variable(draft.sub),
@@ -496,6 +498,7 @@ class RecipeStore extends ChangeNotifier {
           Variable(draft.servings),
           Variable(draft.notes),
           Variable(jsonEncode(draft.tags)),
+          Variable(draft.coverSha256),
           Variable(recipeHlc),
           Variable(nodeId),
           Variable(recipeId),
@@ -741,6 +744,9 @@ class RecipeDraft {
   final List<String> palette;
   final Map<String, List<String>> tags;
 
+  /// 封面照片的内容哈希。null = 无封面（编辑时也传现有值以保持不变）。
+  final String? coverSha256;
+
   const RecipeDraft({
     required this.name,
     this.sub = '',
@@ -753,6 +759,7 @@ class RecipeDraft {
     this.art = DishArtKind.plate,
     this.palette = const [],
     this.tags = const {},
+    this.coverSha256,
   });
 
   RecipeDraft copyWith({
@@ -767,6 +774,7 @@ class RecipeDraft {
     DishArtKind? art,
     List<String>? palette,
     Map<String, List<String>>? tags,
+    String? coverSha256,
   }) {
     return RecipeDraft(
       name: name ?? this.name,
@@ -780,6 +788,7 @@ class RecipeDraft {
       art: art ?? this.art,
       palette: palette ?? this.palette,
       tags: tags ?? this.tags,
+      coverSha256: coverSha256 ?? this.coverSha256,
     );
   }
 

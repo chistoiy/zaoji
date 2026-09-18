@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -10,8 +11,23 @@ import 'package:http/http.dart' as http;
 /// 不能被包成一句"网络错误"。
 abstract class SyncTransport {
   Future<Map<String, Object?>> get(String path, {String? token});
-  Future<Map<String, Object?>> post(String path, Map<String, Object?> body,
-      {String? token});
+  Future<Map<String, Object?>> post(
+    String path,
+    Map<String, Object?> body, {
+    String? token,
+  });
+
+  /// 原始字节上传（R16 媒体接口）：body 为图片字节本体。
+  Future<Map<String, Object?>> putBytes(
+    String path,
+    Uint8List bytes, {
+    String? token,
+  });
+
+  /// 原始字节拉取（R16 媒体接口）。非 2xx 时抛 SyncTransportException，
+  /// 载荷尽量解析出服务端的 JSON 错误体。
+  Future<Uint8List> getBytes(String path, {String? token});
+
   void close();
 }
 
@@ -39,13 +55,14 @@ class SyncNetworkException implements Exception {
   final Object? cause;
 
   @override
-  String toString() => 'SyncNetworkException: $message'
+  String toString() =>
+      'SyncNetworkException: $message'
       '${cause == null ? '' : ' ($cause)'}';
 }
 
 class HttpSyncTransport implements SyncTransport {
   HttpSyncTransport(this.baseUrl, {http.Client? client})
-      : _client = client ?? http.Client();
+    : _client = client ?? http.Client();
 
   /// 形如 `http://192.168.31.141:8666`。收发都用它拼接路径。
   final Uri baseUrl;
@@ -53,30 +70,79 @@ class HttpSyncTransport implements SyncTransport {
   final http.Client _client;
 
   Map<String, String> _headers(String? token) => {
-        'content-type': 'application/json; charset=utf-8',
-        if (token != null && token.isNotEmpty) 'authorization': 'Bearer $token',
-      };
+    'content-type': 'application/json; charset=utf-8',
+    if (token != null && token.isNotEmpty) 'authorization': 'Bearer $token',
+  };
 
   Uri _uri(String path) => baseUrl.resolve(path);
 
   @override
   Future<Map<String, Object?>> get(String path, {String? token}) async {
-    final res = await _guard(() => _client.get(_uri(path), headers: _headers(token)));
-    return res;
-  }
-
-  @override
-  Future<Map<String, Object?>> post(String path, Map<String, Object?> body,
-      {String? token}) async {
     final res = await _guard(
-      () => _client.post(_uri(path), headers: _headers(token),
-          body: jsonEncode(body)),
+      () => _client.get(_uri(path), headers: _headers(token)),
     );
     return res;
   }
 
+  @override
+  Future<Map<String, Object?>> post(
+    String path,
+    Map<String, Object?> body, {
+    String? token,
+  }) async {
+    final res = await _guard(
+      () => _client.post(
+        _uri(path),
+        headers: _headers(token),
+        body: jsonEncode(body),
+      ),
+    );
+    return res;
+  }
+
+  @override
+  Future<Map<String, Object?>> putBytes(
+    String path,
+    Uint8List bytes, {
+    String? token,
+  }) async {
+    final res = await _guard(
+      () => _client.put(
+        _uri(path),
+        headers: {
+          // 原始字节体，不是 JSON——只带鉴权头
+          if (token != null && token.isNotEmpty)
+            'authorization': 'Bearer $token',
+        },
+        body: bytes,
+      ),
+    );
+    return res;
+  }
+
+  @override
+  Future<Uint8List> getBytes(String path, {String? token}) async {
+    final http.Response res;
+    try {
+      res = await _client.get(_uri(path), headers: _headers(token));
+    } catch (e) {
+      throw SyncNetworkException('连不上服务端', e);
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      // 尽量把服务端的 JSON 错误体解析出来给引擎做分支决策
+      Map<String, Object?> payload = {};
+      try {
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        if (decoded is Map) payload = decoded.map((k, v) => MapEntry('$k', v));
+      } catch (_) {}
+      throw SyncTransportException(res.statusCode, payload);
+    }
+    return res.bodyBytes;
+  }
+
   Future<Map<String, Object?>> _guard(
-      Future<http.Response> Function() send) async {
+    Future<http.Response> Function() send,
+  ) async {
     final http.Response res;
     try {
       res = await send();
