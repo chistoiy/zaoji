@@ -1,0 +1,96 @@
+name: zaoji
+description: "灶记 ZAOJI —— 家庭菜谱手账。Android 用 App，iPhone 用 Web，服务在自家笔记本上。"
+publish_to: 'none'
+
+# 版本号。Android 的 versionName/versionCode 由它决定。
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ★ 共用层。**这是整个项目最重要的一条依赖**：
+  # 时间关键词解析、单位换算、食材合并、冲突判定、HLC、以及表结构，
+  # 服务端与客户端消费的是同一份代码，所以两端行为不可能漂移。
+  # 判断某个函数该不该放这里：两端各写一份会不会出现行为差异？会，就放进去。
+  zaoji_shared:
+    path: ../shared
+
+  cupertino_icons: ^1.0.8
+  flutter_svg: ^2.3.0
+  drift: ^2.35.0
+  drift_flutter: ^0.3.1
+  sqlite3_flutter_libs: ^0.6.0+eol
+  sqlite3: ^3.5.2
+
+  # 同步引擎的 HTTP 层（R13）。只做同步接口的 GET/POST，不引任何重框架。
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  # 注：不能把 zaoji_server 拉进 dev_dependencies 做端到端测试——
+  # 服务端锁 sqlite3 ^2.x（sqlite_loader 依赖已被 3.x 移除的 open.overrideFor），
+  # app 需要 ^3.x（drift 硬要求），版本解算必然失败（R11 已知事项）。
+  # 所以引擎测试用「测试内 dart:io HttpServer 模拟同步协议」走真 HTTP；
+  # 真两端 E2E 用「真 exe + Web 产物」的人工链路验证（见交接文档 R13）。
+
+flutter:
+  uses-material-design: true
+
+  # ── 字体 ────────────────────────────────────────────────────────────
+  # 字体**随产物打包**，不用系统字体，也不在运行时联网取。
+  #
+  # 为什么必须打包：Flutter Web 的 CanvasKit 自带一套字体栈，它**不读系统字体**。
+  # 缺字时引擎会回退到 `https://fonts.gstatic.com/s/` 现拉——那份回退表里
+  # 连拉丁字母的默认字体（roboto）都有，共 725 条 .woff2 引用。
+  # 而这个项目部署在家里一台**可能没有外网**的笔记本上，
+  # 「运行时去 Google 拉字体」等于断网时全屏方块。
+  #
+  # 生成方式（源字体太大，不进仓库）：
+  #   powershell -ExecutionPolicy Bypass -File app\tool\download_fonts.ps1
+  #   python app\tool\build_fonts.py
+  #
+  # 为什么要子集化：完整 Noto CJK 每字重 8~15 MB，直接打进 Web 产物不现实，
+  # 而且 M0 要测的正是首屏时间，塞个 10 MB 字体进去测出来的数字没有参考价值。
+  # 子集档位按「这个字体要承担什么」来定，不是一刀切：
+  #   · Noto Sans SC —— 正文，是最终兜底，用户输入的菜名/食材/备注全靠它，
+  #     缺字就是方块。子集到 **GBK**（22272 字形），实测 117 个高频烹饪用字全中。
+  #   · Noto Serif SC —— 只管标题，且挂了回退链（见 theme.dart 的 displayFallback），
+  #     缺字会落到 Sans。子集到 **GB2312**（7996 字形）就够，省约 4 MB。
+  fonts:
+    - family: Noto Sans SC
+      fonts:
+        # 同族两个字重：w500 会真的用到 Medium，而不是合成的假粗体。
+        - asset: assets/fonts/NotoSansSC-Regular.woff2
+          weight: 400
+        - asset: assets/fonts/NotoSansSC-Medium.woff2
+          weight: 500
+    - family: Noto Serif SC
+      fonts:
+        - asset: assets/fonts/NotoSerifSC-Regular.woff2
+          weight: 400
+
+    # ── 为什么要把 Roboto 也指过来 ──────────────────────────────────
+    # 这不是笔误，是修一个「不报错但会联网」的问题。
+    #
+    # Flutter 的 Typography 默认会引用 Roboto，引擎缺字时又去
+    # `https://fonts.gstatic.com/s/roboto/v32/...woff2` 现拉。
+    # 用 Chrome 的网络日志实测（app/tool/analyze_netlog.py）：
+    # **上面三个中文字体全都打包好了，Roboto 那次请求依然发生**——
+    # 断网时它就是一个必然失败的请求，白白增加首屏等待。
+    #
+    # 把 Roboto 这个族名指向我们已经打包的 Sans 子集，等于把这个出口堵死：
+    # 零额外体积（同一个 asset 路径不会重复拷贝），且能覆盖任何
+    # 我们没显式设置 fontFamily 的 Material 组件。
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Regular.woff2
+          weight: 400
+        - asset: assets/fonts/NotoSansSC-Medium.woff2
+          weight: 500
