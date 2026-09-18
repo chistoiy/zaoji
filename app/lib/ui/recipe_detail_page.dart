@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../data/store_scope.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/chili_scale.dart';
 import '../widgets/time_capsule_text.dart';
+import 'recipe_edit_page.dart';
 import 'timer_sheet.dart';
 
 /// 菜品详情。
@@ -12,6 +14,9 @@ import 'timer_sheet.dart';
 /// 用户是站在灶台前看的，中间还插着锅。
 /// 所以：食材在前（下锅前先对一遍）、步骤在后、注意事项收尾，
 /// 而且步骤里的时间全部变成可以点的琥珀胶囊。
+///
+/// **R14：AppBar 加编辑 + 删除按钮。** 删除会弹确认 dialog，走软删除
+/// （打墓碑而非物理删），同步引擎能把墓碑推到别的设备。
 class RecipeDetailPage extends StatelessWidget {
   const RecipeDetailPage({super.key, required this.recipe});
 
@@ -24,10 +29,13 @@ class RecipeDetailPage extends StatelessWidget {
         title: Text(recipe.name),
         actions: [
           IconButton(
+            tooltip: '删除',
+            onPressed: () => _confirmDelete(context),
+            icon: const Icon(Icons.delete_outline),
+          ),
+          IconButton(
             tooltip: '编辑',
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('编辑还没做（M0 只读）')),
-            ),
+            onPressed: () => _edit(context),
             icon: const Icon(Icons.edit_outlined),
           ),
         ],
@@ -65,6 +73,41 @@ class RecipeDetailPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _edit(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => RecipeEditPage(recipe: recipe)),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除这道菜？'),
+        content: const Text('删除后可以在「我的 → 回收站」里恢复。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('再想想')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC33F14)),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+
+    final store = StoreScope.of(context);
+    await store.softDeleteRecipe(recipe.id);
+    if (context.mounted) {
+      // 成功删除后回到列表页（详情页里的菜谱已经不在了）
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已删除（可在回收站恢复）')),
+      );
+    }
   }
 }
 

@@ -31,6 +31,18 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 /// 现在收藏落在 `local_pref`（shared schema 里的本机偏好键值表，永不外发）：
 /// 首次启动以种子标记为初始值，之后完全以用户操作为准。悬浮按钮位置、
 /// 排序档这些偏好将来也走这张表。
+///
+/// ## 写路径（R14 新增）
+///
+/// 用户写入走五列规范 + HLC 盖章 + 同事务：
+/// ```
+/// recipe + ingredient(×N) + step(×N) → 一个事务
+///   每行盖 Hlc.now(nodeId).tick(nodeId) 的章
+///   新行 INSERT / 改行 UPDATE rev+1 / 删除打墓碑(UPDATE deleted_at)
+/// ```
+///
+/// 写完调 [onLocalWrite] 让 App 层排防抖同步（Store 不直接持有 SyncEngine，
+/// 避免循环依赖）。
 class RecipeStore extends ChangeNotifier {
   RecipeStore({QueryExecutor? executor}) : _executorOverride = executor;
 
@@ -49,6 +61,17 @@ class RecipeStore extends ChangeNotifier {
 
   /// 本机收藏（菜谱 id）。首次启动以种子标记为初始值，之后以用户操作为准。
   final Set<String> favs = {};
+
+  // ── R14 写路径需要的外部依赖（回调，避免循环依赖）──
+
+  /// 获取本设备 nodeId（写 HLC 的 `updated_by` 列用）。
+  /// 由 `_ZaojiAppState._ensureSync()` 赋值：从 SyncPrefs.nodeId() 取。
+  Future<String> Function()? nodeIdGetter;
+
+  /// 本地写入后触发。由 `_ZaojiAppState` 接上「3 秒防抖 sync」。
+  /// Store 不直接持有 SyncEngine——引擎依赖 db，store 也持有 db，
+  /// 两边互指就是循环依赖。回调是干净的单向通道。
+  VoidCallback? onLocalWrite;
 
   /// 幂等。**先到先得**——第二次调用直接返回第一次的 future。
   Future<void> init() => _ready ??= _doInit(_executorOverride);
@@ -326,12 +349,461 @@ class RecipeStore extends ChangeNotifier {
 
   bool isFav(String id) => favs.contains(id);
 
+  // ─────────────── R14 写路径 ───────────────
+  //
+  // 所有写入走五列规范 + HLC 盖章 + 同事务。
+  // ingredient/step 的旧行用「全量墓碑」策略（把该 recipe 下所有旧行
+  // 打墓碑，然后新列表原样 INSERT）——比做增量 diff 更简单且安全，
+  // 同步引擎看到墓碑就删远端、看到新行就加，端上流量多一点但语义正确。
+
+  /// 新建菜谱。生成新 ULID，recipe + ingredients + steps 同事务落库。
+  Future<Recipe> createRecipe(RecipeDraft draft) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    final hlc0 = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+
+    return db.transaction(() async {
+      var hlc = hlc0;
+      String next() =>
+          (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
+
+      final recipeId = Ulid.generate();
+      await _insert(db, kRecipeTable, {
+        'id': recipeId,
+        'updated_at': next(),
+        'updated_by': nodeId,
+        'rev': 1,
+        'deleted_at': null,
+        'name': draft.name,
+        'sub': draft.sub,
+        'art': artCodeOf(draft.art),
+        'pal': paletteCodeOf(draft.palette),
+        'difficulty': draft.difficulty,
+        'self_time': draft.selfTime,
+        'cooked_count': 0,
+        'servings': draft.servings,
+        'notes': draft.notes,
+        'tags': jsonEncode(draft.tags),
+        'source': 'manual',
+        'source_model': null,
+        'source_at': null,
+        'last_cooked_at': null,
+        'cover_sha256': null,
+      });
+
+      for (var i = 0; i < draft.ingredients.length; i++) {
+        final ing = draft.ingredients[i];
+        await _insert(db, kIngredientTable, {
+          'id': '$recipeId-i${Ulid.generate()}',
+          'updated_at': next(),
+          'updated_by': nodeId,
+          'rev': 1,
+          'deleted_at': null,
+          'recipe_id': recipeId,
+          'sort': i,
+          'name': ing.name,
+          'qty_text': ing.qty,
+          'qty_value': null,
+          'qty_unit': null,
+          'is_main': ing.isMain ? 1 : 0,
+          'alias_key': null,
+        });
+      }
+
+      for (var i = 0; i < draft.steps.length; i++) {
+        await _insert(db, kStepTable, {
+          'id': '$recipeId-s${Ulid.generate()}',
+          'updated_at': next(),
+          'updated_by': nodeId,
+          'rev': 1,
+          'deleted_at': null,
+          'recipe_id': recipeId,
+          'idx': i,
+          'text': draft.steps[i],
+          'art': null,
+          'image_sha256': null,
+        });
+      }
+
+      final recipe = Recipe(
+        id: recipeId,
+        name: draft.name,
+        sub: draft.sub,
+        difficulty: draft.difficulty,
+        selfTime: draft.selfTime,
+        servings: draft.servings,
+        notes: draft.notes,
+        ingredients: draft.ingredients
+            .map((i) => Ingredient(i.name, i.qty, isMain: i.isMain))
+            .toList(),
+        steps: draft.steps.map((t) => Step(t)).toList(),
+        source: RecipeSource.manual,
+        cookedCount: 0,
+        art: draft.art,
+        palette: draft.palette,
+        tags: draft.tags,
+      );
+
+      // 内存态追加 + 索引
+      recipes = [...recipes, recipe];
+      _reindex();
+      notifyListeners();
+
+      _fireLocalWrite();
+      return recipe;
+    });
+  }
+
+  /// 编辑菜谱。recipe 行 UPDATE rev+1 + HLC 新章；
+  /// 旧 ingredient/step 全打墓碑，新列表原样 INSERT。
+  Future<Recipe?> updateRecipe(String recipeId, RecipeDraft draft) async {
+    final db = _db!;
+    final existing = _byId[recipeId];
+    if (existing == null) return null;
+
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    final hlc0 = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+
+    return db.transaction(() async {
+      var hlc = hlc0;
+      String next() =>
+          (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
+
+      final recipeHlc = next();
+
+      // recipe 行 UPDATE（rev+1）
+      await db.customUpdate(
+        'UPDATE recipe SET name = ?, sub = ?, art = ?, pal = ?, difficulty = ?, '
+        'self_time = ?, servings = ?, notes = ?, tags = ?, updated_at = ?, '
+        'updated_by = ?, rev = rev + 1 WHERE id = ? AND deleted_at IS NULL',
+        variables: [
+          Variable(draft.name),
+          Variable(draft.sub),
+          Variable(artCodeOf(draft.art)),
+          Variable(paletteCodeOf(draft.palette)),
+          Variable(draft.difficulty),
+          Variable(draft.selfTime),
+          Variable(draft.servings),
+          Variable(draft.notes),
+          Variable(jsonEncode(draft.tags)),
+          Variable(recipeHlc),
+          Variable(nodeId),
+          Variable(recipeId),
+        ],
+      );
+
+      // 旧 ingredient/step 全打墓碑（同 HLC 章）
+      await db.customUpdate(
+        'UPDATE ingredient SET deleted_at = ?, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE recipe_id = ? AND deleted_at IS NULL',
+        variables: [
+          Variable(recipeHlc),
+          Variable(recipeHlc),
+          Variable(nodeId),
+          Variable(recipeId),
+        ],
+      );
+      await db.customUpdate(
+        'UPDATE step SET deleted_at = ?, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE recipe_id = ? AND deleted_at IS NULL',
+        variables: [
+          Variable(recipeHlc),
+          Variable(recipeHlc),
+          Variable(nodeId),
+          Variable(recipeId),
+        ],
+      );
+
+      // 新列表 INSERT
+      for (var i = 0; i < draft.ingredients.length; i++) {
+        final ing = draft.ingredients[i];
+        await _insert(db, kIngredientTable, {
+          'id': '$recipeId-i${Ulid.generate()}',
+          'updated_at': next(),
+          'updated_by': nodeId,
+          'rev': 1,
+          'deleted_at': null,
+          'recipe_id': recipeId,
+          'sort': i,
+          'name': ing.name,
+          'qty_text': ing.qty,
+          'qty_value': null,
+          'qty_unit': null,
+          'is_main': ing.isMain ? 1 : 0,
+          'alias_key': null,
+        });
+      }
+      for (var i = 0; i < draft.steps.length; i++) {
+        await _insert(db, kStepTable, {
+          'id': '$recipeId-s${Ulid.generate()}',
+          'updated_at': next(),
+          'updated_by': nodeId,
+          'rev': 1,
+          'deleted_at': null,
+          'recipe_id': recipeId,
+          'idx': i,
+          'text': draft.steps[i],
+          'art': null,
+          'image_sha256': null,
+        });
+      }
+
+      // 重新从库里读（包含新 ingredient/step 的完整列表），而不是靠传入 draft 组装——
+      // draft 里没有 ULID id，重建的 Recipe 丢了 id 会导致 sync 推送混乱
+      final freshRecipes = await _loadAll(db);
+      recipes = freshRecipes;
+      _reindex();
+      notifyListeners();
+
+      _fireLocalWrite();
+
+      final updated = _byId[recipeId];
+      return updated;
+    });
+  }
+
+  /// 软删除菜谱：recipe + 所有 ingredient + step 打墓碑。
+  /// 同事务、同 HLC 章——同步引擎会把整组墓碑一起推上去。
+  Future<bool> softDeleteRecipe(String recipeId) async {
+    final db = _db!;
+    final existing = _byId[recipeId];
+    if (existing == null) return false;
+
+    final nodeId = await _resolveNodeId();
+    final hlc = Hlc.now(nodeId).tick(nodeId);
+    final hlcStr = hlc.encode();
+
+    await db.transaction(() async {
+      await db.customUpdate(
+        'UPDATE recipe SET deleted_at = ?, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE id = ? AND deleted_at IS NULL',
+        variables: [
+          Variable(hlcStr),
+          Variable(hlcStr),
+          Variable(nodeId),
+          Variable(recipeId),
+        ],
+      );
+      // 连带删除 ingredient/step——主菜没了，子行单独活着没意义
+      await db.customUpdate(
+        'UPDATE ingredient SET deleted_at = ?, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE recipe_id = ? AND deleted_at IS NULL',
+        variables: [
+          Variable(hlcStr),
+          Variable(hlcStr),
+          Variable(nodeId),
+          Variable(recipeId),
+        ],
+      );
+      await db.customUpdate(
+        'UPDATE step SET deleted_at = ?, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE recipe_id = ? AND deleted_at IS NULL',
+        variables: [
+          Variable(hlcStr),
+          Variable(hlcStr),
+          Variable(nodeId),
+          Variable(recipeId),
+        ],
+      );
+
+      // 内存态移除 + 索引重建
+      recipes = recipes.where((r) => r.id != recipeId).toList();
+      _reindex();
+      notifyListeners();
+    });
+
+    _fireLocalWrite();
+    return true;
+  }
+
+  /// 从回收站恢复：清掉 deleted_at 墓碑。
+  ///
+  /// 恢复也走五列规范（新 HLC + rev+1）——因为「恢复」是一次真实写入，
+  /// 同步引擎需要看到它。
+  Future<bool> restoreRecipe(String recipeId) async {
+    final db = _db!;
+
+    final nodeId = await _resolveNodeId();
+    final hlc = Hlc.now(nodeId).tick(nodeId);
+    final hlcStr = hlc.encode();
+
+    await db.transaction(() async {
+      await db.customUpdate(
+        'UPDATE recipe SET deleted_at = NULL, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE id = ? AND deleted_at IS NOT NULL',
+        variables: [Variable(hlcStr), Variable(nodeId), Variable(recipeId)],
+      );
+      await db.customUpdate(
+        'UPDATE ingredient SET deleted_at = NULL, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE recipe_id = ? AND deleted_at IS NOT NULL',
+        variables: [Variable(hlcStr), Variable(nodeId), Variable(recipeId)],
+      );
+      await db.customUpdate(
+        'UPDATE step SET deleted_at = NULL, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE recipe_id = ? AND deleted_at IS NOT NULL',
+        variables: [Variable(hlcStr), Variable(nodeId), Variable(recipeId)],
+      );
+
+      final freshRecipes = await _loadAll(db);
+      recipes = freshRecipes;
+      _reindex();
+      notifyListeners();
+    });
+
+    _fireLocalWrite();
+    return _byId[recipeId] != null;
+  }
+
+  /// 列出回收站里的菜谱（deleted_at IS NOT NULL）。
+  /// 只读操作，不触发同步。
+  Future<List<Recipe>> listDeleted() async {
+    final db = _db!;
+    final rows = await db
+        .customSelect(
+          'SELECT * FROM recipe WHERE deleted_at IS NOT NULL ORDER BY updated_at DESC',
+        )
+        .get();
+    final ingsByRecipe = <String, List<Map<String, Object?>>>{};
+    final ingRows = await db
+        .customSelect('SELECT * FROM ingredient WHERE deleted_at IS NOT NULL')
+        .get();
+    for (final r in ingRows) {
+      ingsByRecipe.putIfAbsent('${r.data['recipe_id']}', () => []).add(r.data);
+    }
+    final stepsByRecipe = <String, List<Map<String, Object?>>>{};
+    final stepRows = await db
+        .customSelect('SELECT * FROM step WHERE deleted_at IS NOT NULL')
+        .get();
+    for (final r in stepRows) {
+      stepsByRecipe.putIfAbsent('${r.data['recipe_id']}', () => []).add(r.data);
+    }
+    return [
+      for (final row in rows)
+        _recipeFromRow(
+          row.data,
+          ingsByRecipe['${row.data['id']}'] ?? const [],
+          stepsByRecipe['${row.data['id']}'] ?? const [],
+        ),
+    ];
+  }
+
+  // ── 内部助手 ──
+
+  Future<String> _resolveNodeId() async {
+    final g = nodeIdGetter;
+    if (g != null) {
+      try {
+        return await g();
+      } catch (_) {}
+    }
+    // 回退：没有 nodeIdGetter 时用临时值（测试或 store 独立使用场景）
+    return 'local';
+  }
+
+  void _fireLocalWrite() {
+    try {
+      onLocalWrite?.call();
+    } catch (_) {
+      // 回调抛异常不应该打断 store 写入——数据已落库
+    }
+  }
+
   @override
   void dispose() {
     _db?.close();
     super.dispose();
   }
 }
+
+/// 菜谱编辑表单的数据对象。Store 的写路径（create / update）都吃这个。
+class RecipeDraft {
+  final String name;
+  final String sub;
+  final int difficulty;
+  final int selfTime;
+  final int servings;
+  final String notes;
+  final List<IngredientDraft> ingredients;
+  final List<String> steps;
+  final DishArtKind art;
+  final List<String> palette;
+  final Map<String, List<String>> tags;
+
+  const RecipeDraft({
+    required this.name,
+    this.sub = '',
+    this.difficulty = 1,
+    this.selfTime = 0,
+    this.servings = 2,
+    this.notes = '',
+    this.ingredients = const [],
+    this.steps = const [],
+    this.art = DishArtKind.plate,
+    this.palette = const [],
+    this.tags = const {},
+  });
+
+  RecipeDraft copyWith({
+    String? name,
+    String? sub,
+    int? difficulty,
+    int? selfTime,
+    int? servings,
+    String? notes,
+    List<IngredientDraft>? ingredients,
+    List<String>? steps,
+    DishArtKind? art,
+    List<String>? palette,
+    Map<String, List<String>>? tags,
+  }) {
+    return RecipeDraft(
+      name: name ?? this.name,
+      sub: sub ?? this.sub,
+      difficulty: difficulty ?? this.difficulty,
+      selfTime: selfTime ?? this.selfTime,
+      servings: servings ?? this.servings,
+      notes: notes ?? this.notes,
+      ingredients: ingredients ?? this.ingredients,
+      steps: steps ?? this.steps,
+      art: art ?? this.art,
+      palette: palette ?? this.palette,
+      tags: tags ?? this.tags,
+    );
+  }
+
+  /// 从 Recipe 模型反向构造 Draft（编辑页初始化用）。
+  factory RecipeDraft.fromRecipe(Recipe r) => RecipeDraft(
+    name: r.name,
+    sub: r.sub,
+    difficulty: r.difficulty,
+    selfTime: r.selfTime,
+    servings: r.servings,
+    notes: r.notes,
+    ingredients: r.ingredients
+        .map((i) => IngredientDraft(name: i.name, qty: i.qty, isMain: i.isMain))
+        .toList(),
+    steps: r.steps.map((s) => s.text).toList(),
+    art: r.art,
+    palette: r.palette,
+    tags: r.tags,
+  );
+}
+
+class IngredientDraft {
+  final String name;
+  final String qty;
+  final bool isMain;
+
+  const IngredientDraft({
+    required this.name,
+    required this.qty,
+    this.isMain = false,
+  });
+}
+
+// 注：Ulid 已通过 zaoji_shared 导出，无需额外 import
 
 /// 种子数据的节点 id。出现在这批行的 `updated_by` 里，
 /// 将来同步引擎的「数据体检」可以据此告诉用户哪些行来自内置演示数据。

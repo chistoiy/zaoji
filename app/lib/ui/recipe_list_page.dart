@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../widgets/chili_scale.dart';
 import '../widgets/dish_art.dart';
 import 'recipe_detail_page.dart';
+import 'recipe_edit_page.dart';
 
 /// 菜谱库（主页）。
 ///
@@ -346,7 +347,13 @@ class _RecipeListPageState extends State<RecipeListPage> {
                     ),
                   ],
                 ),
-                _AddFab(onTap: () => _todo(context, '新建菜品')),
+                _AddFab(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const RecipeEditPage()),
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -1253,13 +1260,4 @@ class _AddFabState extends State<_AddFab> {
       },
     );
   }
-}
-
-void _todo(BuildContext context, String what) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text('$what 还没做（M0 只打通列表与详情）'),
-      duration: const Duration(seconds: 2),
-    ),
-  );
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show QueryExecutor;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -38,7 +40,7 @@ class ZaojiApp extends StatefulWidget {
   State<ZaojiApp> createState() => _ZaojiAppState();
 }
 
-class _ZaojiAppState extends State<ZaojiApp> {
+class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
   late final RecipeStore _store =
       widget.store ?? RecipeStore(executor: widget.executor);
 
@@ -47,9 +49,13 @@ class _ZaojiAppState extends State<ZaojiApp> {
   SyncEngine? _sync;
   bool _autoSyncScheduled = false;
 
+  /// 写入后的 3 秒防抖 timer——连续写入时不打断，而是重置倒计时。
+  Timer? _writeDebounce;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // init 在测试的 FakeAsync 区里被调用并完成——这是刻意的，
     // 在真实区（比如 setUpAll）完成的话，测试区永远等不到它（见 store_scope.dart）。
     _store.init();
@@ -57,6 +63,8 @@ class _ZaojiAppState extends State<ZaojiApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _writeDebounce?.cancel();
     // 自己创建的 store 由自己关（关库）；测试注入的归测试管。
     // 之前漏了这一步，生产路径上本地库从来没有被关过。
     if (widget.store == null) {
@@ -66,15 +74,44 @@ class _ZaojiAppState extends State<ZaojiApp> {
     super.dispose();
   }
 
+  /// 回前台时拉一次（用户可能在后台期间被别的设备推了数据）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _sync != null) {
+      _sync!.syncIfPaired();
+    }
+  }
+
   /// 创建同步引擎（只一次）。等 store 就绪后由 build 分支调用。
   SyncEngine _ensureSync() {
-    return _sync ??= SyncEngine(
+    if (_sync != null) return _sync!;
+
+    final sync = SyncEngine(
       db: _store.dbOrNull!,
       prefs: SyncPrefs(_store.dbOrNull!),
       // 拉到新数据后刷新内存缓存——页面经 ListenableBuilder 消费 store，
       // reload 里的 notifyListeners 会让列表/详情自动重画（R12 铺的路）。
       onDataApplied: _store.reload,
     );
+    _sync = sync;
+
+    // ★ R14 写路径 → 同步的接线：
+    //   nodeId 从 SyncPrefs 取（引擎和 prefs 用同一个 db，安全）
+    //   onLocalWrite 排 3 秒防抖——不阻塞 UI，连续写入只触发一次 sync
+    final prefs = SyncPrefs(_store.dbOrNull!);
+    _store.nodeIdGetter = prefs.nodeId;
+    _store.onLocalWrite = _scheduleDebouncedSync;
+
+    return sync;
+  }
+
+  /// 3 秒防抖：每次写入重置 timer，空闲满 3 秒才真的触发 sync。
+  /// 保存表单 = 一次写入，排一次；编辑时连续改 5 个字段 = 排一次。
+  void _scheduleDebouncedSync() {
+    _writeDebounce?.cancel();
+    _writeDebounce = Timer(const Duration(seconds: 3), () {
+      _sync?.syncIfPaired();
+    });
   }
 
   @override

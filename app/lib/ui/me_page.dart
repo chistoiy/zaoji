@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../data/sync/sync_engine.dart';
 import '../data/sync/sync_scope.dart';
 import '../theme.dart';
+import 'trash_page.dart';
 
 /// 「我的」页（R13 最小可用版）：设备信息 + 同步配对与状态。
 ///
@@ -146,8 +147,30 @@ class _MePageState extends State<MePage> {
                   ),
                 ),
                 const SizedBox(height: 20),
+                _sectionTitle('数据'),
+                _SyncCard(
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.delete_outline,
+                      color: ZaojiColors.muted,
+                    ),
+                    title: const Text('回收站', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text(
+                      '删除的菜谱可以在这里恢复',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: ZaojiColors.muted,
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const TrashPage()),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
                 const Text(
-                  '冲突与回收站、AI 配置、备份都会在后续版本出现在这里。',
+                  '冲突箱、AI 配置、备份都会在后续版本出现在这里。',
                   style: TextStyle(
                     fontSize: 11.5,
                     height: 1.6,
