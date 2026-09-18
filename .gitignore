@@ -1,0 +1,50 @@
+# 灶记 ZAOJI · 不该进仓库的东西
+#
+# 判断标准：**能不能由仓库里的东西重新生成？** 能，就不进来。
+# 特别注意 server/certs/ —— 里面是 CA 私钥，进了仓库等于把家里内网的
+# 信任根公开了，而且证书一旦换根，所有设备都要重装信任。
+
+# ── 构建产物 ──
+app/build/
+server/build/
+app/**/.dart_tool/
+shared/.dart_tool/
+server/.dart_tool/
+**/.packages
+**/pubspec.lock
+
+# ── 服务端编译出的单文件 exe（AOT 产物，几十 MB）──
+server/zaoji_server.exe
+
+# ── 运行期数据：数据库、server_id、日志 ──
+server/data/
+server/logs/
+
+# ── ★ 证书与私钥 ──
+# 用 server/tool/make-cert.ps1 重新签发。iPhone 上装过 CA 的话，
+# 重签会复用同一个 CA，所以不用重装信任——但把 ca.key 提交上去，
+# 任何人都能冒充这台服务器。
+server/certs/
+
+# ── 字体：源字体（27 MB）与子集产物（10.7 MB）都能重新生成 ──
+#   powershell -ExecutionPolicy Bypass -File app\tool\download_fonts.ps1
+#   python app\tool\build_fonts.py
+app/tool/font-cache/
+app/assets/fonts/
+# 字体构建脚本自己产生的报告（每次跑都会重写）
+app/tool/_*
+
+# ── 临时验收截图用的 iframe harness（每次构建都会被清掉）──
+app/build/web/_frame.html
+
+# ── 编辑器 / 系统 ──
+.idea/
+.vscode/
+*.iml
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── Node（app/tool/boot_check.cjs / sync_e2e.cjs 的 playwright-core）──
+node_modules/
+package-lock.json

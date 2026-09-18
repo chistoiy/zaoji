@@ -1,0 +1,5 @@
+﻿config: 00:00 +8: All tests passed!
+sqlite_loader: 00:00 +13: All tests passed!
+db: 00:00 +18: All tests passed!
+sync: 00:01 +44: All tests passed!
+handler: 00:01 +45: All tests passed!

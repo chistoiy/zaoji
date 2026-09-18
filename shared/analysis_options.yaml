@@ -1,0 +1,24 @@
+# 共用层的分析规则。
+#
+# 这里不 include 任何外部 lint 包 —— 保持「零依赖」这条线，
+# 让 shared 能被 Flutter App 与 Dart 服务端同时引用而不引入传递依赖。
+analyzer:
+  language:
+    strict-casts: true
+    strict-raw-types: true
+  errors:
+    # print 会同时污染 AOT 的 Android 日志与服务端日志，
+    # 在共用层直接当错误处理。
+    avoid_print: error
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_print
+    - prefer_final_locals
+    - prefer_single_quotes
+    - unnecessary_parenthesis
+    - unrelated_type_equality_checks
+    - avoid_empty_else
+    - cancel_subscriptions
+    - close_sinks

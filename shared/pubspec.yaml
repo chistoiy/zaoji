@@ -1,0 +1,17 @@
+name: zaoji_shared
+description: 灶记 ZAOJI 共用层 —— 时间关键词解析 / 单位换算 / 食材合并 / 冲突判定 / HLC。
+# 这一层的铁律：Android 端与服务端引用同一份代码，行为不允许出现端间差异。
+# 凡是"两端都要做同一件事"的逻辑，都必须放这里，且必须有单测。
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+# 刻意保持零运行时依赖。
+# 它要同时被 Flutter App（AOT 编译进 APK）与 Dart 服务端（AOT 编译成 exe）引用，
+# 任何运行时依赖都会同时变成两端的约束，得不偿失。
+dependencies:
+
+dev_dependencies:
+  test: ^1.25.0

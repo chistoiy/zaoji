@@ -1,0 +1,26 @@
+name: zaoji_server
+description: 灶记 ZAOJI 服务端 —— 局域网自托管，同时提供同步接口与 Web 端静态资源。
+# 部署形态：AOT 编译成单个 exe，注册为 Windows 服务，跑在家里那台常年开机的笔记本上。
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  # 共用层：时间解析 / 单位换算 / 食材合并 / 冲突判定 / HLC / ULID
+  # 它同时被 Flutter App 引用，两端行为因此不可能漂移。
+  zaoji_shared:
+    path: ../shared
+  shelf: ^1.4.0
+  shelf_router: ^1.1.0
+  args: ^2.4.0
+  # SQLite 绑定。注意：这个包**只提供 Dart 侧绑定**，SQLite 本体的动态库要自己给。
+  # Windows 上直接用系统自带的 winsqlite3.dll（见 lib/src/sqlite_loader.dart），
+  # 所以不需要随包分发任何二进制。
+  sqlite3: ^2.4.0
+  # 设备 token 只存 sha256 哈希，不存明文（库被看到也换不出 token）
+  crypto: ^3.0.3
+
+dev_dependencies:
+  test: ^1.25.0
