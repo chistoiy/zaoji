@@ -363,7 +363,7 @@ class RecipeStore extends ChangeNotifier {
     final now = DateTime.now();
     final hlc0 = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
 
-    return db.transaction(() async {
+    final Recipe recipe = await db.transaction<Recipe>(() async {
       var hlc = hlc0;
       String next() =>
           (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
@@ -445,14 +445,21 @@ class RecipeStore extends ChangeNotifier {
         tags: draft.tags,
       );
 
-      // 内存态追加 + 索引
-      recipes = [...recipes, recipe];
-      _reindex();
-      notifyListeners();
-
-      _fireLocalWrite();
+      // 内存态追加 + 索引 + 通知，**放到事务外**（见下方 createRecipe 尾注）
       return recipe;
     });
+
+    // ★ 内存态与通知必须在事务关闭之后。留在事务回调里的话，监听者
+    //   （以及 _fireLocalWrite 排下的 3 秒防抖 Timer）会继承 drift 事务的
+    //   zone——Timer 3 秒后一发，事务早关了，isPaired 的查询直接
+    //   「transaction used after closed」（R15 widget 测试 pump(4s) 实测；
+    //   生产上的表象 = 保存后的自动同步永远不触发 + 一个未捕获异常）。
+    //   先提交、后广播：监听者看到的永远是已提交的状态。
+    recipes = [...recipes, recipe];
+    _reindex();
+    notifyListeners();
+    _fireLocalWrite();
+    return recipe;
   }
 
   /// 编辑菜谱。recipe 行 UPDATE rev+1 + HLC 新章；
@@ -466,7 +473,8 @@ class RecipeStore extends ChangeNotifier {
     final now = DateTime.now();
     final hlc0 = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
 
-    return db.transaction(() async {
+    final List<Recipe>
+    freshRecipes = await db.transaction<List<Recipe>>(() async {
       var hlc = hlc0;
       String next() =>
           (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
@@ -552,16 +560,17 @@ class RecipeStore extends ChangeNotifier {
 
       // 重新从库里读（包含新 ingredient/step 的完整列表），而不是靠传入 draft 组装——
       // draft 里没有 ULID id，重建的 Recipe 丢了 id 会导致 sync 推送混乱
-      final freshRecipes = await _loadAll(db);
-      recipes = freshRecipes;
-      _reindex();
-      notifyListeners();
-
-      _fireLocalWrite();
-
-      final updated = _byId[recipeId];
-      return updated;
+      return _loadAll(db);
     });
+
+    // ★ 先提交、后广播（同 createRecipe 尾注）：notifyListeners /
+    //   _fireLocalWrite 留在事务回调里，监听者与防抖 Timer 会继承事务
+    //   zone，3 秒后一发就撞「transaction used after closed」。
+    recipes = freshRecipes;
+    _reindex();
+    notifyListeners();
+    _fireLocalWrite();
+    return _byId[recipeId];
   }
 
   /// 软删除菜谱：recipe + 所有 ingredient + step 打墓碑。
@@ -607,13 +616,12 @@ class RecipeStore extends ChangeNotifier {
           Variable(recipeId),
         ],
       );
-
-      // 内存态移除 + 索引重建
-      recipes = recipes.where((r) => r.id != recipeId).toList();
-      _reindex();
-      notifyListeners();
     });
 
+    // ★ 先提交、后广播（同 createRecipe 尾注）
+    recipes = recipes.where((r) => r.id != recipeId).toList();
+    _reindex();
+    notifyListeners();
     _fireLocalWrite();
     return true;
   }
@@ -629,7 +637,8 @@ class RecipeStore extends ChangeNotifier {
     final hlc = Hlc.now(nodeId).tick(nodeId);
     final hlcStr = hlc.encode();
 
-    await db.transaction(() async {
+    final List<Recipe>
+    freshRecipes = await db.transaction<List<Recipe>>(() async {
       await db.customUpdate(
         'UPDATE recipe SET deleted_at = NULL, updated_at = ?, updated_by = ?, rev = rev + 1 '
         'WHERE id = ? AND deleted_at IS NOT NULL',
@@ -646,12 +655,13 @@ class RecipeStore extends ChangeNotifier {
         variables: [Variable(hlcStr), Variable(nodeId), Variable(recipeId)],
       );
 
-      final freshRecipes = await _loadAll(db);
-      recipes = freshRecipes;
-      _reindex();
-      notifyListeners();
+      return _loadAll(db);
     });
 
+    // ★ 先提交、后广播（同 createRecipe 尾注）
+    recipes = freshRecipes;
+    _reindex();
+    notifyListeners();
     _fireLocalWrite();
     return _byId[recipeId] != null;
   }

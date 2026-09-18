@@ -51,11 +51,11 @@ class SyncEngine extends ChangeNotifier {
     SyncTransport? transport,
     DateTime Function()? now,
     Future<void> Function()? onDataApplied,
-  })  : _db = db,
-        _prefs = prefs,
-        _transport = transport,
-        _now = now ?? DateTime.now,
-        _onDataApplied = onDataApplied;
+  }) : _db = db,
+       _prefs = prefs,
+       _transport = transport,
+       _now = now ?? DateTime.now,
+       _onDataApplied = onDataApplied;
 
   final ZaojiDb _db;
   final SyncPrefs _prefs;
@@ -90,6 +90,11 @@ class SyncEngine extends ChangeNotifier {
     final secs = [1, 2, 4, 8, 15, 30, 30, 30][n - 1];
     return Duration(seconds: secs);
   }
+
+  /// 自动重试的闸门：连续失败 8 次封顶，超过后只等人工「立即同步」。
+  /// 供触发接线（main.dart）判断要不要排下一次退避重试——
+  /// 不判断的话，365 天的 backoffDelay 会被排成一个永远挂着的 Timer。
+  bool get shouldAutoRetry => _consecutiveFails < 8;
 
   Future<bool> isPaired() => _prefs.isPaired();
 
@@ -211,9 +216,12 @@ class SyncEngine extends ChangeNotifier {
       // ① ping：地址可达 + 还是同一台服务器
       final ping = await transport.get('/api/ping');
       final serverId = '${ping['serverId'] ?? ''}';
-      if (pairedServerId != null && pairedServerId.isNotEmpty && serverId != pairedServerId) {
+      if (pairedServerId != null &&
+          pairedServerId.isNotEmpty &&
+          serverId != pairedServerId) {
         throw SyncServerChangedException(
-            '服务端身份变了（$pairedServerId → $serverId）。可能是连到了别的服务器，或服务端数据被清过。请重新配对。');
+          '服务端身份变了（$pairedServerId → $serverId）。可能是连到了别的服务器，或服务端数据被清过。请重新配对。',
+        );
       }
 
       var pushed = await _pushPending(transport, token);
@@ -230,7 +238,9 @@ class SyncEngine extends ChangeNotifier {
     } on SyncTransportException catch (e) {
       _consecutiveFails++;
       if (e.statusCode == 409) {
-        _fail('同步协议版本不一致（服务端 ${e.payload['serverProtocolVersion']}）。请升级 App 或服务端。');
+        _fail(
+          '同步协议版本不一致（服务端 ${e.payload['serverProtocolVersion']}）。请升级 App 或服务端。',
+        );
       } else if (e.statusCode == 401) {
         _fail('token 已失效，请重新配对。');
       } else {
@@ -238,7 +248,9 @@ class SyncEngine extends ChangeNotifier {
       }
     } on SyncNetworkException catch (e) {
       _consecutiveFails++;
-      _fail('网络问题：${e.message}（已失败 $_consecutiveFails 次，${backoffDelay().inSeconds}s 后可自动重试）');
+      _fail(
+        '网络问题：${e.message}（已失败 $_consecutiveFails 次，${backoffDelay().inSeconds}s 后可自动重试）',
+      );
     } catch (e) {
       _consecutiveFails++;
       _fail('同步出错：$e');
@@ -276,11 +288,13 @@ class SyncEngine extends ChangeNotifier {
     final changes = <Map<String, Object?>>[];
     for (final table in ZaojiDb.syncedTablesSorted) {
       final cols = syncWhitelist[table.name]!;
-      final rows = await _db.customSelect(
-        'SELECT ${cols.join(', ')} FROM ${table.name} '
-        "WHERE updated_at > ? ORDER BY updated_at",
-        variables: [Variable(watermark)],
-      ).get();
+      final rows = await _db
+          .customSelect(
+            'SELECT ${cols.join(', ')} FROM ${table.name} '
+            "WHERE updated_at > ? ORDER BY updated_at",
+            variables: [Variable(watermark)],
+          )
+          .get();
       for (final r in rows) {
         final row = r.data;
         // 墓碑必须用 op=delete：服务端的 upsert 分支刻意不处理 deleted_at
@@ -304,7 +318,9 @@ class SyncEngine extends ChangeNotifier {
       // 重试复用同一个 mutationId（服务端 applied_mutation 靠它幂等）。
       // 拿不到确认就停在这里：水位线与 mutationId 都不动，下轮原样重推。
       final mutationId = pendingMutation ?? Ulid.generate();
-      if (pendingMutation == null) await _prefs.setPendingMutationId(mutationId);
+      if (pendingMutation == null) {
+        await _prefs.setPendingMutationId(mutationId);
+      }
 
       final res = await transport.post('/api/changes', {
         'mutationId': mutationId,
@@ -316,13 +332,19 @@ class SyncEngine extends ChangeNotifier {
       } else {
         final results = (res['results'] as List? ?? const []).cast<Map>();
         for (final r in results) {
-          if (const {'inserted', 'updated', 'merged'}.contains('${r['outcome']}')) {
+          if (const {
+            'inserted',
+            'updated',
+            'merged',
+          }.contains('${r['outcome']}')) {
             pushedCount++;
           } else if ('${r['outcome']}' == 'rejected') {
             // 服务端点名拒绝（未知列/类型/NOT NULL）：这行本地也修不了，
             // 记进日志让人能查——**不能让一条坏行卡死整个水位线**，
             // 所以照样前进（见下），坏行留待「数据体检」（M5）处理。
-            debugPrint('sync: rejected ${r['tbl']}/${r['rowId']}: ${r['reason']}');
+            debugPrint(
+              'sync: rejected ${r['tbl']}/${r['rowId']}: ${r['reason']}',
+            );
           }
         }
       }
@@ -382,9 +404,7 @@ class SyncEngine extends ChangeNotifier {
       return i < 0 ? 1 << 30 : i;
     }
 
-    final list = changes
-        .map((c) => c.map((k, v) => MapEntry('$k', v)))
-        .toList()
+    final list = changes.map((c) => c.map((k, v) => MapEntry('$k', v))).toList()
       ..sort((a, b) {
         final byTable = orderOf(a['tbl']).compareTo(orderOf(b['tbl']));
         if (byTable != 0) return byTable;
@@ -442,7 +462,10 @@ class SyncEngine extends ChangeNotifier {
       return 0; // 本地相同或更新（可能是还没推上去的离线改动），保留本地
     }
 
-    final sets = [for (final c in allowed) if (c != 'id') '$c = ?'].join(', ');
+    final sets = [
+      for (final c in allowed)
+        if (c != 'id') '$c = ?',
+    ].join(', ');
     await _db.customUpdate(
       'UPDATE $tbl SET $sets WHERE id = ?',
       variables: [
@@ -455,11 +478,16 @@ class SyncEngine extends ChangeNotifier {
   }
 
   Future<Map<String, Object?>?> _selectRow(
-      String tbl, List<String> cols, String rowId) async {
-    final rows = await _db.customSelect(
-      'SELECT ${cols.join(', ')} FROM $tbl WHERE id = ?',
-      variables: [Variable(rowId)],
-    ).get();
+    String tbl,
+    List<String> cols,
+    String rowId,
+  ) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT ${cols.join(', ')} FROM $tbl WHERE id = ?',
+          variables: [Variable(rowId)],
+        )
+        .get();
     return rows.isEmpty ? null : rows.first.data;
   }
 

@@ -52,6 +52,14 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
   /// 写入后的 3 秒防抖 timer——连续写入时不打断，而是重置倒计时。
   Timer? _writeDebounce;
 
+  /// 已配对时维持的 15 分钟兜底同步（计划书 §5.4 的最后一块）。
+  /// 由 [_onSyncPhaseChanged] 按引擎状态增减——未配对的 app 永远不会有
+  /// 挂着的兜底 Timer（widget 测试的 FakeAsync 纪律：收尾时不能留 Timer）。
+  Timer? _fallbackTimer;
+
+  /// 同步失败后的退避重试（一次性，间隔来自引擎的 backoffDelay）。
+  Timer? _retryTimer;
+
   @override
   void initState() {
     super.initState();
@@ -65,6 +73,9 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _writeDebounce?.cancel();
+    _fallbackTimer?.cancel();
+    _retryTimer?.cancel();
+    _sync?.removeListener(_onSyncPhaseChanged);
     // 自己创建的 store 由自己关（关库）；测试注入的归测试管。
     // 之前漏了这一步，生产路径上本地库从来没有被关过。
     if (widget.store == null) {
@@ -102,7 +113,43 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
     _store.nodeIdGetter = prefs.nodeId;
     _store.onLocalWrite = _scheduleDebouncedSync;
 
+    // R15：兜底与退避都挂在这一根线上（见 _onSyncPhaseChanged）。
+    sync.addListener(_onSyncPhaseChanged);
+
     return sync;
+  }
+
+  /// 兜底与退避的统一接线路（计划书 §5.4 的收尾）：
+  ///
+  /// - **15 分钟兜底**：引擎离开 neverPaired（= 已配对）就维持一个周期同步，
+  ///   unpair 回到 neverPaired 时自动撤掉。挂在引擎状态上而不是自己记一份
+  ///   「是否配对」，是因为状态只有引擎一个事实源。
+  /// - **退避自动重试**：phase=error 且 shouldAutoRetry（连续失败 < 8 次）
+  ///   时排一次 backoffDelay；成功或解封后取消。duration.zero 的失败
+  ///   （协议版本不一致 / 服务器身份变更）不排——它们要人介入，
+  ///   自动重试只会空转；backoffDelay 的 365 天哨兵值也不排（= 8 次已封顶）。
+  void _onSyncPhaseChanged() {
+    final sync = _sync;
+    if (sync == null) return;
+
+    if (sync.phase != SyncPhase.neverPaired) {
+      _fallbackTimer ??= Timer.periodic(
+        const Duration(minutes: 15),
+        (_) => _sync?.syncIfPaired(),
+      );
+    } else {
+      _fallbackTimer?.cancel();
+      _fallbackTimer = null;
+    }
+
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    if (sync.phase == SyncPhase.error && sync.shouldAutoRetry) {
+      final delay = sync.backoffDelay();
+      if (delay > Duration.zero && delay < const Duration(days: 365)) {
+        _retryTimer = Timer(delay, () => _sync?.syncIfPaired());
+      }
+    }
   }
 
   /// 3 秒防抖：每次写入重置 timer，空闲满 3 秒才真的触发 sync。

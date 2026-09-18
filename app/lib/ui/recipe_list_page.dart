@@ -1142,83 +1142,94 @@ class _AddFabState extends State<_AddFab> {
           Positioned(
             left: clamped.dx,
             top: clamped.dy,
-            child: RawGestureDetector(
-              behavior: HitTestBehavior.opaque,
-              gestures: {
-                LongPressGestureRecognizer:
-                    GestureRecognizerFactoryWithHandlers<
-                      LongPressGestureRecognizer
-                    >(
-                      // 380ms：原型定的时间。默认 500ms 会让「想拖」的等待感偏长。
-                      () => LongPressGestureRecognizer(
-                        duration: const Duration(milliseconds: 380),
+            // ★ 之前整个按钮是 RawGestureDetector——语义树里根本没有它，
+            //   读屏用户永远点不到「新建菜品」。Semantics 补上 button 角色
+            //   与 onTap 动作（a11y 点击走语义动作，不经过手势竞技场，
+            //   与物理点按互不干扰）；自动化 E2E 也靠这个 label 定位。
+            child: Semantics(
+              button: true,
+              label: '新建菜品',
+              onTap: widget.onTap,
+              child: RawGestureDetector(
+                behavior: HitTestBehavior.opaque,
+                gestures: {
+                  LongPressGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                        LongPressGestureRecognizer
+                      >(
+                        // 380ms：原型定的时间。默认 500ms 会让「想拖」的等待感偏长。
+                        () => LongPressGestureRecognizer(
+                          duration: const Duration(milliseconds: 380),
+                        ),
+                        (instance) {
+                          instance
+                            ..onLongPressStart = _onLongPressStart
+                            ..onLongPressMoveUpdate = _onLongPressMoveUpdate
+                            ..onLongPressEnd = _onLongPressEnd;
+                        },
                       ),
-                      (instance) {
-                        instance
-                          ..onLongPressStart = _onLongPressStart
-                          ..onLongPressMoveUpdate = _onLongPressMoveUpdate
-                          ..onLongPressEnd = _onLongPressEnd;
-                      },
-                    ),
-                TapGestureRecognizer:
-                    GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
-                      () => TapGestureRecognizer(),
-                      (instance) {
+                  TapGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                        TapGestureRecognizer
+                      >(() => TapGestureRecognizer(), (instance) {
                         // 长按在手势竞技场里天然压过点按，拖完不会触发点击——
                         // 这里的判断只是双保险（比如长按刚结束的极短窗口）。
                         instance.onTap = () {
                           if (!_armed && !_dragging) widget.onTap();
                         };
-                      },
+                      }),
+                },
+                child: AnimatedScale(
+                  scale: _dragging
+                      ? 1.12
+                      : _armed
+                      ? 1.06
+                      : 1,
+                  duration: const Duration(milliseconds: 170),
+                  curve: ZaojiMotion.ease,
+                  child: Container(
+                    width: _size,
+                    height: _size,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const LinearGradient(
+                        begin: Alignment(-0.6, -1),
+                        end: Alignment(0.6, 1),
+                        colors: [Color(0xFFE2571F), Color(0xFFC33F14)],
+                      ),
+                      boxShadow: _dragging
+                          ? const [
+                              BoxShadow(
+                                color: Color(0x80C33F14),
+                                blurRadius: 44,
+                                offset: Offset(0, 20),
+                              ),
+                              BoxShadow(
+                                color: Color(0x212E491C),
+                                blurRadius: 12,
+                              ),
+                            ]
+                          : const [
+                              BoxShadow(
+                                color: Color(0x5CC33F14), // rgba(195,63,20,.36)
+                                blurRadius: 24,
+                                offset: Offset(0, 10),
+                              ),
+                              BoxShadow(
+                                color: Color(0x3318110B), // rgba(24,17,11,.2)
+                                blurRadius: 8,
+                                offset: Offset(0, 3),
+                              ),
+                            ],
                     ),
-              },
-              child: AnimatedScale(
-                scale: _dragging
-                    ? 1.12
-                    : _armed
-                    ? 1.06
-                    : 1,
-                duration: const Duration(milliseconds: 170),
-                curve: ZaojiMotion.ease,
-                child: Container(
-                  width: _size,
-                  height: _size,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      begin: Alignment(-0.6, -1),
-                      end: Alignment(0.6, 1),
-                      colors: [Color(0xFFE2571F), Color(0xFFC33F14)],
-                    ),
-                    boxShadow: _dragging
-                        ? const [
-                            BoxShadow(
-                              color: Color(0x80C33F14),
-                              blurRadius: 44,
-                              offset: Offset(0, 20),
-                            ),
-                            BoxShadow(color: Color(0x212E491C), blurRadius: 12),
-                          ]
-                        : const [
-                            BoxShadow(
-                              color: Color(0x5CC33F14), // rgba(195,63,20,.36)
-                              blurRadius: 24,
-                              offset: Offset(0, 10),
-                            ),
-                            BoxShadow(
-                              color: Color(0x3318110B), // rgba(24,17,11,.2)
-                              blurRadius: 8,
-                              offset: Offset(0, 3),
-                            ),
-                          ],
-                  ),
-                  child: AnimatedRotation(
-                    turns: _dragging ? 0.125 : 0,
-                    duration: const Duration(milliseconds: 340),
-                    child: const Icon(
-                      Icons.add,
-                      size: 26,
-                      color: Color(0xFFFFF3E8),
+                    child: AnimatedRotation(
+                      turns: _dragging ? 0.125 : 0,
+                      duration: const Duration(milliseconds: 340),
+                      child: const Icon(
+                        Icons.add,
+                        size: 26,
+                        color: Color(0xFFFFF3E8),
+                      ),
                     ),
                   ),
                 ),
