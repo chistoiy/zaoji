@@ -57,9 +57,9 @@ const List<Map<String, Object?>> kEndpoints = [
     'status': 'ready'
   },
   {
-    'path': '/api/media/{sha256}',
+    'path': '/api/media/{sha256}?w=640|1280',
     'method': 'GET',
-    'title': '图片按需拉取',
+    'title': '图片按需拉取（带 w 取缩略图，服务端派生）',
     'status': 'ready'
   },
   {
@@ -95,6 +95,7 @@ class ServerState {
 
   /// 内容寻址的图片存储（R16）：`data/media/<sha256>`。
   /// 图片不走 change_log，字节本体由显示端按 sha256 按需拉取。
+  /// 缩略图（R17）派生到 `data/media/thumb/`，同样是内容寻址的纯派生数据。
   late final MediaStore media = MediaStore(
       Directory('${config.dataDir.path}${Platform.pathSeparator}media'));
 

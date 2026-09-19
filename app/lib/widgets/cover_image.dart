@@ -7,20 +7,34 @@ import '../theme.dart';
 
 /// 封面照片（按 sha256 从服务端按需拉取，引擎内存缓存）。
 ///
+/// [width] 决定拉原图还是哪一档缩略图（见 `MediaWidth`）：
+/// **列表传 `MediaWidth.card`，详情传 `MediaWidth.detail`**。
+/// 默认 null = 原图——只有在"看到的尺寸确实接近原图"时才该用，
+/// 否则就是在为一张会被缩小显示的图付全额的流量、解码和内存。
+///
 /// **任何失败都退化为透明**：这个组件叠在封面插画（DishArt）之上，
 /// 未配对 / 不存在 / 网络失败时插画自然透出来，调用方不需要写任何分支——
 /// 「没有照片的菜」是常态而不是错误。
 class CoverImage extends StatelessWidget {
-  const CoverImage({super.key, required this.sha, this.fit = BoxFit.cover});
+  const CoverImage({
+    super.key,
+    required this.sha,
+    this.width,
+    this.fit = BoxFit.cover,
+  });
 
   final String sha;
+
+  /// 缩略图档位（`MediaWidth.card` / `MediaWidth.detail`）；null = 原图。
+  final int? width;
+
   final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder(
-      // 引擎有内存缓存：同一 sha 重复 build 不会重复发请求
-      future: SyncScope.of(context).fetchMediaCached(sha),
+      // 引擎有内存缓存：同一 (sha, 档位) 重复 build 不会重复发请求
+      future: SyncScope.of(context).fetchMediaCached(sha, width: width),
       builder: (context, snap) {
         final bytes = snap.data;
         if (bytes == null) return const SizedBox.shrink();

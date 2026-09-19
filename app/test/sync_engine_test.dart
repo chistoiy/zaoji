@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:drift/drift.dart' show Variable;
 import 'package:drift/native.dart';
@@ -216,6 +217,57 @@ void main() {
     expect(engine.lastError, contains('配对码'));
     expect(await SyncPrefs(store.dbOrNull!).isPaired(), isFalse);
   });
+
+  group('图片分级拉取（R17）', () {
+    test('★ 列表拉 640 档、详情拉 1280 档——都不去拉 1600px 原图', () async {
+      await paired();
+      final sha = 'a' * 64;
+
+      final card = await engine.fetchMediaCached(sha, width: MediaWidth.card);
+      final detail =
+          await engine.fetchMediaCached(sha, width: MediaWidth.detail);
+
+      expect(card, isNotNull);
+      expect(detail, isNotNull);
+      expect(utf8.decode(card!), 'w640:$sha');
+      expect(utf8.decode(detail!), 'w1280:$sha');
+      expect(server.mediaPaths,
+          ['/api/media/$sha?w=640', '/api/media/$sha?w=1280']);
+      expect(server.mediaPaths.any((p) => !p.contains('?w=')), isFalse,
+          reason: '原图 200~500 KB，列表根本看不出与 640 档的差别——一屏 6 张就是几 MB');
+    });
+
+    test('★ 缓存按 (sha, 档位) 分格：重复 build 不再发请求，三档互不串味', () async {
+      await paired();
+      final sha = 'b' * 64;
+      await engine.fetchMediaCached(sha, width: MediaWidth.card);
+      await engine.fetchMediaCached(sha, width: MediaWidth.detail);
+      final before = server.mediaPaths.length;
+
+      await engine.fetchMediaCached(sha, width: MediaWidth.card);
+      await engine.fetchMediaCached(sha, width: MediaWidth.detail);
+      expect(server.mediaPaths.length, before, reason: '两档各自命中缓存');
+
+      final full = await engine.fetchMediaCached(sha);
+      expect(utf8.decode(full!), 'full:$sha',
+          reason: '原图是第三格缓存，不能被缩略图顶掉（否则详情看到的是缩略图放大的糊图）');
+      expect(server.mediaPaths.length, before + 1);
+    });
+
+    test('未配对 / 404 / 档位非法 → 一律 null，绝不把异常抛给 UI', () async {
+      final sha = 'c' * 64;
+      // ① 未配对：没有 token 就不该发请求
+      expect(await engine.fetchMediaCached(sha, width: MediaWidth.card), isNull);
+      expect(server.mediaPaths, isEmpty);
+
+      await paired();
+      // ② 服务端没有这张图
+      expect(
+          await engine.fetchMediaCached('d' * 64, width: MediaWidth.card), isNull);
+      // ③ 档位不在白名单（服务端 400，不是"回原图"）
+      expect(await engine.fetchMediaCached(sha, width: 333), isNull);
+    });
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -236,6 +288,10 @@ class FakeSyncServer {
   int pullCount = 0;
   Map<String, String>? lastPullQuery;
   int? protocolVersionOverride;
+
+  /// 媒体请求的完整路径（含 query）。用来钉死「列表拉的是 640 档而不是原图」——
+  /// 这类退化不会报错，只会让手机白白多解一张 1600px 的图。
+  final mediaPaths = <String>[];
 
   static const serverId = 'fake-server';
   static const goodCode = 'TEST24';
@@ -258,6 +314,7 @@ class FakeSyncServer {
     pushCount = 0;
     pullCount = 0;
     lastPullQuery = null;
+    mediaPaths.clear();
   }
 
   var _hlc = Hlc.now(serverId);
@@ -329,6 +386,39 @@ class FakeSyncServer {
         (status, res) = req.method == 'POST'
             ? _push(json)
             : (200, _pull(req.uri.queryParameters));
+      } else if (req.uri.path.startsWith('/api/media/')) {
+        // 媒体接口：与真服务端同款三道语义——要 token、档位白名单、原图/缩略图
+        if (_deviceIdOf(req) == null) {
+          req.response.statusCode = 401;
+          req.response.write(jsonEncode({'error': 'unauthorized'}));
+          await req.response.close();
+          return;
+        }
+        final sha = req.uri.pathSegments.last;
+        final w = req.uri.queryParameters['w'];
+        mediaPaths.add(w == null ? '/api/media/$sha' : '/api/media/$sha?w=$w');
+
+        if (w != null && w != '640' && w != '1280') {
+          // 白名单外一律 400，**不做「不认识就回原图」的静默降级**
+          req.response.statusCode = 400;
+          req.response.write(jsonEncode({'error': 'bad_request'}));
+          await req.response.close();
+          return;
+        }
+        if (sha != 'a' * 64 && sha != 'b' * 64 && sha != 'c' * 64) {
+          req.response.statusCode = 404;
+          req.response.write(jsonEncode({'error': 'not_found'}));
+          await req.response.close();
+          return;
+        }
+        // 载荷按档位区分，测试即可断言"拿回来的到底是哪一档"
+        final payload = Uint8List.fromList(
+            utf8.encode('${w == null ? 'full' : 'w$w'}:$sha'));
+        req.response.statusCode = 200;
+        req.response.headers.contentType = ContentType('image', 'jpeg');
+        req.response.add(payload);
+        await req.response.close();
+        return;
       } else {
         status = 404;
         res = {'error': 'not_found'};

@@ -55,7 +55,8 @@ class ServerConfig {
   /// 0.3.0：数据底座就位（SQLite + 统一五列 + change_log）。
   /// 0.4.0：同步接口就位（配对鉴权 / 增量拉取 / 幂等推送 / 冲突箱）。
   /// 0.5.0：媒体接口就位（图片内容寻址上传 / 按需拉取）。
-  static const String version = '0.5.0';
+  /// 0.6.0：派生缩略图（`GET /api/media/<sha>?w=`，白名单档位 + 落盘缓存 + 上传预热）。
+  static const String version = '0.6.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 

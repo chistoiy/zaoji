@@ -430,17 +430,30 @@ class ZaojiServer {
     }
 
     final r = await state.media.put(sha, bytes);
+
+    // 顺手把两档缩略图派生好（best-effort，失败不影响这次上传的结果）：
+    // 用户刚选完封面回到列表就应该看到图，而不是在列表里等第一次派生。
+    await state.media.warmThumbs(sha);
+
     return _json({
       'ok': true,
       'sha256': r.sha,
       'size': r.size,
       'type': r.type,
       'duplicated': r.duplicated,
+      'thumbs': MediaStore.thumbWidths
+          .where((w) => state.media.thumbExists(sha, w))
+          .toList(growable: false),
     });
   }
 
-  /// 拉取图片：GET /api/media/<sha256>。
-  /// 内容寻址 = 内容永不变更，因此可以放心让客户端**长缓存**。
+  /// 拉取图片：`GET /api/media/<sha256>`，可选 `?w=640|1280`。
+  ///
+  /// - 不带 `w` → **原图**（客户端压缩后的 1600px/q82）。
+  /// - 带 `w` → 该档**缩略图**，首次访问时派生并落盘，之后直接读文件。
+  ///
+  /// 内容寻址 = 内容永不变更，因此可以放心让客户端**长缓存**；
+  /// 缩略图同理——它是 `(sha, width)` 的纯函数，同样永不改变。
   static Future<Response> _mediaGet(
       ServerState state, Request req, String sha) async {
     final device = state.sync.authenticate(req.headers['authorization']);
@@ -448,6 +461,19 @@ class ZaojiServer {
 
     if (!MediaStore.isValidSha(sha)) {
       return _mediaBad('sha256 必须是 64 位小写十六进制');
+    }
+
+    final rawW = req.url.queryParameters['w'];
+    if (rawW != null) {
+      final w = int.tryParse(rawW);
+      if (w == null || !MediaStore.isValidThumbWidth(w)) {
+        // **不做「宽度不认识就回原图」的静默降级**：客户端把档位写错时，
+        // 它应该立刻拿到一个明确的错误，而不是收到几 MB 原图、
+        // 把问题藏成「怎么还是这么慢」——那种问题没人查得出来。
+        return _mediaBad(
+            '缩略图宽度只支持 ${MediaStore.thumbWidths.join(' / ')}（像素），收到 "$rawW"');
+      }
+      return _mediaThumb(state, sha, w);
     }
 
     final f = state.media.fileFor(sha);
@@ -460,6 +486,29 @@ class ZaojiServer {
     return Response.ok(bytes, headers: {
       'content-type': type,
       // 私有长缓存：图片带 token 才能拉（不应被共享代理缓存），但内容永不变
+      'cache-control': 'private, max-age=31536000, immutable',
+    });
+  }
+
+  /// 缩略图分支。原图不存在照样 404（派生源都没有，没什么好派的）。
+  static Future<Response> _mediaThumb(
+      ServerState state, String sha, int width) async {
+    if (!state.media.exists(sha)) {
+      return _json({'error': 'not_found', 'message': '没有这张图片'}, status: 404);
+    }
+
+    final Uint8List bytes;
+    try {
+      bytes = await state.media.readOrDeriveThumb(sha, width);
+    } on FormatException {
+      // 魔数过了但解不开（截断 / 伪造的文件头）。这是**这个文件**的问题，
+      // 不是请求的问题——所以是 415 而不是 400/500。
+      return _mediaBad('这张图片无法解码，派生不了缩略图', status: 415);
+    }
+
+    return Response.ok(bytes, headers: {
+      // 一律 JPEG（统一格式，客户端不用按档位猜）
+      'content-type': 'image/jpeg',
       'cache-control': 'private, max-age=31536000, immutable',
     });
   }

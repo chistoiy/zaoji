@@ -60,6 +60,15 @@ foreach ($l in ($out -split "`r?`n")) {
   if ($l -match 'Built|Error|error:|Failed|Compiling') { Write-Host ("    " + $l.Trim()) }
 }
 if ($code -ne 0) {
+  # ★ 失败时打**完整输出**，不要只打匹配那几行正则的摘要。
+  #   2026-09-19 真踩过：某次构建只留下「✘ 构建失败 exit=1」一行，
+  #   真正的报错行一个都没留下，于是无法区分「代码问题」还是「环境抖动」，
+  #   只能重跑一遍碰运气——而重跑成功也不能证明第一次为什么失败。
+  #   诊断信息只留摘要 = 下一次还得靠猜。
+  Write-Host ''
+  Write-Host '  ── 完整构建输出（失败时全打）──────────────────────' -ForegroundColor DarkGray
+  foreach ($l in ($out -split "`r?`n")) { Write-Host ('    ' + $l) }
+  Write-Host ''
   Write-Host ("  ✘ 构建失败 exit=$code") -ForegroundColor Red
   exit $code
 }

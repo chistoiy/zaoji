@@ -492,12 +492,18 @@ class SyncEngine extends ChangeNotifier {
     return rows.isEmpty ? null : rows.first.data;
   }
 
-  // ───────────────────────── 媒体（R16） ─────────────────────────
+  // ───────────────────────── 媒体（R16 / R17） ─────────────────────────
 
-  /// 已拉取的媒体字节缓存。内容寻址 = 同一个 sha256 永远是同一张图，
+  /// 已拉取的媒体字节缓存。内容寻址 = 同一个 `(sha256, 档位)` 永远是同一份字节，
   /// 所以缓存不需要失效逻辑，只需限容量。
+  ///
+  /// 容量按「条」算，而不是按「张」：同一个 sha 现在会占两格
+  /// （列表的 card 档 + 详情的 detail 档），所以给了 96 而不是原先的 64。
   final Map<String, Uint8List> _mediaCache = {};
-  static const int _mediaCacheCap = 64;
+  static const int _mediaCacheCap = 96;
+
+  static String _mediaKey(String sha, int? width) =>
+      width == null ? '$sha@full' : '$sha@$width';
 
   /// 上传图片字节：客户端算 sha256 → `PUT /api/media/<sha>`。
   ///
@@ -517,24 +523,33 @@ class SyncEngine extends ChangeNotifier {
     return sha;
   }
 
-  /// 按内容哈希拉取图片字节（带内存缓存，上限 64 张）。
-  /// 未配对 / 404 / 网络失败都返回 null——显示端降级为封面插画，
+  /// 按内容哈希拉取图片字节（带内存缓存，见 [_mediaCacheCap]）。
+  ///
+  /// [width] 为 null → **原图**（客户端压过的 1600px/q82）；
+  /// 传档位 → 该档**缩略图**，字节由服务端按需派生并缓存。
+  /// 只有 [MediaWidth] 里那两档有效——服务端是白名单，别的宽度一律 400
+  /// （刻意不做「不认识就回原图」的静默降级）。
+  ///
+  /// 未配对 / 404 / 网络失败都返回 null：显示端降级为封面插画，
   /// 把「没有封面」当常态处理，而不是当错误弹窗。
-  Future<Uint8List?> fetchMediaCached(String sha) async {
-    final hit = _mediaCache[sha];
+  Future<Uint8List?> fetchMediaCached(String sha, {int? width}) async {
+    final key = _mediaKey(sha, width);
+    final hit = _mediaCache[key];
     if (hit != null) return hit;
 
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
     if (token == null || serverUrl == null) return null;
     try {
+      final path =
+          width == null ? '/api/media/$sha' : '/api/media/$sha?w=$width';
       final bytes = await _transportOf(
         serverUrl,
-      ).getBytes('/api/media/$sha', token: token);
+      ).getBytes(path, token: token);
       if (_mediaCache.length >= _mediaCacheCap) {
         _mediaCache.remove(_mediaCache.keys.first);
       }
-      _mediaCache[sha] = bytes;
+      _mediaCache[key] = bytes;
       return bytes;
     } catch (_) {
       return null;
@@ -587,4 +602,27 @@ class SyncServerChangedException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 图片档位——**必须与服务端 `MediaStore.thumbWidths` 逐值对齐**。
+///
+/// 服务端只认这两档（白名单，认不出的一律 400，**不做「不认识的宽度就回原图」的静默降级**）：
+/// 派生结果要落盘成 `<sha>-<w>.jpg`，接受任意 w 就等于给了一条
+/// `?w=1`、`?w=2` … 把家里那台笔记本磁盘写满的路径。
+///
+/// 两档的取值理由（按手机端实际显示尺寸反推）：
+/// - [card]：列表 390 逻辑像素宽两列，卡片约 173 逻辑像素 × 3 DPR ≈ 519 物理像素 → 640 够。
+/// - [detail]：详情满宽 390 逻辑像素 × 3 DPR ≈ 1170 → 1280 够。
+///
+/// **为什么列表必须走缩略图**：原图是客户端压过的 1600px/q82（约 200~500 KB），
+/// 一屏 6 张卡片就是 1.5~3 MB。局域网不慢，但手机为它付出的解码时间与常驻内存是真的，
+/// 而列表里根本看不出 1600px 与 640px 的区别。
+class MediaWidth {
+  const MediaWidth._();
+
+  /// 列表卡片缩略图。
+  static const int card = 640;
+
+  /// 详情大图。
+  static const int detail = 1280;
 }

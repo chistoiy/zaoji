@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/store_scope.dart';
+import '../data/sync/sync_engine.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/chili_scale.dart';
@@ -133,7 +134,12 @@ class _Hero extends StatelessWidget {
             borderRadius: BorderRadius.circular(ZaojiRadius.lg),
             child: AspectRatio(
               aspectRatio: 16 / 9,
-              child: CoverImage(sha: recipe.coverSha256!),
+              child: CoverImage(
+                sha: recipe.coverSha256!,
+                // 详情展示的是满宽大图，用 detail 档（1280）而不是原始 1600px：
+                // 差值看不出来，省下来的是手机的解码时间与内存
+                width: MediaWidth.detail,
+              ),
             ),
           ),
           const SizedBox(height: 14),

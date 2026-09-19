@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../data/recipe_store.dart';
 import '../data/store_scope.dart';
+import '../data/sync/sync_engine.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/chili_scale.dart';
@@ -796,7 +797,12 @@ class _RecipeCard extends StatelessWidget {
                       DishArt(kind: recipe.art, palette: recipe.palette),
                       // 实拍封面（R16）：叠在插画上，未拉到时透明退化为插画
                       if (recipe.coverSha256 != null)
-                        CoverImage(sha: recipe.coverSha256!),
+                        CoverImage(
+                          sha: recipe.coverSha256!,
+                          // ★ 列表一律走 640 档缩略图：卡片实际显示不到 200 逻辑像素宽，
+                          // 拉 1600px 原图纯属浪费（一屏 6 张就是 1.5~3 MB）
+                          width: MediaWidth.card,
+                        ),
                       const ArtVeil(),
                       if (recipe.isAi)
                         Positioned(

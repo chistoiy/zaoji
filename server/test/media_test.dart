@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:image/image.dart' as img;
 import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
 import 'package:zaoji_server/zaoji_server.dart';
@@ -101,6 +102,32 @@ void main() {
     expect(put.statusCode, 200);
     return sha;
   }
+
+  /// 只配对拿 token（不上传）。定义在 main 顶层而不是某个 group 里——
+  /// group 内定义的 helper 对后面的 group 是不可见的（踩过一次）。
+  Future<String> pair(String deviceId) async {
+    final codeRes = await hit('GET', '/api/pair/code');
+    final code = (await jsonOf(codeRes))['code'] as String;
+    final pairRes = await hit('POST', '/api/pair',
+        bytes: Uint8List.fromList(utf8.encode(jsonEncode({
+          'code': code,
+          'deviceId': deviceId,
+          'deviceName': '测试设备',
+        }))));
+    expect(pairRes.statusCode, 200);
+    return (await jsonOf(pairRes))['token'] as String;
+  }
+
+  /// 一张**真能解码**的 2000×1500 JPEG。
+  /// 缩略图这条链路必须用真图片：上面那个 16 字节的"jpeg"只能骗过魔数嗅探，
+  /// 一到解码就露馅（那份假字节反过来正好是「解不开」的测试素材）。
+  final photo = img.encodeJpg(
+    img.fill(
+      img.Image(width: 2000, height: 1500),
+      color: img.ColorRgb8(200, 120, 60),
+    ),
+    quality: 90,
+  );
 
   group('鉴权', () {
     test('PUT 没带 token → 401', () async {
@@ -234,7 +261,166 @@ void main() {
     });
   });
 
+  group('缩略图（R17）', () {
+    test('★ 上传即预热两档缩略图（回到列表立刻有图，不用等现算）', () async {
+      final token = await pair('thumb-1');
+      final sha = MediaStore.sha256Hex(photo);
+
+      final res =
+          await hit('PUT', '/api/media/$sha', bytes: photo, token: token);
+      expect(res.statusCode, 200);
+      final body = await jsonOf(res);
+      expect(body['thumbs'], containsAll(<int>[640, 1280]));
+
+      expect(state.media.thumbExists(sha, 640), isTrue);
+      expect(state.media.thumbExists(sha, 1280), isTrue);
+      expect(await state.media.read(sha), photo,
+          reason: '预热只写派生目录，原图必须逐位不变');
+    });
+
+    test('★ ?w=640 拉回的是真缩略图：宽 640、4:3 等比、比原图小', () async {
+      final token = await pair('thumb-2');
+      final sha = await upload(photo);
+
+      final res = await hit('GET', '/api/media/$sha?w=640', token: token);
+      expect(res.statusCode, 200);
+      expect(res.headers['content-type'], 'image/jpeg');
+      expect(res.headers['cache-control'], contains('immutable'));
+
+      final got = await bytesOf(res);
+      final decoded = img.decodeImage(got);
+      expect(decoded, isNotNull);
+      expect(decoded!.width, 640);
+      expect(decoded.height, 480, reason: '2000×1500 等比缩到 640 宽');
+      expect(got.length, lessThan(photo.length));
+    });
+
+    test('?w=1280 → 宽 1280，且明显大于 640 档', () async {
+      final token = await pair('thumb-3');
+      final sha = await upload(photo);
+
+      final big = await bytesOf(
+          await hit('GET', '/api/media/$sha?w=1280', token: token));
+      final small = await bytesOf(
+          await hit('GET', '/api/media/$sha?w=640', token: token));
+
+      expect(img.decodeImage(big)!.width, 1280);
+      expect(img.decodeImage(small)!.width, 640);
+      expect(big.length, greaterThan(small.length));
+      expect(big.length, lessThan(photo.length));
+    });
+
+    test('★ 不带 w 仍是原图（缩略图接口没有顺手改掉原图语义）', () async {
+      final token = await pair('thumb-4');
+      final sha = await upload(photo);
+
+      final res = await hit('GET', '/api/media/$sha', token: token);
+      expect(res.statusCode, 200);
+      expect(res.headers['content-type'], 'image/jpeg');
+      expect(await bytesOf(res), photo);
+      // 对照：带 w 的字节必须与原图不同，否则上面那条断言毫无意义
+      final thumb = await bytesOf(
+          await hit('GET', '/api/media/$sha?w=640', token: token));
+      expect(thumb, isNot(photo));
+    });
+
+    test('★ 宽度不在白名单 → 400，且一个派生文件都不多写', () async {
+      final token = await pair('thumb-5');
+      final sha = await upload(photo);
+      final before =
+          state.media.thumbDir.listSync().whereType<File>().length;
+
+      for (final bad in const ['100', '99999', '321', 'abc', '640.0', '0', '-640', '']) {
+        final res = await hit('GET', '/api/media/$sha?w=$bad', token: token);
+        expect(res.statusCode, 400, reason: 'w="$bad" 必须被拒绝，不能静默回原图');
+      }
+
+      expect(state.media.thumbDir.listSync().whereType<File>().length, before,
+          reason: '白名单的意义就是「不会有人用 ?w=1..9999 把磁盘写满」');
+    });
+
+    test('★ 缓存优先：派生文件已存在就直接用，不重新解码；删掉能自愈', () async {
+      final token = await pair('thumb-6');
+      final sha = await upload(photo); // 上传已预热两档
+
+      // 把 640 档换成一坨可辨认的垃圾：
+      // 如果服务端「每次请求都现算」，我们会拿回一张真 JPEG；
+      // 只有「先信缓存」才会原样吐出这坨垃圾。
+      // 这条断言钉死的是——**列表滚动不会每次都重解码一张 1600px 原图**。
+      final f = state.media.thumbFileFor(sha, 640);
+      final marker = Uint8List.fromList(List<int>.generate(64, (i) => i));
+      await f.writeAsBytes(marker, flush: true);
+
+      final hit1 = await hit('GET', '/api/media/$sha?w=640', token: token);
+      expect(hit1.statusCode, 200);
+      expect(await bytesOf(hit1), marker);
+
+      // 派生数据丢了随时能再算——删掉文件即自愈
+      await f.delete();
+      final hit2 = await hit('GET', '/api/media/$sha?w=640', token: token);
+      expect(hit2.statusCode, 200);
+      expect(img.decodeImage(await bytesOf(hit2))!.width, 640);
+    });
+
+    test('★ 解不开的图（只骗过魔数）请求缩略图 → 415，上传本身仍成功', () async {
+      final token = await pair('thumb-7');
+      final sha = MediaStore.sha256Hex(jpeg); // 16 字节的假 JPEG
+
+      final put = await hit('PUT', '/api/media/$sha', bytes: jpeg, token: token);
+      expect(put.statusCode, 200, reason: 'PUT 的契约是「魔数白名单」，不是「一定能解码」');
+      expect((await jsonOf(put))['thumbs'], isEmpty,
+          reason: '预热失败被吞掉，并如实回报没有缩略图');
+
+      final res = await hit('GET', '/api/media/$sha?w=640', token: token);
+      expect(res.statusCode, 415, reason: '是这张文件的问题，不是请求的问题——也不该是 500');
+    });
+
+    test('不存在的 sha 取缩略图 → 404（不是 415）', () async {
+      final token = await pair('thumb-8');
+      final missing = MediaStore.sha256Hex(Uint8List.fromList([1, 2, 3]));
+      final res = await hit('GET', '/api/media/$missing?w=640', token: token);
+      expect(res.statusCode, 404);
+    });
+
+    test('缩略图同样要 token（照片是家事）', () async {
+      final sha = await upload(photo);
+      final res = await hit('GET', '/api/media/$sha?w=640');
+      expect(res.statusCode, 401);
+    });
+
+    test('重复取同一档 → 字节稳定（(sha, w) 的纯函数）', () async {
+      final token = await pair('thumb-9');
+      final sha = await upload(photo);
+      final a = await bytesOf(
+          await hit('GET', '/api/media/$sha?w=640', token: token));
+      final b = await bytesOf(
+          await hit('GET', '/api/media/$sha?w=640', token: token));
+      expect(a, b);
+    });
+  });
+
   group('MediaStore 单元', () {
+    test('isValidThumbWidth：只认白名单档位', () {
+      for (final w in MediaStore.thumbWidths) {
+        expect(MediaStore.isValidThumbWidth(w), isTrue);
+      }
+      for (final w in const [0, 1, 320, 500, 641, 1024, 1600, -640]) {
+        expect(MediaStore.isValidThumbWidth(w), isFalse, reason: 'w=$w');
+      }
+    });
+
+    test('thumbFileFor 落在 thumb/ 子目录，且文件形态与原图不可能撞名', () {
+      final sha = 'a' * 64;
+      final t = state.media.thumbFileFor(sha, 640);
+      expect(t.path, contains('thumb'));
+      expect(t.path, endsWith('$sha-640.jpg'));
+      expect(MediaStore.isValidSha(t.uri.pathSegments.last), isFalse,
+          reason: '派生文件不能被当成一份内容寻址的原图');
+      // 原图与派生图各在一个目录里，遍历 media/ 一层拿到的永远只有原图
+      expect(state.media.fileFor(sha).parent.path,
+          isNot(state.media.thumbDir.path));
+    });
+
     test('isValidSha：64 位小写 hex 才合法', () {
       expect(MediaStore.isValidSha('a' * 64), isTrue);
       expect(MediaStore.isValidSha('A' * 64), isFalse, reason: '只收小写');

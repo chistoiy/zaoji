@@ -1,9 +1,12 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:image/image.dart' as img;
 
-/// 内容寻址的图片存储：`data/media/<sha256>`。
+/// 内容寻址的图片存储：`data/media/<sha256>`，以及按需派生的缩略图
+/// `data/media/thumb/<sha256>-<width>.jpg`。
 ///
 /// 设计要点（出处：计划书 §6 图片管线 / 交接文档「图片：客户端压 1600px/q82，
 /// 缩略图入库，原图按 sha256 按需拉取」）：
@@ -16,17 +19,49 @@ import 'package:crypto/crypto.dart';
 ///   会让显示端永远拉到错的图，且两头都不报错。
 /// - **内容寻址 = 天然去重**：同一张图传两遍、两道菜用同一张图，
 ///   磁盘上永远只有一份。写一次永不改（改名是内容变更 = 新哈希 = 新文件）。
+///
+/// 缩略图（R17）为什么放在**服务端按需派生**，而不是让客户端多传一份：
+///
+/// - 客户端多传一份要动 `recipe` 表再加一列 → schema 迁移 + 老数据没有缩略图
+///   （要么回填要么长期双路径）；
+/// - 派生结果是 `(sha, width)` 的**纯函数**，缓存永不过期、天然幂等，
+///   且对**所有已有图片立刻生效**，不需要一次性重算历史数据；
+/// - 代价只是笔记本上第一次访问时多几十到几百毫秒 CPU，之后全是读文件。
 class MediaStore {
   MediaStore(this.dir);
 
   /// 存放目录（`data/media`）。`put` 时按需创建。
   final Directory dir;
 
+  /// 派生缩略图的子目录。
+  ///
+  /// 放**子目录**而不是与原名平铺：`media/` 下每个文件都必须是一个内容寻址的原图，
+  /// 这条不变量要保住——将来做孤儿回收、统计磁盘占用、备份，都是直接遍历 `media/` 一层。
+  /// 派生文件混进去，这类遍历立刻需要过滤条件（而过滤条件总会有人忘加）。
+  Directory get thumbDir =>
+      Directory('${dir.path}${Platform.pathSeparator}thumb');
+
   static final RegExp _shaPattern = RegExp(r'^[0-9a-f]{64}$');
 
   /// 路径参数与客户端引用都必须是 64 位小写十六进制。
   /// 挡掉 `../`、绝对路径这类路径穿越尝试——拼路径之前先验格式。
   static bool isValidSha(String s) => _shaPattern.hasMatch(s);
+
+  /// 缩略图档位白名单（像素宽）。
+  ///
+  /// - `640` → 列表卡片。手机 390 逻辑像素宽两列，卡片约 173 逻辑像素 × 3 DPR ≈ 519 物理像素。
+  /// - `1280` → 详情大图。满宽 390 逻辑像素 × 3 DPR ≈ 1170。
+  ///
+  /// **必须是白名单，不能「任意宽度都接受」**：派生结果要落盘成
+  /// `<sha>-<w>.jpg`，接受任意 w 就等于把 `?w=1`、`?w=2` … `?w=9999` 变成
+  /// 一条写满磁盘的路径——而这台机器是家里没人看着的笔记本，不是有运维的服务器。
+  /// 白名单顺带保证了「同一个 sha 的派生结果是一个固定有限集」，缓存可以放心长期留存。
+  static const List<int> thumbWidths = [640, 1280];
+
+  /// 缩略图一律重编码成 JPEG：统一格式，客户端不必按档位去猜 content-type。
+  static const int thumbQuality = 78;
+
+  static bool isValidThumbWidth(int w) => thumbWidths.contains(w);
 
   /// 允许的图片格式，按**魔数**判断（不信扩展名、不信 Content-Type 头）。
   /// 白名单之外一律拒绝：这是图片接口，不是网盘。
@@ -62,15 +97,22 @@ class MediaStore {
   /// 计算 bytes 的 sha256（小写 hex）。客户端与服务端共用同一个算法约定。
   static String sha256Hex(Uint8List bytes) => sha256.convert(bytes).toString();
 
+  /// 原图路径。`<dir>/<64 位 hex>`。
   File fileFor(String sha) =>
       File('${dir.path}${Platform.pathSeparator}$sha');
 
+  /// 缩略图路径。`<dir>/thumb/<64 位 hex>-<width>.jpg`。
+  File thumbFileFor(String sha, int width) =>
+      File('${thumbDir.path}${Platform.pathSeparator}$sha-$width.jpg');
+
   bool exists(String sha) => isValidSha(sha) && fileFor(sha).existsSync();
+
+  bool thumbExists(String sha, int width) =>
+      isValidSha(sha) && thumbFileFor(sha, width).existsSync();
 
   /// 落盘。调用方必须已完成鉴权 / 大小上限 / 哈希校验 / 格式嗅探——
   /// 这里只负责「写一次」本身。
   Future<MediaPutResult> put(String sha, Uint8List bytes) async {
-    await dir.create(recursive: true);
     final target = fileFor(sha);
 
     if (target.existsSync()) {
@@ -85,23 +127,7 @@ class MediaStore {
       );
     }
 
-    // 先写临时文件再 rename：写一半被杀不会留下一个「存在但损坏」的媒体文件
-    // （哈希寻址的世界里，损坏比缺失更糟——缺失还能重传，损坏会被永久引用）。
-    final tmp = File('${target.path}.tmp');
-    await tmp.writeAsBytes(bytes, flush: true);
-    try {
-      await tmp.rename(target.path);
-    } on FileSystemException {
-      // 并发写同一张图：rename 因目标已存在而失败是良性的（内容必然一致），
-      // 丢掉自己的临时文件即可。
-      if (target.existsSync()) {
-        try {
-          await tmp.delete();
-        } catch (_) {}
-      } else {
-        rethrow;
-      }
-    }
+    await _writeOnce(target, bytes);
 
     return MediaPutResult(
       sha: sha,
@@ -114,6 +140,118 @@ class MediaStore {
   Future<Uint8List> read(String sha) async {
     final bytes = await fileFor(sha).readAsBytes();
     return Uint8List.fromList(bytes);
+  }
+
+  /// 取缩略图：**有缓存读缓存，没有就派生一次并落盘**。
+  ///
+  /// 宽度不在白名单里直接抛（调用方本该先验，这里是第二道闸）。
+  /// 派生失败抛 [FormatException]（图片解不开），由调用方翻成 415。
+  Future<Uint8List> readOrDeriveThumb(String sha, int width) async {
+    if (!isValidThumbWidth(width)) {
+      throw ArgumentError.value(width, 'width', '不在缩略图档位白名单里');
+    }
+    final f = thumbFileFor(sha, width);
+    if (await f.exists()) {
+      return Uint8List.fromList(await f.readAsBytes());
+    }
+    final derived = await _deriveMany(await read(sha), [width]);
+    final bytes = derived[width]!;
+    await _writeOnce(f, bytes);
+    return bytes;
+  }
+
+  /// 预热：把还缺的档位一次派生好。
+  ///
+  /// 上传后顺手调用，这样「刚选完照片回到列表」立刻就有缩略图，
+  /// 不必等第一次拉取时现算（那一次用户是能感觉到转圈的）。
+  ///
+  /// **一次解码、多档缩放**：两档分别跑等于把同一张 JPEG 解码两遍，
+  /// 而解码是整条链路里最贵的一步。
+  ///
+  /// **best-effort**：失败不影响上传结果——缩略图是纯派生数据，丢了随时能再算；
+  /// 而「用户刚选的照片被拒绝」是不可重来的。
+  Future<void> warmThumbs(String sha) async {
+    if (!exists(sha)) return;
+    final missing = <int>[];
+    for (final w in thumbWidths) {
+      if (!thumbExists(sha, w)) missing.add(w);
+    }
+    if (missing.isEmpty) return;
+    try {
+      final derived = await _deriveMany(await read(sha), missing);
+      for (final w in missing) {
+        await _writeOnce(thumbFileFor(sha, w), derived[w]!);
+      }
+    } catch (_) {
+      // 故意吞掉：见上，缩略图是纯派生数据
+    }
+  }
+
+  /// 解码 + 缩放 + 编码。**必须在 isolate 里跑**。
+  ///
+  /// 这三步是纯 CPU 活，一张 1600px JPEG 解码是几十到几百毫秒。
+  /// 服务端只有一个事件循环，在请求处理里同步做完，等于让同一时刻
+  /// 所有人的 `/api/changes` 一起等这一张图——那才是真事故。
+  static Future<Map<int, Uint8List>> _deriveMany(
+    Uint8List src,
+    List<int> widths,
+  ) {
+    return Isolate.run(() => _deriveManySync(src, widths));
+  }
+
+  static Map<int, Uint8List> _deriveManySync(Uint8List src, List<int> widths) {
+    // 解码器面对截断 / 伪造的文件头会抛各种异常（RangeError / ImageException…），
+    // 全部收敛成一个语义：**这个文件的格式不对**。否则一个坏文件会以 500 冒出去，
+    // 看起来像服务端故障，实际只是某张图存坏了。
+    img.Image? decoded;
+    try {
+      decoded = img.decodeImage(src);
+    } catch (_) {
+      decoded = null;
+    }
+    if (decoded == null) {
+      throw const FormatException('无法解码这张图片，派生不了缩略图');
+    }
+    final out = <int, Uint8List>{};
+    for (final w in widths) {
+      // 原图比目标还窄就不放大——放大只会更糊、还更大
+      final scaled = decoded.width <= w
+          ? decoded
+          : img.copyResize(
+              decoded,
+              width: w,
+              interpolation: img.Interpolation.average,
+            );
+      out[w] = img.encodeJpg(scaled, quality: thumbQuality);
+    }
+    return out;
+  }
+
+  /// 「写一次」：先写临时文件再 rename。
+  ///
+  /// 写一半被杀不会留下一个「存在但损坏」的文件（哈希寻址的世界里，
+  /// **损坏比缺失更糟**——缺失还能重传，损坏会被永久引用）。
+  ///
+  /// 临时文件后缀 `.tmp` 落在同目录，但它既不匹配 64 位 hex（原图）也不匹配
+  /// `<sha>-<w>.jpg`（缩略图），所以遍历目录时不会被误认成一份正式数据。
+  Future<void> _writeOnce(File target, Uint8List bytes) async {
+    await target.parent.create(recursive: true);
+    if (target.existsSync()) return; // 内容必然一致，不重写
+    final tmp = File('${target.path}.tmp');
+    await tmp.writeAsBytes(bytes, flush: true);
+    try {
+      await tmp.rename(target.path);
+    } on FileSystemException {
+      // 并发写同一份：rename 因目标已存在而失败是良性的（内容必然一致），
+      // 丢掉自己的临时文件即可。
+      if (target.existsSync()) {
+        try {
+          await tmp.delete();
+        } catch (_) {}
+      } else {
+        rethrow;
+      }
+    }
   }
 }
 

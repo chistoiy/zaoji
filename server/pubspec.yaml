@@ -21,6 +21,9 @@ dependencies:
   sqlite3: ^2.4.0
   # 设备 token 只存 sha256 哈希，不存明文（库被看到也换不出 token）
   crypto: ^3.0.3
+  # 缩略图派生（R17）。纯 Dart 实现，AOT 编译进 exe，不需要任何本地库。
+  # 只在服务端用——客户端那边 Flutter 用的也是它（编辑页压缩），两端同一套编解码语义。
+  image: ^4.0.0
 
 dev_dependencies:
   test: ^1.25.0
