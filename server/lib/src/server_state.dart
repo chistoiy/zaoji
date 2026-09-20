@@ -63,6 +63,12 @@ const List<Map<String, Object?>> kEndpoints = [
     'status': 'ready'
   },
   {
+    'path': '/api/admin/media-gc',
+    'method': 'POST',
+    'title': '孤儿媒体回收（默认 dry-run，只能从本机触发）',
+    'status': 'ready'
+  },
+  {
     'path': '/api/ai/{feature}',
     'method': 'POST',
     'title': '大模型代理（Web 端专用通道）',
@@ -161,6 +167,9 @@ class ServerState {
       'webRoot': web?.path,
       'webReady': webReady,
       'db': db.healthPayload(),
+      // 盘上的真实占用（遍历文件算的，不是库里的引用）。数据库行数看不出
+      // 「照片占了多少」，而不看这个就没法发现磁盘在只涨不跌。
+      'media': media.stats().toJson(),
       'endpoints': kEndpoints,
       'checkedAt': DateTime.now().toIso8601String(),
     };

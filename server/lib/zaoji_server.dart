@@ -10,6 +10,7 @@ library;
 export 'src/config.dart';
 export 'src/db.dart';
 export 'src/media.dart';
+export 'src/media_gc.dart';
 export 'src/server.dart';
 export 'src/server_state.dart';
 export 'src/sqlite_loader.dart';

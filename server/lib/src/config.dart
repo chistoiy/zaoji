@@ -56,7 +56,8 @@ class ServerConfig {
   /// 0.4.0：同步接口就位（配对鉴权 / 增量拉取 / 幂等推送 / 冲突箱）。
   /// 0.5.0：媒体接口就位（图片内容寻址上传 / 按需拉取）。
   /// 0.6.0：派生缩略图（`GET /api/media/<sha>?w=`，白名单档位 + 落盘缓存 + 上传预热）。
-  static const String version = '0.6.0';
+  /// 0.7.0：孤儿媒体回收（`POST /api/admin/media-gc`，默认 dry-run，仅本机可触发）+ 状态页媒体占用。
+  static const String version = '0.7.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 

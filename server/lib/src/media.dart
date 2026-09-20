@@ -142,6 +142,92 @@ class MediaStore {
     return Uint8List.fromList(bytes);
   }
 
+  // ───────────────────── 清单 / 统计 / 删除（R18 孤儿回收用） ─────────────────────
+
+  /// 原图清单（只认 64 位 hex 的文件名）。
+  ///
+  /// 临时文件（`<sha>.tmp`）与派生图都不会被列进来——这正是把派生图放子目录的好处：
+  /// 「遍历 `media/` 一层拿到的就是全部原图」这条不变量可以直接用，不必加过滤条件。
+  List<String> listOriginals() {
+    if (!dir.existsSync()) return const [];
+    final out = <String>[];
+    for (final e in dir.listSync()) {
+      if (e is! File) continue;
+      final name = e.uri.pathSegments.last;
+      if (isValidSha(name)) out.add(name);
+    }
+    out.sort();
+    return out;
+  }
+
+  static final RegExp _thumbNamePattern = RegExp(r'^([0-9a-f]{64})-(\d+)\.jpg$');
+
+  /// 派生图清单。解析不出名字的文件（如残留的 `.tmp`）一律忽略。
+  List<MediaThumb> listThumbs() {
+    final td = thumbDir;
+    if (!td.existsSync()) return const [];
+    final out = <MediaThumb>[];
+    for (final e in td.listSync()) {
+      if (e is! File) continue;
+      final m = _thumbNamePattern.firstMatch(e.uri.pathSegments.last);
+      if (m == null) continue;
+      out.add(MediaThumb(sha: m.group(1)!, width: int.parse(m.group(2)!), file: e));
+    }
+    out.sort((a, b) => a.sha == b.sha
+        ? a.width.compareTo(b.width)
+        : a.sha.compareTo(b.sha));
+    return out;
+  }
+
+  /// 删掉一张原图**连同它的所有派生图**。
+  ///
+  /// 一起删是刻意的：派生图的存在前提是原图存在。留下「没有原图的缩略图」
+  /// 只会让下一次统计把它们算成另一类垃圾，问题被推给下一轮而不是解决。
+  ///
+  /// 调用方负责判断「这张图确实没有引用了」——这里不做任何引用检查。
+  Future<MediaDeleteResult> delete(String sha) async {
+    var files = 0;
+    var bytes = 0;
+    final f = fileFor(sha);
+    if (f.existsSync()) {
+      bytes += await f.length();
+      await f.delete();
+      files++;
+    }
+    for (final t in listThumbs()) {
+      if (t.sha != sha) continue;
+      bytes += await t.file.length();
+      await t.file.delete();
+      files++;
+    }
+    return MediaDeleteResult(files: files, bytes: bytes);
+  }
+
+  /// 统计磁盘占用。**遍历的是真实文件，不是数据库里的引用**——
+  /// 这一条是刻意的：库里的引用与实际占用的差额，正是「孤儿」的定义。
+  MediaStats stats() {
+    var originals = 0;
+    var originalBytes = 0;
+    for (final sha in listOriginals()) {
+      final f = fileFor(sha);
+      if (!f.existsSync()) continue;
+      originals++;
+      originalBytes += f.lengthSync();
+    }
+    var thumbs = 0;
+    var thumbBytes = 0;
+    for (final t in listThumbs()) {
+      thumbs++;
+      thumbBytes += t.file.lengthSync();
+    }
+    return MediaStats(
+      originals: originals,
+      originalBytes: originalBytes,
+      thumbs: thumbs,
+      thumbBytes: thumbBytes,
+    );
+  }
+
   /// 取缩略图：**有缓存读缓存，没有就派生一次并落盘**。
   ///
   /// 宽度不在白名单里直接抛（调用方本该先验，这里是第二道闸）。
@@ -269,4 +355,65 @@ class MediaPutResult {
 
   /// true = 服务端早就有这张图（重复上传 / 幂等重放）。
   final bool duplicated;
+}
+
+/// 一个派生文件的身份：来自哪张原图、哪一档。
+class MediaThumb {
+  const MediaThumb({required this.sha, required this.width, required this.file});
+
+  /// 源原图的 sha256。
+  final String sha;
+
+  /// 档位（像素宽）。
+  final int width;
+
+  final File file;
+}
+
+class MediaDeleteResult {
+  const MediaDeleteResult({required this.files, required this.bytes});
+
+  /// 实际删掉的文件数（原图 + 派生图）。
+  final int files;
+
+  /// 实际释放的字节数。
+  final int bytes;
+}
+
+/// 磁盘占用快照。
+class MediaStats {
+  const MediaStats({
+    required this.originals,
+    required this.originalBytes,
+    required this.thumbs,
+    required this.thumbBytes,
+  });
+
+  final int originals;
+  final int originalBytes;
+  final int thumbs;
+  final int thumbBytes;
+
+  /// 从 health 载荷里那份 JSON 还原（状态页与健康接口共用同一份数字，
+  /// 避免页面自己再遍历一遍盘）。
+  factory MediaStats.fromJson(Map<String, Object?> j) => MediaStats(
+        originals: (j['originals'] as int?) ?? 0,
+        originalBytes: (j['originalBytes'] as int?) ?? 0,
+        thumbs: (j['thumbs'] as int?) ?? 0,
+        thumbBytes: (j['thumbBytes'] as int?) ?? 0,
+      );
+
+  int get totalBytes => originalBytes + thumbBytes;
+
+  /// 平均一张原图多大（用来向用户解释「占了这么多是因为多少张照片」）。
+  int get avgOriginalBytes =>
+      originals == 0 ? 0 : (originalBytes / originals).round();
+
+  Map<String, Object?> toJson() => {
+        'originals': originals,
+        'originalBytes': originalBytes,
+        'thumbs': thumbs,
+        'thumbBytes': thumbBytes,
+        'totalBytes': totalBytes,
+      };
 }

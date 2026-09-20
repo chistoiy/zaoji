@@ -9,6 +9,7 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'config.dart';
 import 'media.dart';
+import 'media_gc.dart';
 import 'server_state.dart';
 import 'sync.dart';
 import 'web_pages.dart';
@@ -122,7 +123,10 @@ class ZaojiServer {
       ..put('/api/media/<sha>',
           (Request req) => _mediaPut(state, req, req.params['sha']!))
       ..get('/api/media/<sha>',
-          (Request req) => _mediaGet(state, req, req.params['sha']!));
+          (Request req) => _mediaGet(state, req, req.params['sha']!))
+      // 运维接口（R18）：孤儿媒体回收。**只允许从服务端本机触发**——
+      // 删除不可逆，不该让局域网里任何一台设备有机会碰到它。
+      ..post('/api/admin/media-gc', (Request req) => _mediaGc(state, req));
 
     /// 首页：如果托管了 Flutter Web 产物，让位给它——
     /// 否则用户打开地址看到的永远是状态页，而不是他要的 App。
@@ -210,9 +214,18 @@ class ZaojiServer {
   static bool _isLocalRequest(Request req) {
     final info = req.context['shelf.io.connection_info'];
     // 值是 dart:io 的 HttpConnectionInfo（由 shelf_io 放进 context）
-    if (info is! HttpConnectionInfo) return true;
-    final a = info.remoteAddress.address;
-    return a == '127.0.0.1' || a == '::1' || a == 'localhost';
+    if (info is! HttpConnectionInfo) return isLocalAddress(null);
+    return isLocalAddress(info.remoteAddress.address);
+  }
+
+  /// 本机地址判定。抽成公开的纯函数，是为了让它**可被单测覆盖**——
+  /// 塞在一个只看 `Request` 的私有方法里，就只能靠真起一个局域网连接来验，
+  /// 而那条路在测试里走不通（拿不到非回环的 remoteAddress）。
+  ///
+  /// `null`（没有连接信息，即测试环境）按本机处理，与 [HttpConnectionInfo] 缺位时一致。
+  static bool isLocalAddress(String? address) {
+    if (address == null) return true;
+    return address == '127.0.0.1' || address == '::1' || address == 'localhost';
   }
 
   /// 用配对码换 token。
@@ -510,6 +523,56 @@ class ZaojiServer {
       // 一律 JPEG（统一格式，客户端不用按档位猜）
       'content-type': 'image/jpeg',
       'cache-control': 'private, max-age=31536000, immutable',
+    });
+  }
+
+  // ── 运维接口（R18）──
+
+  /// 孤儿媒体回收：`POST /api/admin/media-gc[?dry=0]`。
+  ///
+  /// **默认 dry-run**：不带参数只报告「打算删什么」，一个文件都不动；
+  /// 要真删必须显式 `?dry=0`。删除不可逆，所以默认值必须是最安全的那个。
+  ///
+  /// **只允许从服务端本机触发**（与配对码同一条理由）：不该让局域网里
+  /// 任何一台设备有机会碰到这个接口。
+  ///
+  /// 返回体里的 `danglingRefs`（库里有引用、盘上没文件）**只报告不修复**——
+  /// 那是异常信号，自动「修」它只会把线索一起抹掉。
+  static Future<Response> _mediaGc(ServerState state, Request req) async {
+    if (!_isLocalRequest(req)) {
+      return _json({
+        'error': 'forbidden',
+        'message': '媒体回收只能在服务端那台电脑上触发：'
+            'curl.exe --noproxy "*" -X POST '
+            'http://127.0.0.1:${state.config.port}/api/admin/media-gc',
+      }, status: 403);
+    }
+
+    final dry = req.url.queryParameters['dry'] != '0';
+    final r = await MediaGc.run(
+      media: state.media,
+      referenced: state.db.referencedCoverShas(),
+      dryRun: dry,
+    );
+
+    // 不可逆的动作必须留痕。控制台在开发期有、注册成服务后没有
+    // （文件日志还是交接文档 §6 的待办），所以同一份明细也放进响应体，
+    // 让触发的人当场就能看到删了什么。
+    if (!r.dryRun) {
+      stdout.writeln('[gc] 回收 ${r.deletedFiles} 个文件 / '
+          '${(r.freedBytes / 1024).toStringAsFixed(1)} KB'
+          '${r.failures.isEmpty ? '' : '，失败 ${r.failures.length} 条'}');
+      // **立刻 flush**：stdout 重定向到文件时是块缓冲，不 flush 的话
+      // 这条唯一的痕可能和进程一起消失。回收很少触发，这点代价值得。
+      await stdout.flush();
+    }
+
+    return _json({
+      ...r.toJson(),
+      'graceHours': MediaGc.defaultGrace.inHours,
+      'hint': dry
+          ? '这是预演（dry-run），一个文件都没删。确认无误后加 ?dry=0 真正执行。'
+          : '已执行真实回收。',
     });
   }
 

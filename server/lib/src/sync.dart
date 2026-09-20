@@ -393,7 +393,9 @@ class SyncService {
         'tbl': tbl,
         'rowId': '${change['rowId']}',
         'outcome': 'rejected',
-        'reason': 'upsert 必须带 row',
+        // 文案刻意不写 "upsert 必须带 row"：delete 同样要带完整行
+        // （客户端的墓碑也是整行推上来的）。写错方向会把排查引到错误的地方。
+        'reason': '变更必须带完整的 row（upsert 与 delete 都要）',
       };
     }
     final incoming = row.map((k, v) => MapEntry('$k', v));

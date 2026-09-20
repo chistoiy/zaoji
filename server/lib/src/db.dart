@@ -135,6 +135,25 @@ class ZaojiDb {
     return out;
   }
 
+  /// 所有**被引用**的封面哈希（`recipe.cover_sha256`）。给孤儿媒体回收做判据。
+  ///
+  /// ★ **刻意不过滤 `deleted_at`**——和上面 [rowCounts] 正好相反，这不是疏忽。
+  /// 回收站里的菜谱是**可以恢复**的（FR-DATA-13）。如果这里跟着把软删除的行排除掉，
+  /// 回收站里那道菜的封面就会被当成孤儿删掉，用户一点「恢复」看到的是
+  /// 「我的照片被系统吃掉了」——而这类删除**不可逆**。
+  ///
+  /// 判据宁可宽松：多留一张图的代价是几十 KB，误删一张的代价是一张再也没有的照片。
+  Set<String> referencedCoverShas() {
+    final rs = db.select(
+      'SELECT DISTINCT cover_sha256 FROM recipe '
+      "WHERE cover_sha256 IS NOT NULL AND cover_sha256 <> ''",
+    );
+    return {
+      for (final r in rs)
+        if ('${r['cover_sha256']}'.isNotEmpty) '${r['cover_sha256']}',
+    };
+  }
+
   /// 写入一条变更日志，返回它的 `seq`。
   ///
   /// **每一条业务写入都必须调用它** —— 漏掉一次，那次改动就永远不会同步到别的设备，

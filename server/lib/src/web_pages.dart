@@ -1,3 +1,5 @@
+import 'media.dart';
+import 'media_gc.dart';
 import 'server_state.dart';
 import 'config.dart';
 
@@ -50,6 +52,32 @@ Future<String> statusPageHtml(ServerState st, List<String> ips) async {
         '<td style="text-align:right"><code>${e.value}</code></td>'
         '<td>${esc(purpose)}</td></tr>';
   }).join();
+
+  // ── 媒体占用与孤儿（R18）──
+  // 「库里的引用数」与「盘上的图片数」放在一起看才有意义：差额就是孤儿。
+  // 这里顺便把 dry-run 的结果显示出来——**看得见的东西才会被处理**；
+  // 但页面本身不提供删除按钮：删除不可逆，应当在命令行里由人显式执行。
+  final mediaStats = MediaStats.fromJson(
+      (h['media'] as Map?)?.cast<String, Object?>() ?? const {});
+  final gcPlan = MediaGc.plan(
+    media: st.media,
+    referenced: st.db.referencedCoverShas(),
+  );
+  final orphanNote = gcPlan.isEmpty
+      ? '<p class="hint">没有可回收的孤儿图片。</p>'
+      : '<p class="hint">有 <b>${gcPlan.orphanFileCount}</b> 个文件无人引用，'
+          '可回收约 <b>${formatBytes(gcPlan.reclaimableBytes)}</b>；另有 '
+          '<b>${gcPlan.protectedFresh.length}</b> 张在 '
+          '${MediaGc.defaultGrace.inHours} 小时宽限期内（刚上传、引用行还没推上来，不是垃圾）。<br>'
+          '确认后在本机执行：<code>curl.exe --noproxy "*" -X POST '
+          'http://127.0.0.1:${st.config.port}/api/admin/media-gc?dry=0</code></p>';
+  // 反向异常：库里有引用、盘上没文件。只提示，不自动「修复」——
+  // 自动修复会把线索一起抹掉，而这通常意味着有人手动删过盘，值得看一眼。
+  final danglingNote = gcPlan.danglingRefs.isEmpty
+      ? ''
+      : '<p class="hint">⚠️ 有 <b>${gcPlan.danglingRefs.length}</b> 个封面被菜谱引用、'
+          '但盘上找不到文件。这属于异常（有人手动删过 <code>media/</code>？），'
+          '请检查后再决定怎么处理。</p>';
 
   // ── 已配对设备 ──
   // 刻意**不在这里显示配对码**：状态页在局域网内谁都能打开，
@@ -259,20 +287,43 @@ code.path{background:transparent;padding:0;color:var(--ink);font-weight:500}
     <tbody>$dataRows</tbody>
   </table>
 
+  <h2>媒体</h2>
+  <table>
+    <thead><tr><th>类型</th><th style="text-align:right">数量</th><th style="text-align:right">占用</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>原图</td>
+        <td style="text-align:right"><code>${mediaStats.originals}</code></td>
+        <td style="text-align:right"><code>${formatBytes(mediaStats.originalBytes)}</code></td>
+        <td>客户端压到 1600px / q82 后上传，内容寻址（同图只存一份）</td></tr>
+      <tr><td>缩略图</td>
+        <td style="text-align:right"><code>${mediaStats.thumbs}</code></td>
+        <td style="text-align:right"><code>${formatBytes(mediaStats.thumbBytes)}</code></td>
+        <td>服务端按需派生（640 / 1280 两档），派生物随时可重算</td></tr>
+      <tr><td>数据库</td><td style="text-align:right">—</td>
+        <td style="text-align:right"><code>$dbSize</code></td>
+        <td>文字数据（菜谱、步骤、库存…），远小于照片</td></tr>
+    </tbody>
+  </table>
+  $orphanNote
+  $danglingNote
+
   <div class="note">
     <b>现在可以做什么</b><br>
     · Android App 里填上面的任一个地址，点「测试连接」应当返回本页的版本号与 Server ID；<br>
     · 用浏览器打开 <code>/api/ping</code> 会看到一段 JSON——这是客户端判断地址对不对的依据；<br>
-    · <b>数据底座已就位</b>（SQLite $sqliteVer · schema v$schemaVer），所有业务表都已建好，
-    并且统一带 <code>id / updated_at / updated_by / rev / deleted_at</code> 五列。<br><br>
-    <b>还没做的</b>：数据同步（<code>/api/changes</code>）、配对鉴权、图片传输、大模型代理。
-    这些做完了，手机端才能真正开始同步菜谱。
+    · <b>数据同步已可用</b>：在本机取一个配对码（<code>/api/pair/code</code>），
+    在 App 里输入即可双向同步；推送幂等、冲突进冲突箱；<br>
+    · <b>照片已可用</b>：App 里给菜品选封面 → 压到 1600px 上传；列表/详情按档位拉取缩略图；<br>
+    · Web 端（iPhone / 平板）由本机直接托管，打开上面的 HTTPS 地址即可。<br><br>
+    <b>还没做的</b>：大模型代理（<code>/api/ai/*</code>，Web 端专用通道）、
+    局域网自动发现（mDNS，省得手填 IP）、带轮转的文件日志。
   </div>
 
   <div class="foot">
     数据目录：<code>${esc(st.config.dataDir.path)}</code>
     ${writable ? '' : '　⚠️ <b style="color:#D2491C">不可写，请检查权限</b>'}<br>
-    数据库：<code>${esc(dbPath)}</code>　${dbSize}<br>
+    数据库：<code>${esc(dbPath)}</code>　${dbSize}　
+    <code>schema v$schemaVer</code>　SQLite $sqliteVer<br>
     变更序号：<code>${esc('$maxSeq')}</code>（客户端同步游标就停在这个号上）<br>
     Web 产物：${webReady ? '<code>${esc(st.config.webRoot!.path)}</code>（已托管，<code>/</code> 会返回它）' : '未提供（用 -w 参数指定 Flutter Web 产物目录）'}<br>
     灶记 ZAOJI · 家庭菜谱手账 · 仅用于家庭局域网
@@ -281,6 +332,17 @@ code.path{background:transparent;padding:0;color:var(--ink);font-weight:500}
 </div>
 </body>
 </html>''';
+}
+
+/// 人类可读的字节数。磁盘占用这种东西写「1.4 MB」比「1432082」有用得多——
+/// 状态页的读者是家里那个人，不是日志分析器。
+String formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
 }
 
 /// 未找到页面。
