@@ -278,6 +278,12 @@ void main() {
   // ══════════════════════ 同步接口（HTTP 层）══════════════════════
 
   group('同步接口', () {
+    // R21 起默认模式是 open，这一组测的全部是「配对码」路径的既有契约——
+    // 先把准入切回 pairCode，别外组的新语义混进来。
+    setUp(() {
+      state.sync.accessMode = SyncAccessMode.pairCode;
+    });
+
     /// 带 body / token 的请求。测试里没有真实连接信息，
     /// 所以 `_isLocalRequest` 会按本机处理（见 server.dart 里的说明）。
     Future<Response> call(String method, String path,

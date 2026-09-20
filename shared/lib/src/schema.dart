@@ -375,6 +375,10 @@ const List<TableSpec> kTables = [
       ColumnSpec('paired_at', 'TEXT', notNull: true),
       ColumnSpec('last_seen_at', 'TEXT'),
       ColumnSpec('revoked_at', 'TEXT'),
+      ColumnSpec('visitor', 'INTEGER',
+          notNull: true,
+          defaultSql: '0',
+          comment: 'R21：1=开放模式/口令进来的来访者设备（不是 6 位码配对的）'),
     ],
   ),
   TableSpec(
@@ -403,6 +407,16 @@ const List<TableSpec> kTables = [
     name: 'meta',
     scope: TableScope.serverOnly,
     comment: '键值对：schema 版本、服务端备注等',
+    columns: [
+      ColumnSpec('k', 'TEXT', primaryKey: true),
+      ColumnSpec('v', 'TEXT', notNull: true),
+    ],
+  ),
+  TableSpec(
+    name: 'server_setting',
+    scope: TableScope.serverOnly,
+    comment: 'R21：服务端运行时配置（准入三态/口令/来访者手动同步）。'
+        '与 meta 分开是因为 meta 归迁移管，这里归用户管',
     columns: [
       ColumnSpec('k', 'TEXT', primaryKey: true),
       ColumnSpec('v', 'TEXT', notNull: true),
@@ -477,7 +491,10 @@ const List<TableSpec> kTables = [
 /// v1 → v2：新增 `applied_mutation`（推送幂等）。
 /// v2 → v3：新增 `local_pref`（本机偏好）。迁移仍是纯增表，
 /// `CREATE TABLE IF NOT EXISTS` 天然幂等，所以不需要单独的迁移脚本。
-const int kSchemaVersion = 3;
+/// v3 → v4：新增 `server_setting`（R21 准入配置，纯增表）+
+/// **`device` 加 `visitor` 列——这是第一例「改列」**，
+/// `IF NOT EXISTS` 救不了旧库，服务端迁移里有针对性的 ALTER（见 server/db.dart）。
+const int kSchemaVersion = 4;
 
 /// 同步协议的版本。客户端与服务端必须一致，否则拒绝同步而不是猜。
 ///

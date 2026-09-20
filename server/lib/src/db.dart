@@ -100,6 +100,7 @@ class ZaojiDb {
       for (final stmt in schemaDdl()) {
         db.execute(stmt);
       }
+      _migrateV3toV4();
       db.execute(
         "INSERT INTO meta (k, v) VALUES ('schema_version', ?) "
         'ON CONFLICT(k) DO UPDATE SET v = excluded.v',
@@ -109,6 +110,22 @@ class ZaojiDb {
     } catch (_) {
       db.execute('ROLLBACK');
       rethrow;
+    }
+  }
+
+  /// v3 → v4（R21）：`device` 加 `visitor` 列。
+  ///
+  /// **全项目第一个「改列」迁移**——`CREATE TABLE IF NOT EXISTS` 对已存在的表
+  /// 是 no-op，不会补列，所以必须针对性 ALTER。判据用列本身在不在，
+  /// 而不是 meta 里的版本号：新版本程序碰旧库要走这条路，
+  /// 而「列已经在了还 ALTER」是必然报错的。
+  void _migrateV3toV4() {
+    final hasVisitor = db
+        .select('PRAGMA table_info(device)')
+        .any((r) => r['name'] == 'visitor');
+    if (!hasVisitor) {
+      db.execute(
+        'ALTER TABLE device ADD COLUMN visitor INTEGER NOT NULL DEFAULT 0');
     }
   }
 

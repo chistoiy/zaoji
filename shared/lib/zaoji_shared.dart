@@ -14,5 +14,6 @@ export 'src/hlc.dart';
 export 'src/ingredient.dart';
 export 'src/schema.dart';
 export 'src/step_time.dart';
+export 'src/sync_access.dart';
 export 'src/ulid.dart';
 export 'src/units.dart';

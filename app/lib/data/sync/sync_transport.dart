@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:zaoji_shared/zaoji_shared.dart' show kNodeIdHeader;
 
 /// 同步接口的 HTTP 传输层。
 ///
@@ -61,17 +62,23 @@ class SyncNetworkException implements Exception {
 }
 
 class HttpSyncTransport implements SyncTransport {
-  HttpSyncTransport(this.baseUrl, {http.Client? client})
+  HttpSyncTransport(this.baseUrl, {http.Client? client, this.nodeId})
     : _client = client ?? http.Client();
 
   /// 形如 `http://192.168.31.141:8666`。收发都用它拼接路径。
   final Uri baseUrl;
+
+  /// R21：本机设备标识。开放模式下服务端不认识没有 token 的请求，
+  /// 靠这个头把它们记成各自的「来访者伪设备」（每机一个游标）。
+  /// 有 token 时服务端优先认 token，这个头是无害的冗余。
+  final String? nodeId;
 
   final http.Client _client;
 
   Map<String, String> _headers(String? token) => {
     'content-type': 'application/json; charset=utf-8',
     if (token != null && token.isNotEmpty) 'authorization': 'Bearer $token',
+    if (nodeId != null && nodeId!.isNotEmpty) kNodeIdHeader: nodeId!,
   };
 
   Uri _uri(String path) => baseUrl.resolve(path);
@@ -110,9 +117,10 @@ class HttpSyncTransport implements SyncTransport {
       () => _client.put(
         _uri(path),
         headers: {
-          // 原始字节体，不是 JSON——只带鉴权头
+          // 原始字节体，不是 JSON——只带鉴权与设备标识头
           if (token != null && token.isNotEmpty)
             'authorization': 'Bearer $token',
+          if (nodeId != null && nodeId!.isNotEmpty) kNodeIdHeader: nodeId!,
         },
         body: bytes,
       ),

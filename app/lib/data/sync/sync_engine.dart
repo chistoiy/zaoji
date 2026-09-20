@@ -77,6 +77,16 @@ class SyncEngine extends ChangeNotifier {
   bool _busy = false;
   int _consecutiveFails = 0;
 
+  // ── R21 · 准入三态（服务端设定，本机只是读）──
+  SyncAccessMode? _accessMode;
+  bool _visitorManualSync = false;
+
+  /// 服务端当前准入模式；null = 还没成功读到（UI 回退到配对码版式）。
+  SyncAccessMode? get accessMode => _accessMode;
+
+  /// 服务端是否要求来访者手动点「立即同步」。只对**没有 token 的设备**生效。
+  bool get visitorManualSync => _visitorManualSync;
+
   SyncPhase get phase => _phase;
   String? get lastError => _lastError;
   DateTime? get lastSyncAt => _lastSyncAt;
@@ -99,15 +109,105 @@ class SyncEngine extends ChangeNotifier {
 
   Future<bool> isPaired() => _prefs.isPaired();
 
-  /// 冷启动入口。未配对时安静返回（设置页会引导配对），
-  /// 失败不抛——启动流程不该被网络问题打断。
+  /// 冷启动/回前台/防抖共用的自动入口（R21 起语义从「已配对才同步」扩展为
+  /// 「**被允许自动同步**就同步」）：
+  ///
+  /// - 有 token：任何模式都自动同步（已配对设备永远自动，见三态设计）；
+  /// - 无 token：只有服务端处于 **open** 且没要求手动，才以免配对身份同步；
+  ///   其余情况安静停在 neverPaired——这不是错误，是「还没接入」。
   Future<void> syncIfPaired() async {
+    // 网页端首次：没存过地址就拿当前访问 origin 当地址。
+    // 用户从服务器上看到的就是这台服务器——没有第二个答案值得让他手输。
+    if (kIsWeb && await _prefs.serverUrl() == null) {
+      final origin = Uri.base.origin;
+      if (origin.startsWith('http')) await _prefs.setServerUrl(origin);
+    }
+
     if (!await _prefs.isPaired()) {
-      _phase = SyncPhase.neverPaired;
-      notifyListeners();
-      return;
+      if (await _prefs.serverUrl() == null) {
+        _phase = SyncPhase.neverPaired;
+        notifyListeners();
+        return;
+      }
+      await refreshAccessConfig();
+      if (_accessMode != SyncAccessMode.open || _visitorManualSync) {
+        _phase = SyncPhase.neverPaired;
+        notifyListeners();
+        return;
+      }
     }
     await sync();
+  }
+
+  /// 读服务端的准入配置（免鉴权）。失败**不抛也不记 error**——
+  /// 模式保持"未知"，UI 回退到配对码版式即可；自动同步照旧安静停摆。
+  ///
+  /// 带超时：半死的服务器不该把「我的」页钉在加载态。
+  Future<void> refreshAccessConfig() async {
+    final url = await _prefs.serverUrl();
+    if (url == null) return;
+    try {
+      final res = await (await _transportOf(url))
+          .get('/api/sync/config')
+          .timeout(const Duration(seconds: 5));
+      _accessMode = SyncAccessMode.parse('${res['accessMode']}');
+      _visitorManualSync = res['visitorManualSync'] == true;
+    } catch (_) {/* 连不上/超时都是"未知"，等下次触发再试 */}
+  }
+
+  /// 口令接入（R21）：固定口令换本机专属 token。
+  ///
+  /// 与 [pair] 同构：成功即存凭证并立刻跑一轮同步；失败原话透出（403/429/503）。
+  Future<void> join({
+    required String serverUrl,
+    required String passcode,
+    String? deviceName,
+  }) async {
+    final url = _normalizeUrl(serverUrl);
+    if (url == null) {
+      _fail('地址不对：要形如 http://192.168.31.141:8666');
+      return;
+    }
+    if (passcode.trim().isEmpty) {
+      _fail('请输入连接口令');
+      return;
+    }
+
+    final nodeId = await _prefs.nodeId();
+    final name = (deviceName == null || deviceName.trim().isEmpty)
+        ? defaultDeviceName()
+        : deviceName.trim();
+
+    final transport = HttpSyncTransport(Uri.parse(url), nodeId: nodeId);
+    try {
+      final res = await transport.post('/api/join', {
+        'passcode': passcode.trim(),
+        'deviceId': nodeId,
+        'deviceName': name,
+      });
+      final token = '${res['token'] ?? ''}';
+      final serverId = '${res['serverId'] ?? ''}';
+      if (token.isEmpty || serverId.isEmpty) {
+        _fail('服务端响应缺少 token/serverId');
+        return;
+      }
+      await _prefs.setServerUrl(url);
+      await _prefs.setToken(token);
+      await _prefs.setServerId(serverId);
+      await _prefs.setDeviceName(name);
+      _transport?.close();
+      _transport = transport;
+      _lastError = null;
+      _phase = SyncPhase.idle;
+      notifyListeners();
+      await sync();
+    } on SyncTransportException catch (e) {
+      transport.close();
+      _fail(e.message);
+    } on SyncNetworkException catch (e) {
+      transport.close();
+      _fail('连不上服务端：${e.message}');
+    }
   }
 
   /// 配对：服务端地址 + 6 位配对码 → 长期 token。
@@ -134,7 +234,7 @@ class SyncEngine extends ChangeNotifier {
         ? defaultDeviceName()
         : deviceName.trim();
 
-    final transport = HttpSyncTransport(Uri.parse(url));
+    final transport = HttpSyncTransport(Uri.parse(url), nodeId: nodeId);
     try {
       final res = await transport.post('/api/pair', {
         'code': code.trim().toUpperCase(),
@@ -183,6 +283,17 @@ class SyncEngine extends ChangeNotifier {
   Future<String?> pairedDeviceName() => _prefs.deviceName();
   Future<String> nodeId() => _prefs.nodeId();
 
+  /// 「我的」页地址框的默认值：存过的地址优先；网页端没有地址时
+  /// 用当前访问 origin——**从服务器上看到的就是这台服务器**，
+  /// 不该让来访者手动再抄一遍浏览器地址栏。
+  Future<String?> serverUrlOrWebOrigin() async {
+    final saved = await _prefs.serverUrl();
+    if (saved != null) return saved;
+    if (!kIsWeb) return null;
+    final origin = Uri.base.origin;
+    return origin.startsWith('http') ? origin : null;
+  }
+
   /// 一轮完整同步。并发调用直接合并成「等正在跑的那轮」。
   Future<void> sync() {
     if (_busy) return _running ?? Future.value();
@@ -201,10 +312,21 @@ class SyncEngine extends ChangeNotifier {
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
     final pairedServerId = await _prefs.serverId();
-    if (token == null || serverUrl == null) {
+    if (serverUrl == null) {
       _phase = SyncPhase.neverPaired;
       notifyListeners();
       return;
+    }
+    // R21：没有 token 也允许走到这里——但必须是开放模式（syncIfPaired
+    // 已把过关；手动「立即同步」的按钮也可能由开放模式来访者按下）。
+    final hasToken = token != null && token.isNotEmpty;
+    if (!hasToken) {
+      await refreshAccessConfig();
+      if (_accessMode != SyncAccessMode.open) {
+        _phase = SyncPhase.neverPaired;
+        notifyListeners();
+        return;
+      }
     }
 
     _phase = SyncPhase.syncing;
@@ -212,7 +334,7 @@ class SyncEngine extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final transport = _transportOf(serverUrl);
+      final transport = await _transportOf(serverUrl);
 
       // ① ping：地址可达 + 还是同一台服务器
       final ping = await transport.get('/api/ping');
@@ -224,9 +346,14 @@ class SyncEngine extends ChangeNotifier {
           '服务端身份变了（$pairedServerId → $serverId）。可能是连到了别的服务器，或服务端数据被清过。请重新配对。',
         );
       }
+      // 来访者的第一次同步：把这台服务器的身份记下来。
+      // 之后换服务器就是同步事故而不是"静默连错家"——与配对设备同一条铁律。
+      if (!hasToken && serverId.isNotEmpty) {
+        await _prefs.setServerId(serverId);
+      }
 
-      var pushed = await _pushPending(transport, token);
-      var applied = await _pullAll(transport, token);
+      var pushed = await _pushPending(transport, hasToken ? token : null);
+      var applied = await _pullAll(transport, hasToken ? token : null);
 
       _lastSyncAt = _now();
       _consecutiveFails = 0;
@@ -243,7 +370,8 @@ class SyncEngine extends ChangeNotifier {
           '同步协议版本不一致（服务端 ${e.payload['serverProtocolVersion']}）。请升级 App 或服务端。',
         );
       } else if (e.statusCode == 401) {
-        _fail('token 已失效，请重新配对。');
+        // 来访者没有 token，"重新配对"对它是一句听不懂的话——按身份说事
+        _fail(hasToken ? 'token 已失效，请重新配对。' : '服务端已不再接受免配对访问，请到「我的」页完成接入。');
       } else {
         _fail('服务端返回 ${e.statusCode}：${e.message}');
       }
@@ -258,9 +386,13 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
-  SyncTransport _transportOf(String serverUrl) {
+  Future<SyncTransport> _transportOf(String serverUrl) async {
     if (_transport != null) return _transport!;
-    final t = HttpSyncTransport(Uri.parse(serverUrl));
+    // 自建的生产 transport 必须带 nodeId：开放模式的匿名请求靠它登记伪设备
+    final t = HttpSyncTransport(
+      Uri.parse(serverUrl),
+      nodeId: await _prefs.nodeId(),
+    );
     _transport = t;
     return t;
   }
@@ -280,7 +412,7 @@ class SyncEngine extends ChangeNotifier {
   // ───────────────────────── 推送 ─────────────────────────
 
   /// 把水位线之后的行分批推上去。返回推上去的行数。
-  Future<int> _pushPending(SyncTransport transport, String token) async {
+  Future<int> _pushPending(SyncTransport transport, String? token) async {
     final watermark = await _prefs.pushWatermark();
     final pendingMutation = await _prefs.pendingMutationId();
 
@@ -365,7 +497,7 @@ class SyncEngine extends ChangeNotifier {
   // ───────────────────────── 拉取 ─────────────────────────
 
   /// 从客户端游标起拉全量增量。返回应用的变更条数。
-  Future<int> _pullAll(SyncTransport transport, String token) async {
+  Future<int> _pullAll(SyncTransport transport, String? token) async {
     var cursor = await _prefs.pullCursor();
     var appliedTotal = 0;
 
@@ -513,13 +645,14 @@ class SyncEngine extends ChangeNotifier {
   Future<String> uploadMedia(Uint8List bytes) async {
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
-    if (token == null || serverUrl == null) {
-      throw StateError('尚未配对，无法上传图片');
+    if (serverUrl == null) {
+      throw StateError('还没有可用的服务端地址，无法上传图片');
     }
     final sha = crypto.sha256.convert(bytes).toString();
-    await _transportOf(
+    // R21：token 可选——开放模式的来访者也能传图（服务端按 X-Node-Id 认它）。
+    await (await _transportOf(
       serverUrl,
-    ).putBytes('/api/media/$sha', bytes, token: token);
+    )).putBytes('/api/media/$sha', bytes, token: token);
     return sha;
   }
 
@@ -539,13 +672,13 @@ class SyncEngine extends ChangeNotifier {
 
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
-    if (token == null || serverUrl == null) return null;
+    if (serverUrl == null) return null;
     try {
       final path =
           width == null ? '/api/media/$sha' : '/api/media/$sha?w=$width';
-      final bytes = await _transportOf(
+      final bytes = await (await _transportOf(
         serverUrl,
-      ).getBytes(path, token: token);
+      )).getBytes(path, token: token);
       if (_mediaCache.length >= _mediaCacheCap) {
         _mediaCache.remove(_mediaCache.keys.first);
       }

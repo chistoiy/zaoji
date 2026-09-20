@@ -6,6 +6,7 @@ import 'package:image/image.dart' as img;
 import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
 import 'package:zaoji_server/zaoji_server.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
 /// 媒体接口测试（R16）：PUT/GET /api/media/<sha256>。
 ///
@@ -46,6 +47,9 @@ void main() {
       certDir: Directory('${tmp.path}${Platform.pathSeparator}certs'),
     ));
     booted.add(state);
+    // 这一组测的是「已配对设备访问媒体」的老契约：先切回配对码模式
+    // （R21 起默认 open，匿名来访者也能传图，会把"没 token 必须 401"的断言全打乱）。
+    state.sync.accessMode = SyncAccessMode.pairCode;
     handler = ZaojiServer.buildHandler(state, const ['192.168.1.10']);
   });
 

@@ -64,7 +64,9 @@ class ServerConfig {
   /// 0.6.0：派生缩略图（`GET /api/media/<sha>?w=`，白名单档位 + 落盘缓存 + 上传预热）。
   /// 0.7.0：孤儿媒体回收（`POST /api/admin/media-gc`，默认 dry-run，仅本机可触发）+ 状态页媒体占用。
   /// 0.8.0：带轮转的文件日志（logs/zaoji.log，控制台与文件双写；health 报 logPath/logBytes）。
-  static const String version = '0.8.0';
+  /// 0.9.0：来访者同步准入三态（open/passcode/pairCode，schema v4）+ `/api/sync/config`、
+  ///   `/api/join`、`/api/admin/settings`（仅本机）。
+  static const String version = '0.9.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 

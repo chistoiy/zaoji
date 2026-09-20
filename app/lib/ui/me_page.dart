@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
 import '../data/sync/sync_engine.dart';
 import '../data/sync/sync_scope.dart';
@@ -21,10 +22,12 @@ class MePage extends StatefulWidget {
 class _MePageState extends State<MePage> {
   final _urlCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
+  final _passcodeCtrl = TextEditingController();
   String? _pairedUrl;
   String? _pairedServerId;
   String? _nodeIdShort;
   bool _loaded = false;
+  bool _joined = false;
 
   @override
   void initState() {
@@ -43,6 +46,7 @@ class _MePageState extends State<MePage> {
   void dispose() {
     _urlCtrl.dispose();
     _codeCtrl.dispose();
+    _passcodeCtrl.dispose();
     super.dispose();
   }
 
@@ -52,14 +56,25 @@ class _MePageState extends State<MePage> {
     final url = await engine.pairedServerUrl();
     final serverId = await engine.pairedServerId();
     final nodeId = await engine.nodeId();
+    final joined = await engine.isPaired();
+    if (!mounted) return;
+    // 地址框预填：已配对的地址优先，否则网页端直接填当前访问地址（R21）——
+    // 从服务器上看到的就是这台服务器，没有第二个答案值得让人手输。
+    final knownUrl = url ?? await engine.serverUrlOrWebOrigin();
     if (!mounted) return;
     setState(() {
       _pairedUrl = url;
       _pairedServerId = serverId;
+      _joined = joined;
       _nodeIdShort = nodeId.length > 8 ? nodeId.substring(0, 8) : nodeId;
       _loaded = true;
-      if (url != null) _urlCtrl.text = url;
+      if (knownUrl != null) _urlCtrl.text = knownUrl;
     });
+    // 准入模式决定未配对时给哪一种接入区块（三态互斥）。读不到就保持
+    // "未知"，UI 回退配对码版式；重跑一次 loading 让模式上屏。
+    await engine.refreshAccessConfig();
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _pair() async {
@@ -67,6 +82,14 @@ class _MePageState extends State<MePage> {
     final url = _urlCtrl.text;
     final code = _codeCtrl.text;
     await engine.pair(serverUrl: url, code: code);
+    if (!mounted) return;
+    await _loadPaired();
+  }
+
+  /// 口令接入（R21 模式二）：固定口令换本机专属 token，成功后转已接入版式。
+  Future<void> _join() async {
+    final engine = SyncScope.of(context);
+    await engine.join(serverUrl: _urlCtrl.text, passcode: _passcodeCtrl.text);
     if (!mounted) return;
     await _loadPaired();
   }
@@ -100,7 +123,9 @@ class _MePageState extends State<MePage> {
     setState(() {
       _pairedUrl = null;
       _pairedServerId = null;
+      _joined = false;
       _codeCtrl.clear();
+      _passcodeCtrl.clear();
     });
   }
 
@@ -183,7 +208,7 @@ class _MePageState extends State<MePage> {
   }
 
   Widget _syncBody(SyncEngine engine) {
-    final paired = _pairedUrl != null;
+    final paired = _joined;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -207,57 +232,13 @@ class _MePageState extends State<MePage> {
             decoration: _inputDecoration('http://192.168.31.141:8666'),
           ),
           const SizedBox(height: 12),
-          const Text(
-            '配对码（5 分钟有效，一次性）',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: ZaojiColors.ink2,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _codeCtrl,
-                  textCapitalization: TextCapitalization.characters,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[0-9A-Za-z]')),
-                    LengthLimitingTextInputFormatter(6),
-                  ],
-                  style: const TextStyle(
-                    fontSize: 18,
-                    letterSpacing: 4,
-                    color: ZaojiColors.ink,
-                  ),
-                  cursorColor: ZaojiColors.accent,
-                  decoration: _inputDecoration('如 YE28Z4'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton(
-                onPressed: engine.isBusy ? null : _pair,
-                style: FilledButton.styleFrom(
-                  backgroundColor: ZaojiColors.accent,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 22,
-                    vertical: 14,
-                  ),
-                ),
-                child: Text(engine.isBusy ? '配对中…' : '配对'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            '配对码在服务端那台电脑上取：浏览器打开 http://127.0.0.1:8666/api/pair/code（只能本机取，这是刻意的安全设计）。',
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.6,
-              color: ZaojiColors.muted,
-            ),
-          ),
+          // 接入区块由服务端准入模式决定（R21 三态互斥）。
+          // 还没读到模式（读不到 = 没连上/旧服务端）时按配对码版式回退。
+          ...switch (engine.accessMode) {
+            SyncAccessMode.open => _openAccess(engine),
+            SyncAccessMode.passcode => _passcodeAccess(engine),
+            _ => _pairCodeAccess(engine),
+          },
         ] else ...[
           Row(
             children: [
@@ -325,6 +306,164 @@ class _MePageState extends State<MePage> {
         ],
       ],
     );
+  }
+
+  /// 模式一「免配对开放」：本机什么都不用填，直接接入。
+  /// 服务端可要求手动同步（visitorManualSync）——那时给「立即同步」入口。
+  List<Widget> _openAccess(SyncEngine engine) {
+    if (engine.visitorManualSync) {
+      return [
+        Row(
+          children: [
+            FilledButton.icon(
+              onPressed: engine.isBusy ? null : () => engine.sync(),
+              icon: const Icon(Icons.sync, size: 16),
+              label: Text(engine.isBusy ? '同步中…' : '立即同步'),
+              style: FilledButton.styleFrom(
+                backgroundColor: ZaojiColors.accent,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: _statusLine(engine)),
+          ],
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          '免配对接入：点「立即同步」上传与下载数据。',
+          style: TextStyle(fontSize: 11.5, height: 1.6, color: ZaojiColors.muted),
+        ),
+      ];
+    }
+    return [
+      Row(
+        children: [
+          const Text(
+            '免配对接入',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF2E7D32),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0x142E7D32),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: const Text(
+              '自动同步',
+              style: TextStyle(fontSize: 11, color: Color(0xFF2E7D32)),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        '无需配对；改动自动上传，打开页面自动下载。',
+        style: TextStyle(fontSize: 11.5, height: 1.6, color: ZaojiColors.muted),
+      ),
+    ];
+  }
+
+  /// 模式二「固定口令」：填一次家里的连接口令，换本机专属 token。
+  List<Widget> _passcodeAccess(SyncEngine engine) {
+    return [
+      const Text(
+        '连接口令',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: ZaojiColors.ink2,
+        ),
+      ),
+      const SizedBox(height: 6),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _passcodeCtrl,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              style: const TextStyle(fontSize: 14, color: ZaojiColors.ink),
+              cursorColor: ZaojiColors.accent,
+              decoration: _inputDecoration('向家里管服务器的人要'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: engine.isBusy ? null : _join,
+            style: FilledButton.styleFrom(
+              backgroundColor: ZaojiColors.accent,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 22,
+                vertical: 14,
+              ),
+            ),
+            child: Text(engine.isBusy ? '连接中…' : '连接'),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  /// 模式三「配对码」（also 未读到模式时的保守回退）：既有 6 位一次性配对码。
+  List<Widget> _pairCodeAccess(SyncEngine engine) {
+    return [
+      const Text(
+        '配对码（5 分钟有效，一次性）',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: ZaojiColors.ink2,
+        ),
+      ),
+      const SizedBox(height: 6),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _codeCtrl,
+              textCapitalization: TextCapitalization.characters,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9A-Za-z]')),
+                LengthLimitingTextInputFormatter(6),
+              ],
+              style: const TextStyle(
+                fontSize: 18,
+                letterSpacing: 4,
+                color: ZaojiColors.ink,
+              ),
+              cursorColor: ZaojiColors.accent,
+              decoration: _inputDecoration('如 YE28Z4'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: engine.isBusy ? null : _pair,
+            style: FilledButton.styleFrom(
+              backgroundColor: ZaojiColors.accent,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 22,
+                vertical: 14,
+              ),
+            ),
+            child: Text(engine.isBusy ? '配对中…' : '配对'),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      const Text(
+        '配对码在服务端那台电脑上取：浏览器打开 http://127.0.0.1:8666/api/pair/code（只能本机取，这是刻意的安全设计）。',
+        style: TextStyle(
+          fontSize: 11.5,
+          height: 1.6,
+          color: ZaojiColors.muted,
+        ),
+      ),
+    ];
   }
 
   Widget _statusLine(SyncEngine engine) {

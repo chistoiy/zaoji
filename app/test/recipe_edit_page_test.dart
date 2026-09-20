@@ -4,12 +4,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zaoji/main.dart';
 import 'package:zaoji/ui/recipe_edit_page.dart';
 
+import 'fss_stub.dart';
+
 /// R14 编辑页的走通测试（smoke）：「UI 表单 → store 写路径 → 列表」这条链，
 /// 以及 PopScope 拦截的两面（未保存要拦 / 保存后必须放行）。
 ///
 /// 复用 [ZaojiApp] 注入内存库——不直接 pump RecipeEditPage，是因为
 /// 保存走 StoreScope + 弹回列表，整条链只有从根注入才真实。
 void main() {
+  // 测试环境没有 Keystore 插件的 handler，不挂 mock 通道会挂起（见 fss_stub.dart）。
+  setUpAll(stubSecureStorageForTest);
+
   Future<void> pumpApp(WidgetTester tester, {double h = 2200}) async {
     tester.view.physicalSize = Size(414, h);
     tester.view.devicePixelRatio = 1.0;

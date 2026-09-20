@@ -6,6 +6,8 @@ import 'package:zaoji/ui/home_shell.dart';
 import 'package:zaoji/ui/recipe_detail_page.dart';
 import 'package:zaoji/widgets/time_capsule_text.dart';
 
+import 'fss_stub.dart';
+
 /// 主页（菜谱库）与「列表 → 详情」走通测试。
 ///
 /// 这一轮把主页照高保真原型重做了（封面插画卡片 / 搜索 / 筛选 / 排序 /
@@ -13,6 +15,10 @@ import 'package:zaoji/widgets/time_capsule_text.dart';
 /// · 有人把原型定下的结构改没了（比如搜索框、标签栏），这里红；
 /// · 有人把布局改溢出了，`takeException` 会红——**判断布局靠断言，不靠截图**。
 void main() {
+  // flutter test 里 defaultTargetPlatform 是 android → 引擎真会去敲
+  // flutter_secure_storage 的通道，而测试环境没有 handler（见 fss_stub.dart）。
+  setUpAll(stubSecureStorageForTest);
+
   /// 每个测试自建 store（内存库），init 发生在该测试自己的 FakeAsync 区里。
   ///
   /// ★ 不能用 `setUpAll` + 全局单例：在真实 async 区完成的 Future，

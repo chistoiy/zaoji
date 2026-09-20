@@ -2662,6 +2662,9 @@ const S = {
   calMonth:{ y:2026, m:8 },
   editorTags:{},
   connectState:'idle', // idle | testing | ok | err
+  accessMode:'open',   // R21 服务端准入三态（互斥）：open | passcode | pairCode
+  passcodeJoined:false,
+  visitorManualSync:false,
   timer:null,          // { total, left, running, label, done, float }
   fab:{ x:null, y:null },
   addFab:{ x:null, y:null },   // 主页悬浮「添加菜品」按钮的位置（本机偏好，不参与同步）
@@ -4139,45 +4142,73 @@ SCREENS.sync = function () {
     { k:'upload', n:'仅上传', d:'以手机端为准，覆盖服务端数据' },
     { k:'download', n:'仅下载', d:'以服务端为准，覆盖手机端数据' }
   ];
+  const modes = [
+    { k:'open',     n:'免配对开放', d:'打开即用，数据自动双向同步' },
+    { k:'passcode', n:'固定口令',   d:'填服务端设定的口令即可接入' },
+    { k:'pairCode', n:'配对码',     d:'一次性 6 位码，在本机电脑上取' }
+  ];
+  const access = function () {
+    if (S.accessMode === 'open') {
+      return '<div class="card pad" style="background:rgba(55,99,74,.08);border-color:rgba(55,99,74,.24)">' +
+        '<div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:#2F5B40;font-weight:600">' + ic('check', 16) + '免配对接入' +
+        (S.visitorManualSync ? '' : '<span class="badge badge-ok" style="margin-left:auto"><i></i>自动同步</span>') + '</div>' +
+        '<div style="font-size:11.5px;color:var(--ink-2);margin-top:8px;line-height:1.8">' +
+        (S.visitorManualSync ? '点下方「立即同步」上传与下载数据。' : '无需配对、无需点按钮，改完自动上传、回到页面自动下载。') + '</div></div>';
+    }
+    if (S.accessMode === 'passcode') {
+      return S.passcodeJoined
+        ? '<div class="card pad" style="background:rgba(55,99,74,.08);border-color:rgba(55,99,74,.24)">' +
+            '<div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:#2F5B40;font-weight:600">' + ic('check', 16) + '口令已验证' +
+            '<button type="button" class="btn btn-ghost btn-sm" style="margin-left:auto" data-act="passcode-leave">解除</button></div>' +
+            '<div style="font-size:11.5px;color:var(--ink-2);margin-top:8px;line-height:1.8">' +
+            (S.visitorManualSync ? '点下方「立即同步」上传与下载数据。' : '凭证已存本机，之后照常自动同步。') + '</div></div>'
+        : '<div class="field"><div class="field-label">连接口令<span class="req">*</span></div>' +
+            '<div class="input-group">' +
+              '<input class="input" type="password" placeholder="向家里管服务器的人要" style="letter-spacing:.14em">' +
+              '<button type="button" class="btn btn-primary btn-sm" data-act="passcode-join">连接</button>' +
+            '</div></div>';
+    }
+    return '<div class="field"><div class="field-label">配对码<span class="req">*</span></div>' +
+      '<div class="input-group">' +
+        '<input class="input" placeholder="6 位，5 分钟内有效" style="letter-spacing:.2em;font-variant-numeric:tabular-nums">' +
+        '<button type="button" class="btn btn-primary btn-sm" data-act="toast" data-msg="配对成功，凭证已存本机（原型示意）">配对</button>' +
+      '</div>' +
+      '<p style="font-size:11px;color:var(--muted);margin-top:7px;line-height:1.65">配对码在服务端那台电脑上取。</p></div>';
+  }();
   return '<div class="screen is-full">' +
     appbar('Web 服务地址与同步', '家里那台电脑上的灶记服务', { act:'back' },
       '<button type="button" class="iconbtn" data-act="sync-run" aria-label="立即同步">' + ic('sync', 20) + '</button>') +
 
     '<div class="px">' +
       '<div class="field"><div class="field-label">服务地址<span class="req">*</span>' + badge + '</div>' +
-        '<div class="input-group">' +
-          '<input class="input" id="svcUrl" value="192.168.1.23:8666" style="font-variant-numeric:tabular-nums">' +
-          '<button type="button" class="btn btn-ghost btn-sm" data-act="toast" data-msg="已扫描局域网，发现 1 个灶记服务（原型示意）">' + ic('wifi', 15) + '扫描</button>' +
-        '</div>' +
-        '<p style="font-size:11px;color:var(--muted);margin-top:7px;line-height:1.65">支持填 IP:端口 或 <b>zaoji.local</b>。也可以点「扫描」自动发现同一局域网内的灶记服务。</p>' +
+        '<input class="input" id="svcUrl" value="192.168.31.23:8666" style="font-variant-numeric:tabular-nums;font-size:12px">' +
+        '<p style="font-size:11px;color:var(--muted);margin-top:7px;line-height:1.65">网页端打开时已按当前访问地址自动填好；App 端手动填一次。</p>' +
       '</div>' +
 
-      '<div class="field"><div class="field-label">配对令牌</div>' +
-        '<div class="input-group">' +
-          '<input class="input" value="••••••••••••3f7a" readonly>' +
-          '<button type="button" class="btn btn-ghost btn-sm" data-act="toast" data-msg="已重新生成配对码，请在电脑端确认（原型示意）">' + ic('reset', 15) + '重置</button>' +
-        '</div></div>' +
+      '<div class="sec-head" style="padding:0;margin:2px 0 12px"><span class="sec-num">01</span><span class="sec-title">接入方式</span></div>' +
+      access +
 
-      '<div style="display:flex;gap:9px">' +
+      '<div style="display:flex;gap:9px;margin-top:14px">' +
         '<button type="button" class="btn btn-primary" style="flex:1" data-act="conn-test">' + (st === 'testing' ? '测试中…' : '测试连接') + '</button>' +
-        '<button type="button" class="btn btn-ghost" style="flex:1" data-act="sync-run">' + ic('sync', 16) + '立即同步</button>' +
+        '<button type="button" class="btn btn-ghost" style="flex:1' + (S.accessMode === 'open' && !S.visitorManualSync ? ';opacity:.55' : '') + '" data-act="sync-run">' + ic('sync', 16) + '立即同步</button>' +
       '</div>' +
 
       (st === 'ok' ? '<div class="card pad" style="margin-top:14px;background:rgba(55,99,74,.08);border-color:rgba(55,99,74,.24)">' +
         '<div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:#2F5B40;font-weight:600">' + ic('check', 16) + '已连接 · 灶记服务 v0.9.2</div>' +
-        '<div style="font-size:11.5px;color:var(--ink-2);margin-top:8px;line-height:1.8">服务端 12.4 MB · 8 道菜 · 214 张图片<br>往返延迟 4 ms · 协议 LAN-UDP 发现 + HTTP 同步</div></div>' : '') +
+        '<div style="font-size:11.5px;color:var(--ink-2);margin-top:8px;line-height:1.8">服务端 12.4 MB · 8 道菜 · 214 张图片<br>往返延迟 4 ms · HTTP 增量同步 · 接入方式：' +
+        (S.accessMode === 'open' ? '免配对开放' : S.accessMode === 'passcode' ? '固定口令' : '配对码') + '</div></div>' : '') +
       (st === 'err' ? '<div class="card pad" style="margin-top:14px;background:var(--accent-softer);border-color:rgba(210,73,28,.28)">' +
         '<div style="display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--accent-deep);font-weight:600">' + ic('alert', 16) + '连不上这台电脑</div>' +
         '<div style="font-size:11.5px;color:var(--ink-2);margin-top:8px;line-height:1.85">依次检查：<br>① 电脑是否开机、灶记服务是否在运行<br>② 手机与电脑是否在同一个 Wi-Fi<br>③ 地址里是否漏了端口号</div></div>' : '') +
 
-      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">01</span><span class="sec-title">同步策略</span></div>' +
+      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">02</span><span class="sec-title">同步策略</span></div>' +
       '<div style="display:flex;flex-direction:column;gap:8px">' + strategies.map(function (s) {
         return '<button type="button" class="pick" data-act="sync-strategy" data-k="' + s.k + '" aria-pressed="' + (S.syncChoice === s.k) + '">' +
           '<span class="pick-box">' + ic('check', 13) + '</span>' +
           '<span style="flex:1"><span class="row-title">' + s.n + '</span><span class="row-sub">' + s.d + '</span></span></button>';
       }).join('') + '</div>' +
 
-      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">02</span><span class="sec-title">同步内容</span></div>' +
+      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">03</span><span class="sec-title">同步内容</span></div>' +
       '<div class="list">' +
         syncRow('book', '菜品、步骤、食材、标签', '增量同步', true) +
         syncRow('image', '图片与成品照', '压缩后按需同步', true) +
@@ -4185,7 +4216,7 @@ SCREENS.sync = function () {
         syncRow('history', '烹饪历史与计时记录', '增量同步', false) +
       '</div>' +
 
-      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">03</span><span class="sec-title">同步日志</span></div>' +
+      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">04</span><span class="sec-title">同步日志</span></div>' +
       '<div class="card pad">' + SYNC_LOG.map(function (l) {
         return '<div class="logline"><time>' + l.t + '</time><span class="m">' + esc(l.m) + '</span>' +
           '<span class="tagx badge ' + (l.s === 'ok' ? 'badge-ok' : l.s === 'warn' ? 'badge-warn' : 'badge-err') + '">' +
@@ -4198,7 +4229,20 @@ SCREENS.sync = function () {
         '① 每条记录带全局唯一 ID + 更新时间戳，手机端与服务端各自维护同步游标；<br>' +
         '② 默认 <b>双向合并</b>：按字段级时间戳取较新值，冲突写入「冲突箱」而不是直接丢弃；<br>' +
         '③ 删除使用软删除（墓碑标记），避免一端删除后被另一端"复活"；<br>' +
-        '④ 图片先传缩略图占位，原图后台补齐，弱网不阻塞主流程。</p></div>' +
+        '④ 图片先传缩略图占位，原图后台补齐，弱网不阻塞主流程；<br>' +
+        '⑤ 接入方式由服务端单选：免配对开放 / 固定口令 / 配对码。</p></div>' +
+
+      '<div class="card pad" style="margin-top:14px;border-style:dashed">' +
+        '<div class="panel-kicker" style="color:var(--muted);font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;font-weight:600;margin-bottom:10px">原型演示 · 模拟服务端准入设置</div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px">' + modes.map(function (m) {
+          return '<button type="button" class="pick" data-act="sync-mode" data-k="' + m.k + '" aria-pressed="' + (S.accessMode === m.k) + '">' +
+            '<span class="pick-box">' + ic('check', 13) + '</span>' +
+            '<span style="flex:1"><span class="row-title">' + m.n + '</span><span class="row-sub">' + m.d + '</span></span></button>';
+        }).join('') + '</div>' +
+        '<div class="row" style="margin-top:10px"><span class="row-main"><span class="row-title">来访者必须点「立即同步」</span>' +
+        '<span class="row-sub">默认关：改动自动上传、打开自动下载</span></span>' +
+        '<span class="switch" role="switch" tabindex="0" data-act="sync-manual-toggle" aria-checked="' + S.visitorManualSync + '"></span></div>' +
+      '</div>' +
     '</div>' +
     '<div class="actionbar"><button type="button" class="btn btn-primary btn-block" data-act="back">完成</button></div>' +
   '</div>';
@@ -4297,9 +4341,9 @@ SCREENS['settings-server'] = function () {
         '<div class="svc-row"><span class="svc-ico">' + ic('gear', 19) + '</span>' +
           '<span style="flex:1"><span class="row-title">开机自启动</span><span class="row-sub">注册为系统服务，崩溃后自动拉起</span></span>' +
           '<span class="switch" role="switch" tabindex="0" data-act="toggle-on" aria-checked="true"></span></div>' +
-        '<div class="svc-row"><span class="svc-ico">' + ic('wifi', 19) + '</span>' +
-          '<span style="flex:1"><span class="row-title">局域网广播</span><span class="row-sub">让手机端可自动发现服务</span></span>' +
-          '<span class="switch" role="switch" tabindex="0" data-act="toggle-on" aria-checked="true"></span></div>' +
+        '<div class="svc-row"><span class="svc-ico">' + ic('lock', 19) + '</span>' +
+          '<span style="flex:1"><span class="row-title">同步准入</span><span class="row-sub">免配对开放 / 固定口令 / 配对码，单选</span></span>' +
+          '<span class="badge badge-ok"><i></i>免配对</span></div>' +
         '<div class="svc-row"><span class="svc-ico">' + ic('lock', 19) + '</span>' +
           '<span style="flex:1"><span class="row-title">访问令牌</span><span class="row-sub">仅同一 Wi-Fi 内可访问</span></span>' +
           '<button type="button" class="btn btn-quiet btn-sm" data-act="toast" data-msg="已重置访问令牌（原型示意）">重置</button></div>' +
@@ -5462,7 +5506,7 @@ function serverHTML() {
         '<div class="dbox"><div class="dbox-h">' + ic('server', 17) + '<span class="dbox-t">运行环境</span></div>' +
           '<div class="dbox-b">' +
             '<div class="spec"><span class="spec-k">服务地址</span><span class="spec-v num">192.168.1.23:8666</span></div>' +
-            '<div class="spec"><span class="spec-k">局域网发现</span><span class="spec-v">zaoji.local（mDNS）</span></div>' +
+            '<div class="spec"><span class="spec-k">同步准入</span><span class="spec-v">免配对开放</span></div>' +
             '<div class="spec"><span class="spec-k">数据存储</span><span class="spec-v">SQLite 12.4 MB</span></div>' +
             '<div class="spec"><span class="spec-k">图片目录</span><span class="spec-v">D:\\zaoji\\media</span></div>' +
             '<div class="spec"><span class="spec-k">开机自启</span><span class="spec-v">已注册系统服务</span></div>' +
@@ -6291,6 +6335,13 @@ document.addEventListener('click', function (e) {
     return;
   }
   if (act === 'sync-strategy') { S.syncChoice = el.dataset.k; renderScreen(false); return; }
+  if (act === 'sync-mode') { S.accessMode = el.dataset.k; S.passcodeJoined = false; renderScreen(false); return; }
+  if (act === 'sync-manual-toggle') { S.visitorManualSync = !S.visitorManualSync; renderScreen(false); return; }
+  if (act === 'passcode-join') {
+    S.passcodeJoined = true; S.connectState = 'ok'; S.lastSync = '刚刚';
+    renderScreen(false); toast('口令正确，凭证已存本机'); return;
+  }
+  if (act === 'passcode-leave') { S.passcodeJoined = false; renderScreen(false); return; }
   if (act === 'server-tab') { S.serverTab = el.dataset.k; renderDevice(); return; }
   if (act === 'menu-add-run') { S.sheet = null; renderOverlays(); toast('已加入 ' + R_MAP[el.dataset.id].name); return; }
 

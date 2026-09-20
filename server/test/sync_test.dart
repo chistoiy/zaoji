@@ -452,6 +452,22 @@ void main() {
       expect(db.maxSeq, 2, reason: '只有真正写入的两条产生变更');
     });
 
+    test('★ 连续写入盖出的 HLC 严格递增（同毫秒不掷硬币）', () {
+      // 回归：R21 前 _mintHlc 直接用 Hlc.now——Windows 时钟粒度 ~16ms，
+      // 同一毫秒内的两次写入会盖出**一模一样**的戳，客户端 LWW 分不清新旧。
+      // 这个测试跑 60 次循环，必然踩进同毫秒，所以它是确定性的。
+      final d = pairDevice();
+      String? prev;
+      for (var i = 0; i < 60; i++) {
+        sync.push(device: d, mutationId: 'mono-$i',
+            changes: [upsert('recipe', recipeRow(id: 'mono', name: '第$i次'))]);
+        final h = '${rowOf('mono')!['updated_at']}';
+        if (prev != null) expect(h.compareTo(prev) > 0, isTrue,
+            reason: '第 $i 次的戳不比上一次大');
+        prev = h;
+      }
+    });
+
     test('删除是软删除：写墓碑、推进 HLC、rev+1，并记一条 delete', () {
       final d = pairDevice();
       sync.push(device: d, mutationId: 'a', changes: [upsert('recipe', recipeRow(id: 'r1', name: 'X'))]);

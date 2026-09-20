@@ -113,11 +113,15 @@ class ZaojiServer {
       ..get('/api/health',
           (Request req) async => _json(await state.healthPayload()))
       ..get('/status',
-          (Request req) async => _html(await statusPageHtml(state, ips)))
+          (Request req) async => _html(await statusPageHtml(
+              state, ips, isAdmin: _isLocalRequest(req))))
       // 配对码只能从本机取——否则局域网里任何人都能自己配对
       ..get('/api/pair/code', (Request req) => _pairCode(state, req))
       ..post('/api/pair', (Request req) => _pair(state, req))
-      // 数据接口一律要 token
+      // R21：准入模式查询（免鉴权，但**绝不回口令**）与口令接入
+      ..get('/api/sync/config', (Request req) => _syncConfig(state, req))
+      ..post('/api/join', (Request req) => _join(state, req))
+      // 数据接口：token 必过；开放模式下匿名请求按 X-Node-Id 记来访者伪设备
       ..get('/api/changes', (Request req) => _pull(state, req))
       ..post('/api/changes', (Request req) => _push(state, req))
       // 媒体接口（R16）：同样要 token。GET 是显示端按需拉取，PUT 是上传。
@@ -127,7 +131,12 @@ class ZaojiServer {
           (Request req) => _mediaGet(state, req, req.params['sha']!))
       // 运维接口（R18）：孤儿媒体回收。**只允许从服务端本机触发**——
       // 删除不可逆，不该让局域网里任何一台设备有机会碰到它。
-      ..post('/api/admin/media-gc', (Request req) => _mediaGc(state, req));
+      ..post('/api/admin/media-gc', (Request req) => _mediaGc(state, req))
+      // R21：准入设置（模式/口令/手动同步策略）。同样**仅本机**——
+      // 把准入门开关交给局域网里任何设备，等于没有门。
+      ..get('/api/admin/settings', (Request req) => _adminSettings(state, req))
+      ..post('/api/admin/settings',
+          (Request req) => _adminSettings(state, req));
 
     /// 首页：如果托管了 Flutter Web 产物，让位给它——
     /// 否则用户打开地址看到的永远是状态页，而不是他要的 App。
@@ -206,12 +215,27 @@ class ZaojiServer {
             '请在电脑的浏览器里打开 http://127.0.0.1:${state.config.port}/api/pair/code',
       }, status: 403);
     }
+    final gate = _requireMode(state, SyncAccessMode.pairCode);
+    if (gate != null) return gate;
     final c = state.sync.issuePairCode();
     return _json({
       ...c.toJson(),
       'serverId': state.serverId,
       'protocolVersion': kSyncProtocolVersion,
     });
+  }
+
+  /// 三态互斥的闸门：模式不对就 409，**不悄悄兼容另一种接入方式**。
+  /// 悄悄兼容的结局是管理员以为口令保护住了数据，实际配对码门还开着。
+  static Response? _requireMode(ServerState state, SyncAccessMode want) {
+    if (state.sync.accessMode == want) return null;
+    return _json({
+      'error': 'mode_mismatch',
+      'message': '当前准入模式是「${state.sync.accessMode.label}」，'
+          '这个接口只在「${want.label}」模式下可用。'
+          '服务端这台电脑的浏览器打开 /status 可以切换。',
+      'accessMode': state.sync.accessMode.wire,
+    }, status: 409);
   }
 
   static bool _isLocalRequest(Request req) {
@@ -238,6 +262,9 @@ class ZaojiServer {
   /// [SyncService.maxPairFailsPerWindow] 次就 429；**成功配对清空记录**
   /// （不惩罚手滑）。参数残缺（400 类）不计入失败——那是客户端 bug，不是猜测。
   static Future<Response> _pair(ServerState state, Request req) async {
+    final gate = _requireMode(state, SyncAccessMode.pairCode);
+    if (gate != null) return gate;
+
     final peer = _peerKey(req);
     if (state.sync.pairBlocked(peer)) {
       return _json(
@@ -297,10 +324,173 @@ class ZaojiServer {
     return info.remoteAddress.address;
   }
 
+  // ───────────────── R21 · 准入：config / join / admin settings ─────────────────
+
+  /// 免鉴权的准入查询：客户端进「我的」页先看这个，决定渲染哪套接入 UI。
+  ///
+  /// **绝不回口令本身**——回口令的话，开放模式关掉之前所有人已经把口令存下了；
+  /// 而且这接口谁都能调，等于把口令贴在门上。
+  static Response _syncConfig(ServerState state, Request req) => _json({
+        'ok': true,
+        'accessMode': state.sync.accessMode.wire,
+        'visitorManualSync': state.sync.visitorManualSync,
+        'protocolVersion': kSyncProtocolVersion,
+        'serverId': state.serverId,
+      });
+
+  /// 口令模式：固定口令换本机专属 token。
+  ///
+  /// 限流与配对码共用一套窗口逻辑，但**分开计数**（键加 `join#` 前缀）——
+  /// 否则攻击者可以一半额度试配对、一半试口令，两边各自都没触发限流。
+  static Future<Response> _join(ServerState state, Request req) async {
+    final gate = _requireMode(state, SyncAccessMode.passcode);
+    if (gate != null) return gate;
+
+    final peer = 'join#${_peerKey(req)}';
+    if (state.sync.pairBlocked(peer)) {
+      return _json({
+        'error': 'too_many_attempts',
+        'message': '口令错误次数过多，请 1 分钟后再试',
+      }, status: 429, headers: const {'retry-after': '60'});
+    }
+
+    final Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    if (body == null) {
+      return _json({'error': 'bad_request', 'message': '请求体必须是 JSON'},
+          status: 400);
+    }
+
+    final passcode = '${body['passcode'] ?? ''}';
+    final deviceId = '${body['deviceId'] ?? ''}';
+    final deviceName = '${body['deviceName'] ?? ''}';
+    if (passcode.length > 64 || deviceId.length > 64 || deviceName.length > 128) {
+      return _json({
+        'error': 'bad_request',
+        'message': '字段超长（passcode≤64 / deviceId≤64 / deviceName≤128）'
+      }, status: 400);
+    }
+
+    final outcome = state.sync.joinWithPasscode(
+      passcode: passcode,
+      deviceId: deviceId,
+      deviceName: deviceName,
+    );
+    if (outcome.ok) {
+      state.sync.clearPairFails(peer);
+      // 谁进来了要留痕（口令是共享的，事后追溯只能靠设备登记）
+      await state.log.write('[access] 口令接入成功：设备 ${body['deviceId']}');
+      return _json(outcome.toJson());
+    }
+
+    // 只有「口令不对」才是真实的猜测；参数残缺与服务端未配置不该罚提问者
+    if (outcome.failure == PairFailure.wrongPasscode) {
+      state.sync.recordPairFail(peer);
+      return _json(outcome.toJson(), status: 403);
+    }
+    if (outcome.failure == PairFailure.passcodeNotSet) {
+      return _json(outcome.toJson(), status: 503);
+    }
+    return _json(outcome.toJson(), status: 400);
+  }
+
+  /// 准入设置。**仅本机**（与配对码/媒体回收同一条理由）。
+  ///
+  /// 口令写入后**不回显**（只回 `hasPasscode`）：状态页会被截屏、会被贴进群里，
+  /// 口令出现在 HTML 里就再也收不回来。要改口令，重新设一个就是。
+  static Future<Response> _adminSettings(ServerState state, Request req) async {
+    if (!_isLocalRequest(req)) {
+      return _json({
+        'error': 'forbidden',
+        'message': '准入设置只能在服务端那台电脑上修改（/status 状态页）',
+      }, status: 403);
+    }
+
+    if (req.method == 'GET') return _json(_accessSummary(state));
+
+    final Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    if (body == null) {
+      return _json({'error': 'bad_request', 'message': '请求体必须是 JSON'},
+          status: 400);
+    }
+
+    final changes = <String>[];
+    if (body.containsKey('accessMode')) {
+      final m = SyncAccessMode.parse('${body['accessMode']}');
+      // 解析失败绝不能回落到默认模式——那等于配置打错字时把门打开
+      if (m == null) {
+        return _json({
+          'error': 'bad_request',
+          'message': 'accessMode 只接受 open / passcode / pairCode，'
+              '收到 "${body['accessMode']}"',
+        }, status: 400);
+      }
+      if (m != state.sync.accessMode) {
+        state.sync.accessMode = m;
+        changes.add('模式→${m.label}');
+      }
+    }
+    if (body.containsKey('passcode')) {
+      final p = '${body['passcode'] ?? ''}'.trim();
+      if (p.length > 64) {
+        return _json({'error': 'bad_request', 'message': '口令最长 64 字符'},
+            status: 400);
+      }
+      state.sync.setPasscode(p.isEmpty ? null : p);
+      changes.add(p.isEmpty ? '口令已清除' : '口令已更新');
+    }
+    if (body.containsKey('visitorManualSync')) {
+      final v = body['visitorManualSync'];
+      if (v is! bool) {
+        return _json({
+          'error': 'bad_request',
+          'message': 'visitorManualSync 必须是布尔',
+        }, status: 400);
+      }
+      state.sync.visitorManualSync = v;
+      changes.add('来访者手动同步→${v ? '开' : '关'}');
+    }
+
+    // 准入策略的每一次变化都必须留痕：日后「数据怎么被人改了」全靠这行
+    if (changes.isNotEmpty) {
+      await state.log.write('[access] 准入设置变更：${changes.join('，')}');
+    }
+    return _json(_accessSummary(state));
+  }
+
+  static Map<String, Object?> _accessSummary(ServerState state) => {
+        'ok': true,
+        'accessMode': state.sync.accessMode.wire,
+        'hasPasscode': (state.sync.passcode ?? '').isNotEmpty,
+        'visitorManualSync': state.sync.visitorManualSync,
+      };
+
+  /// 数据/媒体接口的统一鉴权入口（替换原来裸的 `authenticate`）。
+  ///
+  /// 顺序刻意是「先 token、后模式」：合法 token 在**任何模式下都直接通过**——
+  /// 这是三态设计里对用户最重要的承诺：切模式不会把已经配好的设备关在门外。
+  static Device? _resolveDevice(ServerState state, Request req) {
+    final byToken = state.sync.authenticate(req.headers['authorization']);
+    if (byToken != null) return byToken;
+    if (state.sync.accessMode == SyncAccessMode.open) {
+      return state.sync.visitorDevice(req.headers[kNodeIdHeader]);
+    }
+    return null;
+  }
+
   /// 增量拉取。
   static Future<Response> _pull(ServerState state, Request req) async {
-    final device = state.sync.authenticate(req.headers['authorization']);
-    if (device == null) return _unauthorized();
+    final device = _resolveDevice(state, req);
+    if (device == null) return _unauthorized(state);
 
     final q = req.url.queryParameters;
     final since = int.tryParse(q['since'] ?? '0');
@@ -320,8 +510,8 @@ class ZaojiServer {
 
   /// 增量推送。幂等：同一个 mutationId 重试会拿到上次的结果。
   static Future<Response> _push(ServerState state, Request req) async {
-    final device = state.sync.authenticate(req.headers['authorization']);
-    if (device == null) return _unauthorized();
+    final device = _resolveDevice(state, req);
+    if (device == null) return _unauthorized(state);
 
     final Map<String, Object?>? body;
     try {
@@ -382,10 +572,22 @@ class ZaojiServer {
     return _json(result.toJson(), status: result.ok ? 200 : 400);
   }
 
-  static Response _unauthorized() => _json({
-        'error': 'unauthorized',
-        'message': '缺少或无效的设备 token。请先在 App 里完成配对。',
-      }, status: 401);
+  static Response _unauthorized(ServerState state) {
+    // 提示要按**当前模式**说：口令模式下让用户去输口令，
+    // 别再让人家满世界找已经不该存在的配对码。
+    final mode = state.sync.accessMode;
+    final hint = switch (mode) {
+      SyncAccessMode.open =>
+        '开放模式下请求需带 X-Node-Id（本机设备标识，App/页面会自动带上）',
+      SyncAccessMode.passcode => '请先在「我的」页输入连接口令完成接入',
+      SyncAccessMode.pairCode => '请先在 App 里完成配对',
+    };
+    return _json({
+      'error': 'unauthorized',
+      'message': '缺少或无效的设备凭证。$hint。',
+      'accessMode': mode.wire,
+    }, status: 401);
+  }
 
   // ── 媒体接口（R16）──
 
@@ -417,8 +619,8 @@ class ZaojiServer {
   /// 收下错图等于让显示端永久引用一张对不上的图。
   static Future<Response> _mediaPut(
       ServerState state, Request req, String sha) async {
-    final device = state.sync.authenticate(req.headers['authorization']);
-    if (device == null) return _unauthorized();
+    final device = _resolveDevice(state, req);
+    if (device == null) return _unauthorized(state);
 
     if (!MediaStore.isValidSha(sha)) {
       return _mediaBad('sha256 必须是 64 位小写十六进制');
@@ -472,8 +674,8 @@ class ZaojiServer {
   /// 缩略图同理——它是 `(sha, width)` 的纯函数，同样永不改变。
   static Future<Response> _mediaGet(
       ServerState state, Request req, String sha) async {
-    final device = state.sync.authenticate(req.headers['authorization']);
-    if (device == null) return _unauthorized();
+    final device = _resolveDevice(state, req);
+    if (device == null) return _unauthorized(state);
 
     if (!MediaStore.isValidSha(sha)) {
       return _mediaBad('sha256 必须是 64 位小写十六进制');

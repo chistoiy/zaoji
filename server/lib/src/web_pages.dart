@@ -1,3 +1,5 @@
+import 'package:zaoji_shared/zaoji_shared.dart';
+
 import 'media.dart';
 import 'media_gc.dart';
 import 'server_state.dart';
@@ -7,7 +9,8 @@ import 'config.dart';
 ///
 /// 刻意**不引任何外部资源**（字体、CSS 全内联）：
 /// 这台笔记本可能根本没连外网，页面必须离线也能正常渲染。
-Future<String> statusPageHtml(ServerState st, List<String> ips) async {
+Future<String> statusPageHtml(ServerState st, List<String> ips,
+    {bool isAdmin = false}) async {
   final h = await st.healthPayload();
   final writable = h['dataDirWritable'] == true;
   final webReady = h['webReady'] == true;
@@ -84,15 +87,56 @@ Future<String> statusPageHtml(ServerState st, List<String> ips) async {
   // 配对码只能从服务端本机取（api/pair/code 会校验来源地址）。
   final devices = st.sync.devices();
   final deviceRows = devices.isEmpty
-      ? '<p class="hint">还没有设备配对过。在服务端这台电脑上打开 '
-          '<code>http://127.0.0.1:${st.config.port}/api/pair/code</code> 取一个配对码，'
-          '然后在 App 里输入。</p>'
-      : '<table><thead><tr><th>设备</th><th>已同步到</th><th>最后活动</th></tr></thead><tbody>'
+      ? '<p class="hint">还没有设备接入。当前准入模式：'
+          '<b>${esc(st.sync.accessMode.label)}</b>——'
+          '${st.sync.accessMode == SyncAccessMode.open ? '来访者打开就会自动接入，无需任何操作。' : st.sync.accessMode == SyncAccessMode.passcode ? '来访者在「我的」页输入连接口令即可接入。' : '在服务端这台电脑上打开 <code>http://127.0.0.1:${st.config.port}/api/pair/code</code> 取配对码。'}'
+          '</p>'
+      : '<table><thead><tr><th>设备</th><th>类型</th><th>已同步到</th><th>最后活动</th></tr></thead><tbody>'
           '${devices.map((d) => '<tr><td>${esc(d.name)}'
               '<br><code style="font-size:11px;color:var(--muted)">${esc(d.id)}</code></td>'
+              '<td>${d.visitor ? '来访者' : '已配对'}</td>'
               '<td><code>${d.syncCursor}</code></td>'
               '<td>${esc(d.lastSeenAt ?? '—')}</td></tr>').join()}'
           '</tbody></table>';
+
+  // ── R21 · 同步准入 ──
+  // 区块本身所有人可见（"我这台是被开放的还是被口令挡着的"是来访者该知道的事），
+  // 但**编辑控件只给本机请求渲染**——改不了不算漏洞，看得见面前能改才危险。
+  // 口令只写入、永不回显：状态页会被截屏转发，印在 HTML 里的口令收不回来。
+  final mode = st.sync.accessMode;
+  final accessSection =
+      '''<h2>同步准入</h2>
+  <div class="grid">
+    <div class="cell"><div class="k">当前模式（三态互斥）</div><div class="v"><b>${esc(mode.label)}</b></div></div>
+    <div class="cell"><div class="k">连接口令</div><div class="v">${(st.sync.passcode ?? '').isNotEmpty ? '已设定（不回显）' : '未设定'}</div></div>
+    <div class="cell"><div class="k">来访者必须点「立即同步」</div><div class="v">${st.sync.visitorManualSync ? '是' : '否（自动同步）'}</div></div>
+  </div>
+  ${isAdmin ? '''<div style="margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:10px">
+    <b style="font-size:13px">修改（仅本机）</b>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:13px">
+      <label>模式
+        <select id="am">
+          <option value="open" ${mode == SyncAccessMode.open ? 'selected' : ''}>免配对开放</option>
+          <option value="passcode" ${mode == SyncAccessMode.passcode ? 'selected' : ''}>固定口令</option>
+          <option value="pairCode" ${mode == SyncAccessMode.pairCode ? 'selected' : ''}>配对码</option>
+        </select></label>
+      <label>口令 <input id="ap" type="text" maxlength="64" placeholder="留空 = 不修改" style="width:140px"></label>
+      <label><input id="ams" type="checkbox" ${st.sync.visitorManualSync ? 'checked' : ''}> 来访者必须手动同步</label>
+      <button onclick="saveAccess()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--paper-2);cursor:pointer">保存</button>
+      <span id="ar" class="hint"></span>
+    </div>
+    <script>
+    async function saveAccess(){
+      const body={accessMode:document.getElementById('am').value,
+                  visitorManualSync:document.getElementById('ams').checked};
+      const p=document.getElementById('ap').value.trim();
+      if(p) body.passcode=p;
+      const r=await fetch('/api/admin/settings',{method:'POST',
+        headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+      document.getElementById('ar').textContent = r.ok ? '已保存，刷新可见' : ('失败 ' + r.status);
+    }
+    </script>
+  </div>''' : ''}''';
 
   final httpChips = ips
       .map((ip) => '<a class="addr" href="http://$ip:${st.config.port}/">'
@@ -278,7 +322,9 @@ code.path{background:transparent;padding:0;color:var(--ink);font-weight:500}
     <tbody>$rows</tbody>
   </table>
 
-  <h2>已配对的设备</h2>
+  $accessSection
+
+  <h2>同步设备（已配对 + 来访者）</h2>
   $deviceRows
 
   <h2>数据</h2>

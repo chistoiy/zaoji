@@ -28,7 +28,34 @@ async function pairCode() {
   return (await res.json()).code;
 }
 
+// R21：准入默认是「免配对开放」，配对接口在非 pairCode 模式下 409。
+// E2E 验的是配对链路 → 先把服务端切到 pairCode，跑完恢复 open（真实默认态）。
+// /api/admin/settings 只认本机请求，这个脚本正好跑在服务端那台电脑上。
+async function setAccess(accessMode) {
+  const res = await fetch(`${BASE}/api/admin/settings`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accessMode }),
+  });
+  const j = await res.json();
+  if (!res.ok) throw new Error(`切换准入模式失败: ${JSON.stringify(j)}`);
+  console.log(`[准入] accessMode = ${j.accessMode}`);
+}
+
 (async () => {
+  try {
+    await setAccess('pairCode');
+    process.exitCode = (await run()) ? 1 : 0;
+  } catch (e) {
+    console.error('E2E 脚本异常:', e);
+    process.exitCode = 1;
+  }
+  // 无论成败都恢复开放模式：半途失败把服务端钉在 pairCode 会影响家里其它人
+  await setAccess('open').catch((e) => console.log('[准入] 恢复 open 失败:', e.message));
+  process.exit(process.exitCode ?? 0);
+})();
+
+async function run() {
   const h0 = await health();
   console.log(
     `服务端 ${h0.version} · schema v${h0.db.schemaVersionInDb} · ` +
@@ -55,13 +82,16 @@ async function pairCode() {
   const pairAndSync = async (page, label) => {
     // ★ 配对两个雷（R19② 探针实测，同步修 R15 脚本里的同款潜伏问题）：
     //   ① 第二个输入框 click 后首字符会被吞 → 读回 DOM 值、不对重打；
-    //   ② 「配对」文字在分段标题与按钮上各出现一次，getByText 会点错 → 锚定 role=button。
+    //   ② 「配对」文字在分段标题与按钮上各出现一次，getByText 会点错 → 锚定 role=button；
+    //   ③ R21 起地址框**已预填当前 origin**——预填值不在 hint 里（aria-label 不再是
+    //     "http…"，改用 input[type=url] 锚定），且直接敲键会把新值**接在后面**，
+    //     所以每次输入前一律 Control+A 覆盖旧值。
     const inputValues = () =>
       page.evaluate(() => [...document.querySelectorAll('input')].map((i) => i.value));
     const typedInto = async (locator, text, which) => {
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (attempt === 1) await locator.click({ timeout: 20000 });
-        else await page.keyboard.press('Control+A');
+        await page.keyboard.press('Control+A');
         await page.keyboard.type(text, { delay: 60 });
         await page.waitForTimeout(300);
         const v = (await inputValues())[which] ?? '';
@@ -90,7 +120,7 @@ async function pairCode() {
     }
 
     // ★ 不能用 fill()：它设 value 不一定走 Flutter 的编辑通道（实测引擎收不到）。
-    await typedInto(page.locator('input[aria-label^="http"]'), 'http://127.0.0.1:8666', 0);
+    await typedInto(page.locator('input[type="url"]'), 'http://127.0.0.1:8666', 0);
     const code = await pairCode();
     await typedInto(page.locator('input[aria-label*="YE28Z4"]'), code, 1);
     console.log(`[${label}] 配对码 = ${code}`);
@@ -222,8 +252,5 @@ async function pairCode() {
 
   const failed = !aOk || !bOk;
   console.log(failed ? '=== E2E FAIL ===' : '=== E2E PASS ===');
-  process.exit(failed ? 1 : 0);
-})().catch((e) => {
-  console.error('E2E 脚本异常:', e);
-  process.exit(1);
-});
+  return failed;
+}

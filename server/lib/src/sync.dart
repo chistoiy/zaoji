@@ -178,7 +178,7 @@ class SyncService {
       'INSERT INTO device (id, name, token_hash, sync_cursor, paired_at) '
       'VALUES (?, ?, ?, 0, ?) '
       'ON CONFLICT(id) DO UPDATE SET name = excluded.name, '
-      'token_hash = excluded.token_hash, revoked_at = NULL',
+      'token_hash = excluded.token_hash, revoked_at = NULL, visitor = 0',
       [
         deviceId,
         deviceName.trim().isEmpty ? '未命名设备' : deviceName.trim(),
@@ -199,13 +199,158 @@ class SyncService {
     );
   }
 
+  // ───────────────────── R21 · 准入三态与来访者 ─────────────────────
+  //
+  // 配置存在 `server_setting`（kv，与 meta 分开：meta 归迁移管，这里归用户管）。
+  // **默认 open**（免配对）——这是产品的既定立场：家庭场景「打开就能用」。
+  // 只有解析不了的值才报错，缺键就是默认，所以 `parse` 失败不回落在代码里改模式。
+
+  String? _setting(String key) {
+    final rs = db.db
+        .select('SELECT v FROM server_setting WHERE k = ?', [key]);
+    return rs.isEmpty ? null : '${rs.first['v']}';
+  }
+
+  void _setSetting(String key, String value) {
+    db.db.execute(
+      'INSERT INTO server_setting (k, v) VALUES (?, ?) '
+      'ON CONFLICT(k) DO UPDATE SET v = excluded.v',
+      [key, value],
+    );
+  }
+
+  void _removeSetting(String key) =>
+      db.db.execute('DELETE FROM server_setting WHERE k = ?', [key]);
+
+  /// 当前准入模式。
+  SyncAccessMode get accessMode =>
+      SyncAccessMode.parse(_setting('access_mode')) ?? SyncAccessMode.open;
+
+  set accessMode(SyncAccessMode m) => _setSetting('access_mode', m.wire);
+
+  /// 固定连接口令（明文存服务端自己的库：它的强度本来就只够家庭局域网，
+  /// 换成哈希反而让管理员自己看不到——口令**永不通过任何接口回传**，见 handler）。
+  String? get passcode => _setting('passcode');
+
+  void setPasscode(String? p) {
+    final v = p?.trim() ?? '';
+    if (v.isEmpty) {
+      _removeSetting('passcode');
+    } else {
+      _setSetting('passcode', v);
+    }
+  }
+
+  /// 来访者是否必须手动点「立即同步」。已配对设备不受这个开关影响。
+  bool get visitorManualSync => _setting('visitor_manual_sync') == '1';
+
+  set visitorManualSync(bool on) =>
+      _setSetting('visitor_manual_sync', on ? '1' : '0');
+
+  /// 开放模式下的「伪设备」：请求带合法的 `X-Node-Id` 就按它记一行 device，
+  /// 游标、对账、状态页展示全部复用既有机制——**没有第二套同步路径**。
+  ///
+  /// 已存在就不动游标与名字（反复重连不能把人家同步位清零）；
+  /// 被吊销过的行不重新放进来（吊销是管理员的明确意图）。
+  Device? visitorDevice(String? nodeIdHeader) {
+    final id = nodeIdHeader?.trim() ?? '';
+    if (!kNodeIdPattern.hasMatch(id)) return null;
+
+    final rs = db.db.select(
+      'SELECT id, name, sync_cursor, paired_at, last_seen_at, revoked_at, visitor '
+      'FROM device WHERE id = ?',
+      [id],
+    );
+    if (rs.isNotEmpty) {
+      final d = _deviceOf(rs.first);
+      if (d.revokedAt != null) return null;
+      db.db.execute(
+        'UPDATE device SET last_seen_at = ? WHERE id = ?',
+        [now().toIso8601String(), id],
+      );
+      return d;
+    }
+
+    db.db.execute(
+      'INSERT INTO device (id, name, token_hash, sync_cursor, paired_at, visitor) '
+      'VALUES (?, ?, ?, 0, ?, 1)',
+      [
+        id,
+        '来访者 ${id.length > 8 ? id.substring(id.length - 8) : id}',
+        _sentinelTokenHash(),
+        now().toIso8601String(),
+      ],
+    );
+    return Device(
+      id: id,
+      name: '来访者 $id',
+      syncCursor: 0,
+      pairedAt: now().toIso8601String(),
+      visitor: true,
+    );
+  }
+
+  /// 伪设备没有 token，但列是 NOT NULL。填一个**永远不可能被 Bearer 命中**的
+  /// 随机值，而不是放宽列约束——约束收紧一寸，将来少一类事故。
+  static String _sentinelTokenHash() {
+    final rnd = Random.secure();
+    return List.generate(64, (_) => _hexChars[rnd.nextInt(16)]).join();
+  }
+
+  static const String _hexChars = '0123456789abcdef';
+
+  /// 用固定口令换 visitor token（口令模式）。
+  ///
+  /// 口令对了给的是**这台设备自己的 token**，不是大家一起抱着口令裸奔：
+  /// 之后同步走既有 token 通道，游标、吊销、状态页展示全都现成。
+  PairOutcome joinWithPasscode({
+    required String passcode,
+    required String deviceId,
+    required String deviceName,
+  }) {
+    if (passcode.trim().isEmpty) {
+      return const PairOutcome.failure(PairFailure.emptyPasscode);
+    }
+    if (deviceId.trim().isEmpty) {
+      return const PairOutcome.failure(PairFailure.missingDeviceId);
+    }
+    final want = this.passcode;
+    if (want == null) {
+      // 管理员把模式切到口令却还没设口令——必须说清楚是服务端的事
+      return const PairOutcome.failure(PairFailure.passcodeNotSet);
+    }
+    if (passcode.trim() != want) {
+      return const PairOutcome.failure(PairFailure.wrongPasscode);
+    }
+
+    final token = _newToken();
+    db.db.execute(
+      'INSERT INTO device (id, name, token_hash, sync_cursor, paired_at, visitor) '
+      'VALUES (?, ?, ?, 0, ?, 1) '
+      'ON CONFLICT(id) DO UPDATE SET name = excluded.name, '
+      'token_hash = excluded.token_hash, revoked_at = NULL, visitor = 1',
+      [
+        deviceId.trim(),
+        deviceName.trim().isEmpty ? '来访者设备' : deviceName.trim(),
+        hashToken(token),
+        now().toIso8601String(),
+      ],
+    );
+    return PairOutcome.success(
+      token: token,
+      deviceId: deviceId.trim(),
+      serverId: serverId,
+      protocolVersion: kSyncProtocolVersion,
+    );
+  }
+
   /// 从 `Authorization: Bearer <token>` 解析设备。认不出返回 null。
   Device? authenticate(String? authorizationHeader) {
     final token = _bearerToken(authorizationHeader);
     if (token == null) return null;
 
     final rs = db.db.select(
-      'SELECT id, name, sync_cursor, paired_at, last_seen_at, revoked_at '
+      'SELECT id, name, sync_cursor, paired_at, last_seen_at, revoked_at, visitor '
       'FROM device WHERE token_hash = ?',
       [hashToken(token)],
     );
@@ -589,7 +734,23 @@ class SyncService {
   /// 为什么不沿用客户端的时间戳：合并结果（尤其是自动合并）是**服务端产生的
   /// 新状态**，不同客户端可能对同一行给出不同判断；由服务端盖章才能让所有端
   /// 收敛到同一个结论。`updated_by` 仍然记推送的设备——那是"谁促成的"。
-  String _mintHlc() => Hlc.now(serverId).encode();
+  /// 服务端盖章。
+  ///
+  /// ★ **单调**：同一毫秒内的两次写入若盖出完全相同的 HLC，
+  /// 客户端按 `updated_at` 排新旧就是掷硬币——R21 前这条只被
+  /// `sync_test` 偶发抓到过（Windows 时钟粒度 ~16ms，同毫秒是常态不是运气）。
+  /// 与客户端 `Hlc.now(nodeId).tick(nodeId)` 同一个姿势：不高于上一枚就 tick。
+  Hlc? _lastMinted;
+
+  String _mintHlc() {
+    var h = Hlc.now(serverId);
+    final last = _lastMinted;
+    while (last != null && !(h > last)) {
+      h = h.tick(serverId);
+    }
+    _lastMinted = h;
+    return h.encode();
+  }
 
   int _revOf(Map<String, Object?> row) {
     final v = row['rev'];
@@ -730,12 +891,13 @@ class SyncService {
         pairedAt: '${r['paired_at']}',
         lastSeenAt: r['last_seen_at'] == null ? null : '${r['last_seen_at']}',
         revokedAt: r['revoked_at'] == null ? null : '${r['revoked_at']}',
+        visitor: (r['visitor'] as int? ?? 0) != 0,
       );
 
   /// 已配对设备列表。给状态页显示"谁连过我"。
   List<Device> devices() {
     final rs = db.db.select(
-      'SELECT id, name, sync_cursor, paired_at, last_seen_at, revoked_at '
+      'SELECT id, name, sync_cursor, paired_at, last_seen_at, revoked_at, visitor '
       'FROM device ORDER BY paired_at',
     );
     return rs.map(_deviceOf).toList();
@@ -769,7 +931,10 @@ enum PairFailure {
   missingDeviceId,
   unknownCode,
   codeExpired,
-  codeAlreadyUsed;
+  codeAlreadyUsed,
+  emptyPasscode,
+  wrongPasscode,
+  passcodeNotSet;
 
   /// 给用户看的话。**要能区分"输错了"和"过期了"**，
   /// 否则用户只会一遍遍重输同一个码。
@@ -779,6 +944,9 @@ enum PairFailure {
         PairFailure.unknownCode => '配对码不对，请在电脑上重新获取',
         PairFailure.codeExpired => '配对码已过期（有效期 5 分钟），请重新获取',
         PairFailure.codeAlreadyUsed => '这个配对码已经用过了，请重新获取',
+        PairFailure.emptyPasscode => '请输入连接口令',
+        PairFailure.wrongPasscode => '口令不对，问家里管服务器的人',
+        PairFailure.passcodeNotSet => '服务端还没设定口令，先在状态页设置',
       };
 }
 
@@ -833,6 +1001,9 @@ class Device {
   final String? lastSeenAt;
   final String? revokedAt;
 
+  /// R21：开放模式/口令进来的来访者设备（区别于 6 位码配对的正式设备）。
+  final bool visitor;
+
   const Device({
     required this.id,
     required this.name,
@@ -840,6 +1011,7 @@ class Device {
     required this.pairedAt,
     this.lastSeenAt,
     this.revokedAt,
+    this.visitor = false,
   });
 
   Map<String, Object?> toJson() => {
@@ -849,6 +1021,7 @@ class Device {
         'pairedAt': pairedAt,
         if (lastSeenAt != null) 'lastSeenAt': lastSeenAt,
         if (revokedAt != null) 'revokedAt': revokedAt,
+        if (visitor) 'visitor': true,
       };
 }
 

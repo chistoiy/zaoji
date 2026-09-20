@@ -210,6 +210,8 @@ void main() {
         dataDir: Directory('${tmp2.path}${sep}data'),
         certDir: Directory('${tmp2.path}${sep}certs'),
       ));
+      // 本组走的是"真配对 + 推送"链路：R21 起默认 open，先切回配对码模式
+      state.sync.accessMode = SyncAccessMode.pairCode;
       handler = ZaojiServer.buildHandler(state, const ['192.168.1.10']);
     });
 

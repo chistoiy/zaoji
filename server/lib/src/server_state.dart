@@ -70,6 +70,24 @@ const List<Map<String, Object?>> kEndpoints = [
     'status': 'ready'
   },
   {
+    'path': '/api/sync/config',
+    'method': 'GET',
+    'title': '准入模式与同步策略查询（免鉴权，不含口令）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/join',
+    'method': 'POST',
+    'title': '固定口令换本机 token（口令模式）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/admin/settings',
+    'method': 'GET/POST',
+    'title': '准入设置：三态模式/口令/来访者手动同步（只能从本机改）',
+    'status': 'ready'
+  },
+  {
     'path': '/api/ai/{feature}',
     'method': 'POST',
     'title': '大模型代理（Web 端专用通道）',
@@ -172,6 +190,12 @@ class ServerState {
       'webRoot': web?.path,
       'webReady': webReady,
       'db': db.healthPayload(),
+      // R21 准入三态。只报**模式与开关**，口令永不出现在任何接口响应里
+      'access': {
+        'mode': sync.accessMode.wire,
+        'hasPasscode': (sync.passcode ?? '').isNotEmpty,
+        'visitorManualSync': sync.visitorManualSync,
+      },
       // 盘上的真实占用（遍历文件算的，不是库里的引用）。数据库行数看不出
       // 「照片占了多少」，而不看这个就没法发现磁盘在只涨不跌。
       'media': media.stats().toJson(),

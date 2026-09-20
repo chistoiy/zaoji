@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zaoji/main.dart';
 import 'package:zaoji/ui/cooking_page.dart';
 
+import 'fss_stub.dart';
+
 /// 做菜模式（R20）走通测试。
 ///
 /// 全部从 App 根注入内存库、走真实导航（列表 → 详情 → 开火），
@@ -25,6 +27,9 @@ Future<void> openCooking(WidgetTester tester) async {
 }
 
 void main() {
+  // 测试环境没有 Keystore 插件的 handler，不挂 mock 通道会挂起（见 fss_stub.dart）。
+  setUpAll(stubSecureStorageForTest);
+
   testWidgets('★ 开火：一步一屏 + 步骤指示 + 大字号（FR-COOK-06）', (tester) async {
     await pumpApp(tester);
     await openCooking(tester);
