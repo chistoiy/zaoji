@@ -9,6 +9,7 @@ library;
 
 export 'src/config.dart';
 export 'src/db.dart';
+export 'src/file_log.dart';
 export 'src/media.dart';
 export 'src/media_gc.dart';
 export 'src/server.dart';

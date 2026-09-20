@@ -37,6 +37,11 @@ class ServerConfig {
   /// 两个文件都在，服务端就会自动额外监听 HTTPS。
   final Directory certDir;
 
+  /// 日志目录（R19③）。null = 不写文件日志，只往控制台打（单元测试的常态）。
+  /// 由 [parse] 默认解析为 baseDir 下的 `logs/`——注册成服务后没有控制台，
+  /// 这份文件日志就是唯一的痕（见 R5 坑 6：stdout 重定向是块缓冲）。
+  final Directory? logsDir;
+
   const ServerConfig({
     required this.host,
     required this.port,
@@ -44,6 +49,7 @@ class ServerConfig {
     required this.dataDir,
     required this.certDir,
     this.webRoot,
+    this.logsDir,
   });
 
   static const String defaultHost = '0.0.0.0';
@@ -57,7 +63,8 @@ class ServerConfig {
   /// 0.5.0：媒体接口就位（图片内容寻址上传 / 按需拉取）。
   /// 0.6.0：派生缩略图（`GET /api/media/<sha>?w=`，白名单档位 + 落盘缓存 + 上传预热）。
   /// 0.7.0：孤儿媒体回收（`POST /api/admin/media-gc`，默认 dry-run，仅本机可触发）+ 状态页媒体占用。
-  static const String version = '0.7.0';
+  /// 0.8.0：带轮转的文件日志（logs/zaoji.log，控制台与文件双写；health 报 logPath/logBytes）。
+  static const String version = '0.8.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
@@ -124,6 +131,7 @@ class ServerConfig {
       ..addOption('data', abbr: 'd', help: '数据目录（默认 ./data）')
       ..addOption('web', abbr: 'w', help: 'Flutter Web 产物目录（可选）')
       ..addOption('certs', abbr: 'c', help: '证书目录（默认 ./certs）')
+      ..addOption('log', help: '日志目录（默认 ./logs；带轮转，见状态页）')
       ..addFlag('help', abbr: 'h', negatable: false, help: '显示帮助');
 
     final ArgResults r;
@@ -160,6 +168,7 @@ class ServerConfig {
       dataDir: resolveDir(r.option('data'), 'data', base),
       certDir: resolveDir(r.option('certs'), 'certs', base),
       webRoot: webPath == null ? null : resolveDir(webPath, webPath, base),
+      logsDir: resolveDir(r.option('log'), 'logs', base),
     );
   }
 

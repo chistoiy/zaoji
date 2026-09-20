@@ -14,18 +14,22 @@ Future<void> main(List<String> args) async {
     server = await ZaojiServer.start(config);
   } on DatabaseException catch (e) {
     // 数据库打不开是「开机就该失败」的事，绝不该拖到用户第一次保存菜谱。
+    await _emergencyLog(config, '数据库打不开：${e.message} 数据目录：${config.dataDir.path}');
     stderr.writeln('数据库打不开：');
     stderr.writeln('  ${e.message}');
     stderr.writeln('');
     stderr.writeln('数据目录：${config.dataDir.path}');
     exit(74); // EX_IOERR
   } on SqliteLoadException catch (e) {
+    await _emergencyLog(config, 'SQLite 动态库不可用：${e.message}');
     stderr.writeln('SQLite 动态库不可用：');
     stderr.writeln('  ${e.message}');
     exit(74);
   } on SocketException catch (e) {
     // 端口被占用是最常见的启动失败。直接把原因和怎么办说清楚，
     // 而不是抛一串栈让人猜。
+    await _emergencyLog(config, '启动失败：${e.message}'
+        '${e.osError?.errorCode == 10048 || e.osError?.errorCode == 98 ? '（端口 ${config.port} 被占用——服务已在跑？还是被别的程序占着）' : ''}');
     stderr.writeln('启动失败：${e.message}');
     if (e.osError?.errorCode == 10048 || e.osError?.errorCode == 98) {
       stderr.writeln('');
@@ -36,20 +40,27 @@ Future<void> main(List<String> args) async {
     exit(69); // EX_UNAVAILABLE
   }
 
-  _printBanner(server);
-
-  // 必须显式 flush。
-  // stdout 被重定向到文件（或注册成服务、根本没有控制台）时是**块缓冲**的，
-  // 进程被强杀时缓冲区里的启动横幅会一起消失——排查启动问题时会以为"它什么都没输出"。
-  // 踩过：用 Start-Process 重定向日志，日志文件是空的，而服务其实正常起来了。
-  await stdout.flush();
+  await _logBanner(server);
 
   _installShutdownHandlers(server);
 }
 
-void _printBanner(ZaojiServer server) {
+/// 启动失败时的最后手段留痕（R19③）。
+///
+/// 这类失败发生在 ServerState.boot 前后——那时**没有可用的 state.log**。
+/// 而注册成服务后没有控制台，stderr 落进虚空；不留痕就等于「它半夜没起来，
+/// 没人知道为什么」。写不进也无所谓——那正是「目录都不可写」的自证。
+Future<void> _emergencyLog(ServerConfig config, String message) async {
+  try {
+    await FileLog(config.logsDir).write(message);
+  } catch (_) {}
+}
+
+/// 启动横幅：构造为文本，经 `state.log` **控制台与文件双写同一份**。
+/// 以前只往 stdout 打——注册成服务后那份最重要的诊断信息落进了虚空。
+Future<void> _logBanner(ZaojiServer server) async {
+  final w = StringBuffer();
   final st = server.state;
-  final w = stdout;
 
   w.writeln('');
   w.writeln('  灶记 ZAOJI · 服务已启动');
@@ -58,6 +69,7 @@ void _printBanner(ZaojiServer server) {
   w.writeln('  Server ID   ${st.serverId}');
   w.writeln('  数据目录    ${st.config.dataDir.path}');
   w.writeln('  证书目录    ${st.config.certDirPath}');
+  w.writeln('  日志        ${st.log.path ?? '（未配置文件日志，仅控制台）'}');
 
   final dbInfo = st.db.healthPayload();
   final sizeKb = dbInfo['sizeBytes'] as int?;
@@ -122,13 +134,15 @@ void _printBanner(ZaojiServer server) {
   w.writeln('  首次运行弹出的「允许访问」要勾上「专用网络」，否则手机过不来。');
   w.writeln('');
   w.writeln('  按 Ctrl+C 停止服务');
-  w.writeln('');
+
+  // FileLog 逐行 echo 到 stdout 并 flush（每行即写即 flush），
+  // 所以旧代码里那句手动的 stdout.flush() 不再需要。
+  await st.log.write(w.toString());
 }
 
 void _installShutdownHandlers(ZaojiServer server) {
   Future<void> shutdown() async {
-    stdout.writeln('');
-    stdout.writeln('  正在关闭灶记服务…');
+    await server.state.log.write('正在关闭灶记服务…');
     await server.stop();
     stdout.writeln('  已停止。');
     await stdout.flush();

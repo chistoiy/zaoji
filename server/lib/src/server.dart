@@ -8,6 +8,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'config.dart';
+import 'file_log.dart';
 import 'media.dart';
 import 'media_gc.dart';
 import 'server_state.dart';
@@ -63,7 +64,7 @@ class ZaojiServer {
     );
     http.autoCompress = true;
 
-    final https = await _startTls(config, handler);
+    final https = await _startTls(config, handler, state.log);
     state.tlsReady = https != null; // 回填给 /api/health 与状态页
 
     return ZaojiServer._(state, http, https, ips);
@@ -75,7 +76,7 @@ class ZaojiServer {
   /// 「iOS 端会因此失去什么」，否则用户只会看到「Safari 说这不是安全连接」
   /// 然后一头雾水。
   static Future<HttpServer?> _startTls(
-      ServerConfig config, Handler handler) async {
+      ServerConfig config, Handler handler, FileLog log) async {
     final cert = File(config.certPath);
     final key = File(config.keyPath);
     if (!await cert.exists() || !await key.exists()) return null;
@@ -91,8 +92,8 @@ class ZaojiServer {
       shelf_io.serveRequests(server, handler);
       return server;
     } catch (e) {
-      stderr.writeln('⚠️  HTTPS 启动失败：$e');
-      stderr.writeln('    http 仍可用，但 iOS 端的屏幕常亮 / 计时通知 / PWA 离线会失效。');
+      await log.write('⚠️  HTTPS 启动失败：$e\n'
+          '    http 仍可用，但 iOS 端的屏幕常亮 / 计时通知 / PWA 离线会失效。');
       return null;
     }
   }
@@ -180,7 +181,9 @@ class ZaojiServer {
     //
     // 日志的价值在于「它记录的是最终发生的事」。放错位置时，它记的是**内部中间状态**，
     // 比没有日志更危险。
-    return const Pipeline().addMiddleware(_logRequests()).addHandler(resolve);
+    return const Pipeline()
+        .addMiddleware(_logRequests(state))
+        .addHandler(resolve);
   }
 
   // ── 同步接口 ──
@@ -555,16 +558,13 @@ class ZaojiServer {
       dryRun: dry,
     );
 
-    // 不可逆的动作必须留痕。控制台在开发期有、注册成服务后没有
-    // （文件日志还是交接文档 §6 的待办），所以同一份明细也放进响应体，
-    // 让触发的人当场就能看到删了什么。
+    // 不可逆的动作必须留痕。R19③ 之前只能靠 stdout（注册成服务后没有控制台），
+    // 现在文件日志兜住了这一行；明细同时放进响应体，让触发的人当场看到删了什么。
     if (!r.dryRun) {
-      stdout.writeln('[gc] 回收 ${r.deletedFiles} 个文件 / '
+      await state.log.write('[gc] 回收 ${r.deletedFiles} 个文件 / '
           '${(r.freedBytes / 1024).toStringAsFixed(1)} KB'
-          '${r.failures.isEmpty ? '' : '，失败 ${r.failures.length} 条'}');
-      // **立刻 flush**：stdout 重定向到文件时是块缓冲，不 flush 的话
-      // 这条唯一的痕可能和进程一起消失。回收很少触发，这点代价值得。
-      await stdout.flush();
+          '${r.failures.isEmpty ? '' : '，失败 ${r.failures.length} 条'}'
+          '${r.plan.orphanShas.isEmpty && r.plan.orphanThumbs.isEmpty ? '' : '，明细：${r.plan.orphanShas.map((s) => s.substring(0, 8)).join(",")}'}');
     }
 
     return _json({
@@ -706,21 +706,20 @@ class ZaojiServer {
       );
 
   /// 请求日志。开发期必备——否则"手机连不上"时完全没有线索。
-  static Middleware _logRequests() => (Handler inner) => (Request req) async {
-        final sw = Stopwatch()..start();
-        final res = await inner(req);
-        stdout.writeln(
-          '[${_time()}] ${req.method.padRight(4)} /${req.url.path} '
-          '→ ${res.statusCode}  ${sw.elapsedMilliseconds}ms',
-        );
-        return res;
-      };
-
-  static String _time() {
-    final t = DateTime.now();
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
-  }
+  ///
+  /// ★ 这条中间件**必须包在整个管线的最外层**（R9 教训）：静态资源与 SPA 回退
+  /// 发生在 router 之外，包住 router 会记成「router 说了什么」而不是「客户端拿到了什么」——
+  /// 当时静态资源全被记成 404 而实际返回 200。`file_log_test` 里有断言钉住这件事。
+  static Middleware _logRequests(ServerState state) =>
+      (Handler inner) => (Request req) async {
+            final sw = Stopwatch()..start();
+            final res = await inner(req);
+            await state.log.write(
+              '${req.method.padRight(4)} /${req.url.path} '
+              '→ ${res.statusCode}  ${sw.elapsedMilliseconds}ms',
+            );
+            return res;
+          };
 }
 
 /// 请求体超过上限。只在 [_readJson] 与它的调用方之间传递。

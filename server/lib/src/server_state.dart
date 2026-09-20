@@ -4,6 +4,7 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'config.dart';
 import 'db.dart';
+import 'file_log.dart';
 import 'media.dart';
 import 'sync.dart';
 
@@ -105,6 +106,10 @@ class ServerState {
   late final MediaStore media = MediaStore(
       Directory('${config.dataDir.path}${Platform.pathSeparator}media'));
 
+  /// 文件日志（R19③）。控制台与文件双写同一份内容。
+  /// `config.logsDir == null`（测试/未配置）时自动退化为纯控制台。
+  late final FileLog log = FileLog(config.logsDir, echo: stdout.writeln);
+
   ServerState._(this.config, this.serverId, this.startedAt, this.db);
 
   Duration get uptime => DateTime.now().difference(startedAt);
@@ -121,7 +126,7 @@ class ServerState {
     // 而少一个常驻定时器就少一类「服务关不掉」的问题。
     final cleaned = state.sync.cleanup();
     if (cleaned > 0) {
-      stdout.writeln('  已清理过期数据 $cleaned 行（配对码 / 幂等记录）');
+      await state.log.write('  已清理过期数据 $cleaned 行（配对码 / 幂等记录）');
     }
     return state;
   }
@@ -170,6 +175,10 @@ class ServerState {
       // 盘上的真实占用（遍历文件算的，不是库里的引用）。数据库行数看不出
       // 「照片占了多少」，而不看这个就没法发现磁盘在只涨不跌。
       'media': media.stats().toJson(),
+      // 日志只报路径与大小，**不报内容**：状态页在局域网里谁都能打开，
+      // 日志里有绝对路径等环境信息。
+      'logPath': log.path,
+      'logBytes': log.bytes,
       'endpoints': kEndpoints,
       'checkedAt': DateTime.now().toIso8601String(),
     };
