@@ -9,6 +9,7 @@ import 'data/store_scope.dart';
 import 'data/sync/sync_engine.dart';
 import 'data/sync/sync_prefs.dart';
 import 'data/sync/sync_scope.dart';
+import 'data/sync/token_vault.dart';
 import 'theme.dart';
 import 'ui/home_shell.dart';
 import 'ui/recipe_detail_page.dart';
@@ -97,9 +98,14 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
   SyncEngine _ensureSync() {
     if (_sync != null) return _sync!;
 
+    // R19④：Android 上 token 落 Keystore（vault），Web 上为 null = 沿用 local_pref。
+    final prefs = SyncPrefs(
+      _store.dbOrNull!,
+      vault: vaultForCurrentPlatform(),
+    );
     final sync = SyncEngine(
       db: _store.dbOrNull!,
-      prefs: SyncPrefs(_store.dbOrNull!),
+      prefs: prefs,
       // 拉到新数据后刷新内存缓存——页面经 ListenableBuilder 消费 store，
       // reload 里的 notifyListeners 会让列表/详情自动重画（R12 铺的路）。
       onDataApplied: _store.reload,
@@ -109,7 +115,6 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
     // ★ R14 写路径 → 同步的接线：
     //   nodeId 从 SyncPrefs 取（引擎和 prefs 用同一个 db，安全）
     //   onLocalWrite 排 3 秒防抖——不阻塞 UI，连续写入只触发一次 sync
-    final prefs = SyncPrefs(_store.dbOrNull!);
     _store.nodeIdGetter = prefs.nodeId;
     _store.onLocalWrite = _scheduleDebouncedSync;
 

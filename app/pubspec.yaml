@@ -29,6 +29,11 @@ dependencies:
   # 同步引擎的 HTTP 层（R13）。只做同步接口的 GET/POST，不引任何重框架。
   http: ^1.2.0
 
+  # ── token 加固（R19④）─────────────────────────────────────────
+  # Android 上把设备 token 存进 Keystore 托管的加密偏好；Web 端不使用
+  # （vaultForCurrentPlatform 返回 null），引入它的只有 Android 编译路径。
+  flutter_secure_storage: ^9.2.2
+
   # ── 图片管线（R16）────────────────────────────────────────────
   # sha256 计算（封面上传的哈希契约），与服务端 crypto 同族同版
   crypto: ^3.0.3

@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
 import '../zaoji_db.dart';
+import 'token_vault.dart';
 
 /// 同步引擎的本机状态，全部落在 `local_pref`（本机偏好键值表，永不外发）。
 ///
@@ -11,7 +12,7 @@ import '../zaoji_db.dart';
 /// |---|---|---|
 /// | `sync_node_id` | 本设备的 ULID。HLC 的 nodeId，也是配对时的 deviceId | 首次生成后**永不更改**——改了等于换了台设备 |
 /// | `sync_server_url` | 服务端地址（http://IP:端口） | 计划书 §5.6：用户手填 |
-/// | `sync_device_token` | 配对换来的 Bearer token | **只存本机**。R13 存在 local_pref（App 沙箱内）；Android 迁 Keystore（flutter_secure_storage）是后续加固项，决策记交接文档 R13 |
+/// | `sync_device_token` | 配对换来的 Bearer token | **只存本机**。R13 存 local_pref；**R19④ 起 Android 走 [TokenVault]（Keystore）并一次性迁移掉老明文**；Web 维持 local_pref（浏览器沙箱没有更强落点，见 token_vault.dart 注释） |
 /// | `sync_server_id` | 配对时服务端的 serverId | 同步前 ping 比对——不一致 = 连到了别的服务器，**拒绝同步并要求重新配对**，而不是把数据推给陌生人 |
 /// | `sync_pull_cursor` | 拉取游标（change_log 的 seq） | ★ **拉取游标在客户端**（交接文档 §8.2）：服务端那台 device 表只是对账显示。客户端清库重配对时这里会一并清零 |
 /// | `sync_push_watermark` | 已推送水位线（本机行的最大 HLC） | HLC 定长编码**字典序 == 时间序**，`WHERE updated_at > ?` 直接就是"找出没推过的行"。它就是推送队列——不需要单独的队列表 |
@@ -25,9 +26,12 @@ import '../zaoji_db.dart';
 /// 一条 kv 记录替代一张队列表，且崩溃/重启天然安全：
 /// 水位线只在服务端确认后前进，没确认的行下次自动重推。
 class SyncPrefs {
-  SyncPrefs(this._db);
+  SyncPrefs(this._db, {TokenVault? vault}) : _vault = vault;
 
   final ZaojiDb _db;
+
+  /// token 的可替换落点（R19④）。null = 沿用 local_pref（Web / 测试路径）。
+  final TokenVault? _vault;
 
   static const _kNodeId = 'sync_node_id';
   static const _kServerUrl = 'sync_server_url';
@@ -81,8 +85,33 @@ class SyncPrefs {
   Future<String?> serverUrl() => _read(_kServerUrl);
   Future<void> setServerUrl(String v) => _write(_kServerUrl, v);
 
-  Future<String?> token() => _read(_kToken);
-  Future<void> setToken(String v) => _write(_kToken, v);
+  /// 读 token。有 vault 时顺带完成**一次性迁移**：
+  /// R13~R18 时代 token 躺在 local_pref 明文里，升级后第一次读到就搬进 vault
+  /// 并立即删除明文——搬完不拆旧房子等于没加固。迁移失败（vault 写不进去）
+  /// 时保持原样，下次再试，**绝不先把明文删了**。
+  Future<String?> token() async {
+    final vault = _vault;
+    if (vault == null) return _read(_kToken);
+    final v = await vault.read();
+    if (v != null && v.isNotEmpty) {
+      // vault 已有值：若还残留老明文（比如崩溃在 setToken 两步之间），顺手清掉。
+      if (await _read(_kToken) != null) await _remove(_kToken);
+      return v;
+    }
+    final legacy = await _read(_kToken);
+    if (legacy == null || legacy.isEmpty) return null;
+    await vault.write(legacy);
+    await _remove(_kToken);
+    return legacy;
+  }
+
+  Future<void> setToken(String v) async {
+    final vault = _vault;
+    if (vault == null) return _write(_kToken, v);
+    await vault.write(v);
+    // 覆盖写入时连同老明文一并清掉——local_pref 从此不留 token 键。
+    await _remove(_kToken);
+  }
 
   Future<String?> serverId() => _read(_kServerId);
   Future<void> setServerId(String v) => _write(_kServerId, v);
@@ -112,13 +141,14 @@ class SyncPrefs {
   /// 游标必须清零：铁律「拉取游标在客户端」——重新配对（哪怕还是同一台服务器）
   /// 都要从 0 重新拉全量，否则本地新库永远缺旧数据且无人报错。
   Future<void> unpair() async {
-    await _remove(_kToken);
+    await _vault?.delete();
+    await _remove(_kToken); // 有 vault 时也清：可能留着迁移没跑完的老明文
     await _remove(_kServerId);
     await _remove(_kPullCursor);
     await _remove(_kPushWatermark);
     await _remove(_kPendingMutation);
   }
 
-  /// 是否已配对（有 token 即视为已配对）。
-  Future<bool> isPaired() async => (await _read(_kToken))?.isNotEmpty ?? false;
+  /// 是否已配对（有 token 即视为已配对）。走 [token]——有 vault 时以 vault 为准。
+  Future<bool> isPaired() async => (await token())?.isNotEmpty ?? false;
 }
