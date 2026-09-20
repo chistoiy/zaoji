@@ -107,3 +107,36 @@ class Recipe {
     return '${lastCooked.substring(5, 7)}/${lastCooked.substring(8, 10)}';
   }
 }
+
+/// 一次做菜会话（R20）。
+///
+/// 一台设备一次开火 = 一行。进行中 = [finishedAt] 为 null；
+/// 「继续做菜」只认 [mine] 的未完成会话——进度是本机的事，记录才是全家的。
+class CookSession {
+  final String id;
+  final String recipeId;
+  final DateTime startedAt;
+  final DateTime? finishedAt;
+  final int currentStep;
+
+  /// 本机进度快照（食材勾选等），JSON 字符串。
+  final String? state;
+
+  /// 是否本设备发起的会话。
+  final bool mine;
+
+  const CookSession({
+    required this.id,
+    required this.recipeId,
+    required this.startedAt,
+    this.finishedAt,
+    this.currentStep = 0,
+    this.state,
+    this.mine = false,
+  });
+
+  bool get active => finishedAt == null;
+
+  /// 本次实际耗时（进行中就取到现在）。
+  Duration get elapsed => (finishedAt ?? DateTime.now()).difference(startedAt);
+}

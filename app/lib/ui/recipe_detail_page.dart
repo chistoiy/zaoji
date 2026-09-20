@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/chili_scale.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/time_capsule_text.dart';
+import 'cooking_page.dart';
 import 'recipe_edit_page.dart';
 import 'timer_sheet.dart';
 
@@ -19,65 +20,125 @@ import 'timer_sheet.dart';
 ///
 /// **R14：AppBar 加编辑 + 删除按钮。** 删除会弹确认 dialog，走软删除
 /// （打墓碑而非物理删），同步引擎能把墓碑推到别的设备。
-class RecipeDetailPage extends StatelessWidget {
+///
+/// **R20：改为有状态并监听 store**——做过次数、编辑结果要即时反映
+/// （旧实现拿的是 push 时传入的 Recipe 快照，做完菜回来数字还是旧的）；
+/// 另加「开始做菜」入口与**本机未完成会话**的续做横幅。
+class RecipeDetailPage extends StatefulWidget {
   const RecipeDetailPage({super.key, required this.recipe});
 
   final Recipe recipe;
 
   @override
+  State<RecipeDetailPage> createState() => _RecipeDetailPageState();
+}
+
+class _RecipeDetailPageState extends State<RecipeDetailPage> {
+  CookSession? _active;
+  bool _sessionLoadedOnce = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // StoreScope.of 不能在 initState 里调（InheritedWidget 查找的时机限制），
+    // didChangeDependencies 是首次依赖就绪的地方。
+    if (!_sessionLoadedOnce) {
+      _sessionLoadedOnce = true;
+      _loadSession();
+    }
+  }
+
+  Future<void> _loadSession() async {
+    final s = await StoreScope.of(context).activeCookingSession(widget.recipe.id);
+    if (mounted) setState(() => _active = s);
+  }
+
+  Future<void> _cook(Recipe recipe) async {
+    await CookingPage.open(context, recipe);
+    // 从做菜页回来（完成 / 中途退出）都要刷新横幅与计数
+    await _loadSession();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(recipe.name),
-        actions: [
-          IconButton(
-            tooltip: '删除',
-            onPressed: () => _confirmDelete(context),
-            icon: const Icon(Icons.delete_outline),
+    // store 通知驱动重画：做菜计数、编辑、别的设备同步下来都会走到这里
+    return ListenableBuilder(
+      listenable: StoreScope.of(context),
+      builder: (context, _) {
+        final recipe =
+            StoreScope.of(context).recipeById(widget.recipe.id) ?? widget.recipe;
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(recipe.name),
+            actions: [
+              IconButton(
+                tooltip: '开始做菜',
+                onPressed: () => _cook(recipe),
+                icon: const Icon(Icons.local_fire_department_outlined),
+              ),
+              IconButton(
+                tooltip: '删除',
+                onPressed: () => _confirmDelete(context),
+                icon: const Icon(Icons.delete_outline),
+              ),
+              IconButton(
+                tooltip: '编辑',
+                onPressed: () => _edit(context, recipe),
+                icon: const Icon(Icons.edit_outlined),
+              ),
+            ],
           ),
-          IconButton(
-            tooltip: '编辑',
-            onPressed: () => _edit(context),
-            icon: const Icon(Icons.edit_outlined),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
+            children: [
+              if (_active != null) ...[
+                const SizedBox(height: 10),
+                _ResumeBanner(
+                  session: _active!,
+                  onResume: () => _cook(recipe),
+                  onDiscard: () async {
+                    await StoreScope.of(context)
+                        .discardCooking(_active!.id);
+                    await _loadSession();
+                  },
+                ),
+                const SizedBox(height: 10),
+              ],
+              _Hero(recipe: recipe),
+              const SizedBox(height: 22),
+              _SectionTitle(
+                num: '01',
+                title: '食材',
+                trailing: '${recipe.servings} 人份',
+              ),
+              const SizedBox(height: 10),
+              _IngredientTable(ingredients: recipe.ingredients),
+              const SizedBox(height: 26),
+              const _SectionTitle(num: '02', title: '做法'),
+              const SizedBox(height: 4),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  '琥珀色的时间可以点一下直接起计时',
+                  style: TextStyle(fontSize: 12, color: ZaojiColors.muted),
+                ),
+              ),
+              for (var i = 0; i < recipe.steps.length; i++)
+                _StepRow(index: i + 1, text: recipe.steps[i].text),
+              if (recipe.notes.trim().isNotEmpty) ...[
+                const SizedBox(height: 26),
+                const _SectionTitle(num: '03', title: '注意'),
+                const SizedBox(height: 10),
+                _Notes(text: recipe.notes),
+              ],
+            ],
           ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
-        children: [
-          _Hero(recipe: recipe),
-          const SizedBox(height: 22),
-          _SectionTitle(
-            num: '01',
-            title: '食材',
-            trailing: '${recipe.servings} 人份',
-          ),
-          const SizedBox(height: 10),
-          _IngredientTable(ingredients: recipe.ingredients),
-          const SizedBox(height: 26),
-          const _SectionTitle(num: '02', title: '做法'),
-          const SizedBox(height: 4),
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
-            child: Text(
-              '琥珀色的时间可以点一下直接起计时',
-              style: TextStyle(fontSize: 12, color: ZaojiColors.muted),
-            ),
-          ),
-          for (var i = 0; i < recipe.steps.length; i++)
-            _StepRow(index: i + 1, text: recipe.steps[i].text),
-          if (recipe.notes.trim().isNotEmpty) ...[
-            const SizedBox(height: 26),
-            const _SectionTitle(num: '03', title: '注意'),
-            const SizedBox(height: 10),
-            _Notes(text: recipe.notes),
-          ],
-        ],
-      ),
+        );
+      },
     );
   }
 
-  void _edit(BuildContext context) {
+  void _edit(BuildContext context, Recipe recipe) {
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => RecipeEditPage(recipe: recipe)));
@@ -107,7 +168,7 @@ class RecipeDetailPage extends StatelessWidget {
     if (ok != true || !context.mounted) return;
 
     final store = StoreScope.of(context);
-    await store.softDeleteRecipe(recipe.id);
+    await store.softDeleteRecipe(widget.recipe.id);
     if (context.mounted) {
       // 成功删除后回到列表页（详情页里的菜谱已经不在了）
       Navigator.of(context).pop();
@@ -115,6 +176,56 @@ class RecipeDetailPage extends StatelessWidget {
         context,
       ).showSnackBar(const SnackBar(content: Text('已删除（可在回收站恢复）')));
     }
+  }
+}
+
+/// 本机未完成会话的续做横幅（R20）。
+/// 只列**自己设备**的进度——别的设备做到哪一步是它自己的事。
+class _ResumeBanner extends StatelessWidget {
+  const _ResumeBanner({
+    required this.session,
+    required this.onResume,
+    required this.onDiscard,
+  });
+
+  final CookSession session;
+  final VoidCallback onResume;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: ZaojiColors.amberBg,
+        borderRadius: BorderRadius.circular(ZaojiRadius.md),
+        border: Border.all(color: ZaojiColors.amber.withValues(alpha: 0.4)),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      child: Row(
+        children: [
+          const Icon(Icons.local_fire_department,
+              size: 18, color: ZaojiColors.amber),
+          const SizedBox(width: 8),
+          Expanded(
+            child: GestureDetector(
+              onTap: onResume,
+              child: Text(
+                '继续做菜（第 ${session.currentStep + 1} 步）',
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: ZaojiColors.amber,
+                ),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onDiscard,
+            child: const Text('放弃', style: TextStyle(fontSize: 12.5)),
+          ),
+        ],
+      ),
+    );
   }
 }
 

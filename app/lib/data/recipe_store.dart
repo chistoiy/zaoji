@@ -629,6 +629,159 @@ class RecipeStore extends ChangeNotifier {
     return true;
   }
 
+  // ─────────────── R20 做菜模式 ───────────────
+  //
+  // 一次做菜 = 一台设备的一条 cook_session 行（schema 的原意：
+  // 「被叫走再回来」的进度就该在会话行里）。
+  // - 进行中 = finished_at IS NULL；续做**只认自己设备的**未完成会话
+  //   （updated_by == 本机 nodeId）——老婆在平板上做到第 4 步，
+  //   不该在手机上弹出「继续做菜」；
+  // - 完成 = 写 finished_at + recipe 的 cooked_count/last_cooked_at，
+  //   同事务、一次广播。记录是业务行、随同步走，FR-REC-13 的「历次」跨设备可见。
+
+  /// 开火：建一条未完成会话，返回会话 id。
+  Future<String> startCooking(String recipeId) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    final id = Ulid.generate();
+    await _insert(db, kCookSessionTable, {
+      'id': id,
+      'updated_at': Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch).encode(),
+      'updated_by': nodeId,
+      'rev': 1,
+      'deleted_at': null,
+      'recipe_id': recipeId,
+      'started_at': now.toIso8601String(),
+      'finished_at': null,
+      'current_step': 0,
+      'servings_used': null,
+      'state': null,
+    });
+    _fireLocalWrite();
+    return id;
+  }
+
+  /// 翻页：推进当前步骤（state 可顺带存勾选等本机进度）。
+  Future<void> saveCookingStep(String sessionId, int step,
+      {String? state}) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.customUpdate(
+      'UPDATE cook_session SET current_step = ?, '
+      'state = COALESCE(?, state), updated_at = ?, updated_by = ?, rev = rev + 1 '
+      'WHERE id = ? AND deleted_at IS NULL',
+      variables: [
+        Variable(step),
+        Variable<String>(state),
+        Variable(Hlc.now(nodeId, wallMs: now).encode()),
+        Variable(nodeId),
+        Variable(sessionId),
+      ],
+    );
+    _fireLocalWrite();
+  }
+
+  /// 本机进行中的会话（取最新一条）。没有则 null。
+  Future<CookSession?> activeCookingSession(String recipeId) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final rows = await db.customSelect(
+      'SELECT * FROM cook_session WHERE recipe_id = ? AND updated_by = ? '
+      'AND finished_at IS NULL AND deleted_at IS NULL '
+      // id 兜底：同一毫秒开两次火时 started_at 相同，ULID 字典序 == 创建序
+      'ORDER BY started_at DESC, id DESC LIMIT 1',
+      variables: [Variable(recipeId), Variable(nodeId)],
+    ).get();
+    if (rows.isEmpty) return null;
+    return _sessionFromRow(rows.first.data, nodeId);
+  }
+
+  /// 完成：会话封口 + 计数与时间戳，同事务一次广播。
+  Future<void> finishCooking(String sessionId) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+
+    final List<Recipe> freshRecipes = await db.transaction<List<Recipe>>(() async {
+      final rows = await db.customSelect(
+        'SELECT recipe_id FROM cook_session WHERE id = ? AND deleted_at IS NULL',
+        variables: [Variable(sessionId)],
+      ).get();
+      final recipeId = '${rows.single.data['recipe_id']}';
+      final hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+
+      await db.customUpdate(
+        'UPDATE cook_session SET finished_at = ?, '
+        'updated_at = ?, updated_by = ?, rev = rev + 1 WHERE id = ?',
+        variables: [
+          Variable(now.toIso8601String()),
+          Variable(hlc),
+          Variable(nodeId),
+          Variable(sessionId),
+        ],
+      );
+      await db.customUpdate(
+        'UPDATE recipe SET cooked_count = cooked_count + 1, last_cooked_at = ?, '
+        'updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE id = ? AND deleted_at IS NULL',
+        variables: [
+          Variable(now.toIso8601String()),
+          Variable(hlc),
+          Variable(nodeId),
+          Variable(recipeId),
+        ],
+      );
+      return _loadAll(db);
+    });
+
+    // ★ 先提交、后广播（同 createRecipe 尾注）
+    recipes = freshRecipes;
+    _reindex();
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 彻底放弃这次做菜：软删除会话，不留僵尸行。
+  Future<void> discardCooking(String sessionId) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final hlc = Hlc.now(nodeId).tick(nodeId).encode();
+    await db.customUpdate(
+      'UPDATE cook_session SET deleted_at = ?, updated_at = ?, updated_by = ?, '
+      'rev = rev + 1 WHERE id = ? AND deleted_at IS NULL',
+      variables: [Variable(hlc), Variable(hlc), Variable(nodeId), Variable(sessionId)],
+    );
+    _fireLocalWrite();
+  }
+
+  /// 历次已完成的做菜（含别的设备的），完成时间倒序——详情页「做过 N 次」。
+  Future<List<CookSession>> cookSessions(String recipeId) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final rows = await db.customSelect(
+      'SELECT * FROM cook_session WHERE recipe_id = ? AND finished_at IS NOT NULL '
+      'AND deleted_at IS NULL ORDER BY finished_at DESC',
+      variables: [Variable(recipeId)],
+    ).get();
+    return [for (final r in rows) _sessionFromRow(r.data, nodeId)];
+  }
+
+  CookSession _sessionFromRow(Map<String, Object?> d, String nodeId) =>
+      CookSession(
+        id: '${d['id']}',
+        recipeId: '${d['recipe_id']}',
+        startedAt:
+            DateTime.tryParse('${d['started_at']}') ?? DateTime.fromMillisecondsSinceEpoch(0),
+        finishedAt: d['finished_at'] == null
+            ? null
+            : DateTime.tryParse('${d['finished_at']}'),
+        currentStep: (d['current_step'] as int?) ?? 0,
+        state: d['state'] as String?,
+        mine: '${d['updated_by']}' == nodeId,
+      );
+
   /// 从回收站恢复：清掉 deleted_at 墓碑。
   ///
   /// 恢复也走五列规范（新 HLC + rev+1）——因为「恢复」是一次真实写入，
@@ -830,6 +983,8 @@ const String kSeedNodeId = 'seed';
 
 // ── 表引用（来自 shared 的 schema，客户端不另写列清单）──
 final TableSpec kRecipeTable = kTables.firstWhere((t) => t.name == 'recipe');
+final TableSpec kCookSessionTable = kTables.firstWhere(
+    (t) => t.name == 'cook_session');
 final TableSpec kIngredientTable = kTables.firstWhere(
   (t) => t.name == 'ingredient',
 );
