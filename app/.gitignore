@@ -47,3 +47,4 @@ app.*.map.json
 # R13: sync E2E 的浏览器 profile（独立设备存储，不入仓库）
 tool/_e2e-profiles/
 tool/_e2e-profiles-*
+tool/_e2e-photo.jpg

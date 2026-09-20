@@ -5,7 +5,9 @@
 // 而拿手机拍的照片当 fixture 既不进仓库也不好复现。
 //
 // 用法（在 server/ 目录下）：
-//   dart run tool/make_sample_photo.dart gen  <out.jpg>   # 生成 2000×1500 的 JPEG
+//   dart run tool/make_sample_photo.dart gen  <out.jpg> [salt]   # 生成 2000×1500 的 JPEG
+//       salt 改变底色 → 改变字节与 sha256。**内容寻址存储里，同图只存一份**——
+//       E2E 想要一次「真的新增文件」，必须每次生成不同的图，否则会被幂等去重吞掉。
 //   dart run tool/make_sample_photo.dart info <file>      # 打印宽高与字节数（验缩略图用）
 //
 // 典型冒烟链路（配合 curl，注意 --noproxy 与 Bearer token）：
@@ -28,10 +30,15 @@ void main(List<String> args) {
 
   switch (cmd) {
     case 'gen':
+      final salt = args.length > 2 ? int.tryParse(args[2]) ?? 0 : 0;
       final bytes = img.encodeJpg(
         img.fill(
           img.Image(width: 2000, height: 1500),
-          color: img.ColorRgb8(210, 120, 70),
+          color: img.ColorRgb8(
+            100 + salt % 100,
+            80 + (salt * 13) % 120,
+            60 + (salt * 29) % 140,
+          ),
         ),
         quality: 90,
       );

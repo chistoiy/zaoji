@@ -53,10 +53,28 @@ async function pairCode() {
   };
 
   const pairAndSync = async (page, label) => {
+    // ★ 配对两个雷（R19② 探针实测，同步修 R15 脚本里的同款潜伏问题）：
+    //   ① 第二个输入框 click 后首字符会被吞 → 读回 DOM 值、不对重打；
+    //   ② 「配对」文字在分段标题与按钮上各出现一次，getByText 会点错 → 锚定 role=button。
+    const inputValues = () =>
+      page.evaluate(() => [...document.querySelectorAll('input')].map((i) => i.value));
+    const typedInto = async (locator, text, which) => {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        if (attempt === 1) await locator.click({ timeout: 20000 });
+        else await page.keyboard.press('Control+A');
+        await page.keyboard.type(text, { delay: 60 });
+        await page.waitForTimeout(300);
+        const v = (await inputValues())[which] ?? '';
+        if (v === text) return true;
+        console.log(`[${label}] 字段#${which} 读到 "${v}" ≠ "${text}"，重打`);
+      }
+      throw new Error(`${label}: 字段#${which} 三次都打不进 "${text}"`);
+    };
+
     try {
       const meTab = page
         .locator('[role="button"]')
-        .filter({ hasText: '我的' })
+        .filter({ hasText: /^我的/ })
         .first();
       await meTab.click({ timeout: 20000 });
     } catch (e) {
@@ -72,16 +90,14 @@ async function pairCode() {
     }
 
     // ★ 不能用 fill()：它设 value 不一定走 Flutter 的编辑通道（实测引擎收不到）。
-    //   必须聚焦后用真实键盘事件输入。TextField 的 aria-label = hint 文案。
-    const urlInput = page.locator('input[aria-label^="http"]');
-    await urlInput.click({ timeout: 20000 });
-    await page.keyboard.type('http://127.0.0.1:8666', { delay: 10 });
+    await typedInto(page.locator('input[aria-label^="http"]'), 'http://127.0.0.1:8666', 0);
     const code = await pairCode();
-    const codeInput = page.locator('input[aria-label*="YE28Z4"]');
-    await codeInput.click({ timeout: 20000 });
-    await page.keyboard.type(code, { delay: 10 });
+    await typedInto(page.locator('input[aria-label*="YE28Z4"]'), code, 1);
     console.log(`[${label}] 配对码 = ${code}`);
-    await page.getByText('配对', { exact: true }).first().click({ timeout: 20000 });
+    await page
+      .locator('[role="button"]', { hasText: /^配对$/ })
+      .first()
+      .click({ timeout: 20000 });
 
     await page.waitForTimeout(1500);
     const errText = await page.evaluate(() => document.body.innerText);
