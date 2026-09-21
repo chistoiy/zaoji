@@ -252,6 +252,83 @@ void main() {
     });
   });
 
+  group('静态托管 gzip（R25）', () {
+    late Directory webRoot;
+    late File jsFile;
+
+    // 首屏裸量 ~18 MB 的病灶就在这几类文件上：js/wasm 是文本级可压缩的，
+    // 而 woff2/png 已经自己压过——再压是白烧家里笔记本的 CPU。
+    final jsText = 'console.log("zaoji");' * 400; // ~10 KB，gzip 效果显著
+
+    Future<Response> hitEnc(String path, {String? acceptEncoding}) async =>
+        handler(Request('GET', Uri.parse('http://localhost$path'),
+            headers: {
+              if (acceptEncoding != null) 'accept-encoding': acceptEncoding
+            }));
+
+    setUp(() async {
+      webRoot = Directory('${tmp.path}${Platform.pathSeparator}webgz')
+        ..createSync(recursive: true);
+      jsFile = File('${webRoot.path}${Platform.pathSeparator}main.dart.js')
+        ..writeAsStringSync(jsText);
+      // 内容同样高度可压缩，但扩展名在黑名单——必须裸传
+      File('${webRoot.path}${Platform.pathSeparator}font.woff2')
+          .writeAsStringSync('a' * 4096);
+
+      state = await bootState(configWith(webRoot: webRoot));
+      handler = ZaojiServer.buildHandler(state, const ['192.168.1.10']);
+    });
+
+    test('js + Accept-Encoding: gzip → 压缩返回，解压还原一字不差', () async {
+      final res = await hitEnc('/main.dart.js', acceptEncoding: 'gzip');
+      expect(res.headers['content-encoding'], 'gzip');
+      expect(res.headers['vary'], contains('Accept-Encoding'));
+      final raw = await res.read().expand((c) => c).toList();
+      expect(raw.length, lessThan(jsText.length),
+          reason: '没压到东西就说明中间有环节没生效');
+      expect(utf8.decode(gzip.decode(raw)), jsText);
+    });
+
+    test('长缓存头不能被压缩动作弄丢', () async {
+      final res = await hitEnc('/main.dart.js', acceptEncoding: 'gzip');
+      expect(res.headers['cache-control'], contains('max-age'));
+    });
+
+    test('woff2 即使客户端要 gzip 也裸传', () async {
+      final res = await hitEnc('/font.woff2', acceptEncoding: 'gzip, br');
+      expect(res.headers['content-encoding'], isNull);
+      expect(await res.readAsString(), 'a' * 4096);
+    });
+
+    test('不带 Accept-Encoding 的客户端拿原始字节', () async {
+      final res = await hitEnc('/main.dart.js');
+      expect(res.headers['content-encoding'], isNull);
+      expect(await res.readAsString(), jsText);
+    });
+
+    test('★ 文件改了立刻生效：压缩缓存按「路径+mtime」失效', () async {
+      final first = await hitEnc('/main.dart.js', acceptEncoding: 'gzip');
+      expect(utf8.decode(gzip.decode(await first.read().expand((c) => c).toList())), jsText);
+
+      final newText = 'console.log("v2");' * 400;
+      jsFile.writeAsStringSync(newText);
+      // Windows 文件系统 mtime 粒度足够，但保险起见显式推后一秒
+      jsFile.setLastModifiedSync(
+          DateTime.now().add(const Duration(seconds: 1)));
+
+      final second = await hitEnc('/main.dart.js', acceptEncoding: 'gzip');
+      expect(utf8.decode(gzip.decode(await second.read().expand((c) => c).toList())), newText,
+          reason: '缓存键没带 mtime 的话，这里会端出旧内容——发版即烂尾');
+    });
+
+    test('同一文件重复请求结果一致（第二次走缓存也不许变味）', () async {
+      final a = await hitEnc('/main.dart.js', acceptEncoding: 'gzip');
+      final b = await hitEnc('/main.dart.js', acceptEncoding: 'gzip');
+      expect(utf8.decode(gzip.decode(await b.read().expand((c) => c).toList())), jsText);
+      expect(a.headers['content-encoding'], b.headers['content-encoding']);
+    });
+  });
+
   group('serverId 持久化', () {
     test('同一数据目录重启后 id 不变（客户端靠它识别是不是同一台服务器）', () async {
       final cfg = configWith();

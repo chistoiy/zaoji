@@ -146,7 +146,8 @@ class ZaojiServer {
     router.get('/', (Request req) async {
       final web = state.config.webRoot;
       if (web != null && await web.exists()) {
-        final index = await _tryStatic('index.html', web);
+        final index = await _tryStatic('index.html', web,
+            acceptEncoding: req.headers['accept-encoding']);
         if (index != null) return index;
       }
       return _html(await statusPageHtml(state, ips));
@@ -163,13 +164,15 @@ class ZaojiServer {
       final web = state.config.webRoot;
       if (web != null && await web.exists()) {
         final rel = req.url.path.isEmpty ? 'index.html' : req.url.path;
-        final staticRes = await _tryStatic(rel, web);
+        final staticRes = await _tryStatic(rel, web,
+            acceptEncoding: req.headers['accept-encoding']);
         if (staticRes != null) return staticRes;
 
         // SPA 回退：Flutter Web 的路由不在文件系统里，
         // 刷新深层路径时必须回 index.html，否则一刷新就 404。
         if (req.method == 'GET' && !rel.startsWith('api/')) {
-          final index = await _tryStatic('index.html', web);
+          final index = await _tryStatic('index.html', web,
+              acceptEncoding: req.headers['accept-encoding']);
           if (index != null) return index;
         }
       }
@@ -852,7 +855,22 @@ class ZaojiServer {
 
   // ── 静态文件 ──
 
-  static Future<Response?> _tryStatic(String rel, Directory webRoot) async {
+  /// 文本级可压缩的静态扩展名白名单（R25）。woff2/png/jpg 不在列——
+  /// 它们已经自己压过，再压是白烧家里笔记本的 CPU。
+  static const _gzippableExts = {
+    'js', 'mjs', 'json', 'map', 'html', 'css', 'svg', 'wasm', 'txt'
+  };
+
+  /// gzip 结果的内存缓存：键 = 文件绝对路径，值带 mtime——
+  /// 文件一改（发新版 Web 产物）缓存自然失效。
+  /// 不缓存的话，每次请求现压 6.8 MB 的 canvaskit.wasm 要一两百毫秒，
+  /// 等于把慢从网线上挪到了 CPU 上。
+  static final _gzCache = <String, _GzEntry>{};
+  static int _gzCacheBytes = 0;
+  static const _gzCacheMaxBytes = 32 * 1024 * 1024;
+
+  static Future<Response?> _tryStatic(String rel, Directory webRoot,
+      {String? acceptEncoding}) async {
     // 目录穿越防护：这条必须在拼接路径之前。
     // 服务端口在局域网上是开放的，`/../../` 能读到什么谁也不好说。
     if (rel.contains('..')) return null;
@@ -868,17 +886,43 @@ class ZaojiServer {
 
     final bytes = await f.readAsBytes();
     final fileName = path.split('/').last;
-    return Response.ok(
-      bytes,
-      headers: {
-        'content-type': mimeOf(fileName),
-        // index.html 绝不能缓存：Flutter 发新版本后，
-        // 缓存住的旧 index 会去拉已经不存在的旧 assets，页面直接白屏。
-        'cache-control': fileName == 'index.html'
-            ? 'no-cache, no-store, must-revalidate'
-            : 'public, max-age=604800',
-      },
-    );
+    final headers = <String, String>{
+      'content-type': mimeOf(fileName),
+      // index.html 绝不能缓存：Flutter 发新版本后，
+      // 缓存住的旧 index 会去拉已经不存在的旧 assets，页面直接白屏。
+      'cache-control': fileName == 'index.html'
+          ? 'no-cache, no-store, must-revalidate'
+          : 'public, max-age=604800',
+    };
+
+    final dot = fileName.lastIndexOf('.');
+    final ext = dot < 0 ? '' : fileName.substring(dot + 1).toLowerCase();
+    final wantGzip = (acceptEncoding ?? '').split(',').any(
+        (t) => t.trim().toLowerCase() == 'gzip' || t.trim().startsWith('gzip;'));
+    if (!wantGzip || !_gzippableExts.contains(ext) || bytes.length <= 1024) {
+      return Response.ok(bytes, headers: headers);
+    }
+
+    final key = f.path;
+    final mtime = await f.lastModified();
+    final mtimeMs = mtime.millisecondsSinceEpoch;
+    var entry = _gzCache[key];
+    if (entry == null || entry.mtimeMs != mtimeMs) {
+      final gz = gzip.encode(bytes);
+      entry = _GzEntry(mtimeMs, gz);
+      // 家用场景文件就几十个，简单粗暴的整体清空比 LRU 更不容易出怪事
+      if (_gzCacheBytes + gz.length > _gzCacheMaxBytes) {
+        _gzCache.clear();
+        _gzCacheBytes = 0;
+      }
+      _gzCache[key] = entry;
+      _gzCacheBytes += gz.length;
+    }
+    return Response.ok(entry.bytes, headers: {
+      ...headers,
+      'content-encoding': 'gzip',
+      'vary': 'Accept-Encoding',
+    });
   }
 
   static String mimeOf(String fileName) {
@@ -963,4 +1007,11 @@ class ZaojiServer {
 /// 请求体超过上限。只在 [_readJson] 与它的调用方之间传递。
 class _BodyTooLarge {
   const _BodyTooLarge();
+}
+
+/// 静态文件 gzip 缓存条目：压缩结果 + 压缩时文件的 mtime（R25）。
+class _GzEntry {
+  const _GzEntry(this.mtimeMs, this.bytes);
+  final int mtimeMs;
+  final List<int> bytes;
 }

@@ -66,12 +66,14 @@ class ServerConfig {
   /// 0.8.0：带轮转的文件日志（logs/zaoji.log，控制台与文件双写；health 报 logPath/logBytes）。
   /// 0.9.0：来访者同步准入三态（open/passcode/pairCode，schema v4）+ `/api/sync/config`、
   ///   `/api/join`、`/api/admin/settings`（仅本机）。
+  /// 0.12.1：静态托管 gzip（js/wasm/json/css/svg/txt 白名单 + 按「路径+mtime」的
+  /// 内存压缩缓存；woff2/png 等已自压类型裸传）。Web 首屏裸量实测 ~18 MB → ~10 MB。
   /// 0.11.0：服务端代码零改动——与 app 0.11.0（菜单 + 一键备菜）对齐发布线，
   /// menu/menu_item 自 R5 就在同步白名单，本轮只是托管产物更新。
   /// 0.12.0：服务端代码零改动——与 app 0.12.0（日历页）对齐发布线，
   /// 日历是纯客户端派生读（cook_session/menu 早已在白名单），本轮只换托管的 Web 产物。
   /// 0.10.0：冲突裁决 `POST /api/conflicts/resolve`（服务端盖 HLC，含过期回声守卫）。
-  static const String version = '0.12.0';
+  static const String version = '0.12.1';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
