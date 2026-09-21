@@ -1978,7 +1978,7 @@ body svg{display:inline-block;vertical-align:middle}
     <div class="panel-kicker">深链直达</div>
     <p style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;line-height:1.9;color:var(--stage-muted)">
       #mode=server<br>#screen=recipe-detail&amp;id=r2<br>#sheet=filter<br>#timer=300&amp;float=1<br>#land=1&amp;screen=cooking&amp;id=r2<br><br>
-      #screen=ai-settings<br>#screen=ai-settings&amp;ai=1<br>#screen=pantry<br>#screen=recommend&amp;recoai=1<br>#sheet=share&amp;kind=recipe&amp;fmt=image<br>#sheet=share&amp;kind=recipe&amp;fmt=text<br>#sheet=airecipe&amp;name=麻婆豆腐
+      #screen=ai-settings<br>#screen=ai-settings&amp;ai=1<br>#screen=pantry<br>#screen=recommend&amp;recoai=1<br>#screen=conflicts<br>#sheet=share&amp;kind=recipe&amp;fmt=image<br>#sheet=share&amp;kind=recipe&amp;fmt=text<br>#sheet=airecipe&amp;name=麻婆豆腐
     </p>
   </aside>
 
@@ -2515,6 +2515,19 @@ const TRASH_KIND = {
   tag:   { n:'标签', i:'tag',      c:'#836127' }
 };
 
+/* ─────────── R22 冲突箱演示数据（一行一字段一条，与服务端 conflict_item 同形） ─────────── */
+const CONFLICTS = [
+  { id:'cf1', recipe:'r2', dish:'番茄炒蛋', field:'耗时',
+    local:{ v:'15 分钟', by:'客厅平板', at:'昨天 19:42' },
+    remote:{ v:'8 分钟', by:'妈妈的手机', at:'昨天 20:15' } },
+  { id:'cf2', recipe:'r2', dish:'番茄炒蛋', field:'菜名',
+    local:{ v:'番茄炒蛋', by:'客厅平板', at:'昨天 19:42' },
+    remote:{ v:'茄汁滑蛋', by:'妈妈的手机', at:'昨天 20:15' } },
+  { id:'cf3', recipe:'r5', dish:'麻婆豆腐', field:'辣度',
+    local:{ v:'微辣', by:'我的手机', at:'今天 08:11' },
+    remote:{ v:'正常辣', by:'爸爸的手机', at:'今天 08:40' } }
+];
+
 /* ─────────── 烹饪时间轴排程（窗口 17:05 → 18:30，共 85 分钟） ─────────── */
 const SCHEDULE = {
   start:'17:05', serve:'18:30', total:85,
@@ -2665,6 +2678,9 @@ const S = {
   accessMode:'open',   // R21 服务端准入三态（互斥）：open | passcode | pairCode
   passcodeJoined:false,
   visitorManualSync:false,
+  conflictSel:{},      // R22 裁决草稿：{ 冲突id: 'local' | 'remote' | 'custom' }
+  conflictCustom:{},   // R22 手动档的值：{ 冲突id: 文本 }
+  conflictResolved:[], // R22 演示：已应用的冲突 id
   timer:null,          // { total, left, running, label, done, float }
   fab:{ x:null, y:null },
   addFab:{ x:null, y:null },   // 主页悬浮「添加菜品」按钮的位置（本机偏好，不参与同步）
@@ -3987,6 +4003,15 @@ SCREENS.me = function () {
 
     '<div class="sec-head"><span class="sec-num">02</span><span class="sec-title">数据与同步</span></div>' +
     '<div class="px"><div class="list">' +
+      (function () {
+        const n = CONFLICTS.filter(function (c) { return S.conflictResolved.indexOf(c.id) < 0; }).length;
+        return '<button type="button" class="row row-btn" data-act="nav" data-screen="conflicts">' +
+          '<span class="row-ico"' + (n ? ' style="background:var(--accent-softer);color:var(--accent-deep)"' : '') + '>' + ic('alert', 18) + '</span>' +
+          '<span class="row-main"><span class="row-title">冲突箱</span>' +
+          '<span class="row-sub">' + (n ? n + ' 处两端改动撞上了，逐字段选保留哪版' : '两端改动撞上了才会进来，字段不重叠的改动自动合并') + '</span></span>' +
+          (n ? '<span class="badge badge-err"><i></i>' + n + '</span>' : '') +
+          ic('chevR', 16, 'row-chevr') + '</button>';
+      })() +
       row('server', 'Web 服务地址与同步', '上次同步 ' + S.lastSync + ' · 自动双向', 'nav', 'sync', true) +
       row('cloud', '备份到 WebDAV（坚果云）', '每天 09:12 自动备份 · 已保留 4 份', 'nav', 'backup') +
       row('download', '导出到本地文件', 'JSON / Markdown 菜谱册', 'toast', '已导出 zaoji-backup.json（原型示意）') +
@@ -4253,6 +4278,83 @@ function syncRow(icon, title, sub, on) {
     '<span class="row-sub">' + esc(sub) + '</span></span>' +
     '<span class="switch" role="switch" tabindex="0" data-act="toggle-on" aria-checked="' + on + '"></span></div>';
 }
+
+/* ═══════════════════ R22 · 冲突箱（逐字段选保留哪版） ═══════════════════ */
+SCREENS.conflicts = function () {
+  // 已应用的从演示数据里消失（真实版对应 conflict_item.resolved_at 非空）
+  const open = CONFLICTS.filter(function (c) { return S.conflictResolved.indexOf(c.id) < 0; });
+  const groups = [];
+  open.forEach(function (c) {
+    let g = groups.find(function (x) { return x.recipe === c.recipe; });
+    if (!g) { g = { recipe: c.recipe, dish: c.dish, items: [] }; groups.push(g); }
+    g.items.push(c);
+  });
+
+  const sideCard = function (c, side, label) {
+    const v = c[side], sel = S.conflictSel[c.id] === side;
+    return '<button type="button" class="pick" style="align-items:flex-start" data-act="conflict-pick" data-k="' + c.id + '" data-side="' + side + '" aria-pressed="' + sel + '">' +
+      '<span class="pick-box">' + ic('check', 13) + '</span>' +
+      '<span style="flex:1;min-width:0">' +
+        '<span class="row-title" style="display:block;font-size:14px">' + esc(v.v) + '</span>' +
+        '<span class="row-sub" style="display:block;margin-top:2px">' + esc(label) + ' · ' + esc(v.by) + ' · ' + esc(v.at) + '</span>' +
+      '</span></button>';
+  };
+
+  const fieldCard = function (c) {
+    const sel = S.conflictSel[c.id];
+    return '<div class="card pad">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+        '<span class="badge badge-warn">' + esc(c.field) + '</span>' +
+        '<span style="font-size:11px;color:var(--muted)">两处改法不一样</span>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+        sideCard(c, 'local', '改动 A') + sideCard(c, 'remote', '改动 B') +
+        '<button type="button" class="pick" data-act="conflict-pick" data-k="' + c.id + '" data-side="custom" aria-pressed="' + (sel === 'custom') + '">' +
+          '<span class="pick-box">' + ic('check', 13) + '</span>' +
+          '<span style="flex:1">' +
+            '<span class="row-title">都不是，自己填</span>' +
+            (sel === 'custom'
+              ? '<input class="input" data-custom-for="' + c.id + '" placeholder="填最终要留下的值" style="margin-top:8px" value="' + esc(S.conflictCustom[c.id] || '') + '">'
+              : '') +
+          '</span></button>' +
+      '</div></div>';
+  };
+
+  return '<div class="screen is-full">' +
+    appbar('冲突箱', open.length ? open.length + ' 处待裁决 · 逐字段选保留哪版' : '同步产生的真冲突会落到这里', { act:'back' }) +
+
+    '<div class="px">' +
+      (open.length === 0
+        ? '<div class="card pad" style="text-align:center;padding:34px 16px">' +
+            '<span class="row-ico" style="width:46px;height:46px;margin:0 auto 12px;background:rgba(55,99,74,.1);color:#2F5B40">' + ic('check', 22) + '</span>' +
+            '<div style="font-size:14px;font-weight:600;color:var(--ink)">没有待裁决的冲突</div>' +
+            '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">两端改了同一个字段时才会出现在这里，字段不重叠的改动会自动合并</div>' +
+          '</div>'
+        : groups.map(function (g) {
+            const done = g.items.every(function (c) { return !!S.conflictSel[c.id]; });
+            return '<div class="sec-head" style="padding:0;margin:20px 0 12px"><span class="sec-num">' + pad(g.items.length) + '</span>' +
+              '<span class="sec-title">' + esc(g.dish) + '</span>' +
+              '<span class="sec-more">' + g.items.filter(function (c) { return !!S.conflictSel[c.id]; }).length + '/' + g.items.length + '</span></div>' +
+              '<div style="display:flex;flex-direction:column;gap:12px">' +
+                g.items.map(fieldCard).join('') +
+                '<button type="button" class="btn ' + (done ? 'btn-primary' : 'btn-ghost') + '" style="' + (done ? '' : 'opacity:.55') + '" data-act="conflict-apply" data-dish="' + g.recipe + '">' +
+                  '应用这一组的裁决</button>' +
+              '</div>';
+          }).join('')) +
+
+      (open.length
+        ? '<div class="card pad" style="margin-top:26px;border-style:dashed">' +
+            '<div class="panel-kicker" style="color:var(--muted);font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;font-weight:600;margin-bottom:10px">原型演示</div>' +
+            '<div style="display:flex;gap:9px">' +
+              '<button type="button" class="btn btn-ghost btn-sm" style="flex:1" data-act="toast" data-msg="已按当前选择全部应用（原型示意）">全部应用</button>' +
+              '<button type="button" class="btn btn-ghost btn-sm" style="flex:1" data-act="conflict-reset">恢复演示冲突</button>' +
+            '</div></div>'
+        : '<div class="card pad" style="margin-top:26px;border-style:dashed">' +
+            '<div class="panel-kicker" style="color:var(--muted);font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;font-weight:600;margin-bottom:10px">原型演示</div>' +
+            '<button type="button" class="btn btn-ghost btn-sm btn-block" data-act="conflict-reset">恢复演示冲突</button></div>') +
+    '</div>' +
+  '</div>';
+};
 
 /* ═══════════════════ 16 · 备份 / WebDAV ═══════════════════ */
 SCREENS.backup = function () {
@@ -6342,6 +6444,38 @@ document.addEventListener('click', function (e) {
     renderScreen(false); toast('口令正确，凭证已存本机'); return;
   }
   if (act === 'passcode-leave') { S.passcodeJoined = false; renderScreen(false); return; }
+  /* —— R22 冲突箱：逐字段三选 + 按组应用（真实版= POST /api/conflicts/resolve） —— */
+  if (act === 'conflict-pick') {
+    const id = el.dataset.k, side = el.dataset.side;
+    if (S.conflictSel[id] === side) delete S.conflictSel[id];
+    else S.conflictSel[id] = side;
+    renderScreen(false); return;
+  }
+  if (act === 'conflict-apply') {
+    const dish = el.dataset.dish;
+    // 手动档的值此刻才从输入框收进状态（输入框会随选择重画）
+    document.querySelectorAll('[data-custom-for]').forEach(function (inp) {
+      S.conflictCustom[inp.dataset.customFor] = inp.value;
+    });
+    let applied = 0;
+    CONFLICTS.forEach(function (c) {
+      if (c.recipe !== dish) return;
+      if (S.conflictResolved.indexOf(c.id) >= 0) return;
+      const side = S.conflictSel[c.id];
+      if (!side) return;
+      if (side === 'custom' && !(S.conflictCustom[c.id] || '').trim()) return;
+      S.conflictResolved.push(c.id);
+      delete S.conflictSel[c.id];
+      applied++;
+    });
+    renderScreen(false);
+    toast(applied ? '已应用 ' + applied + ' 处裁决，其余保持待处理' : '每组要先选好再应用');
+    return;
+  }
+  if (act === 'conflict-reset') {
+    S.conflictResolved = []; S.conflictSel = {}; S.conflictCustom = {};
+    renderScreen(false); return;
+  }
   if (act === 'server-tab') { S.serverTab = el.dataset.k; renderDevice(); return; }
   if (act === 'menu-add-run') { S.sheet = null; renderOverlays(); toast('已加入 ' + R_MAP[el.dataset.id].name); return; }
 

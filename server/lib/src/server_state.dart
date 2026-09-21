@@ -52,6 +52,12 @@ const List<Map<String, Object?>> kEndpoints = [
     'status': 'ready'
   },
   {
+    'path': '/api/conflicts/resolve',
+    'method': 'POST',
+    'title': '冲突裁决（逐条结果，服务端盖 HLC）',
+    'status': 'ready'
+  },
+  {
     'path': '/api/media/{sha256}',
     'method': 'PUT',
     'title': '上传图片（内容寻址，哈希不符拒绝）',

@@ -66,7 +66,8 @@ class ServerConfig {
   /// 0.8.0：带轮转的文件日志（logs/zaoji.log，控制台与文件双写；health 报 logPath/logBytes）。
   /// 0.9.0：来访者同步准入三态（open/passcode/pairCode，schema v4）+ `/api/sync/config`、
   ///   `/api/join`、`/api/admin/settings`（仅本机）。
-  static const String version = '0.9.0';
+  /// 0.10.0：冲突裁决 `POST /api/conflicts/resolve`（服务端盖 HLC，含过期回声守卫）。
+  static const String version = '0.10.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 

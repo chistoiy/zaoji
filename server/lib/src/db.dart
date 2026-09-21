@@ -101,6 +101,7 @@ class ZaojiDb {
         db.execute(stmt);
       }
       _migrateV3toV4();
+      _migrateConflictNullValues();
       db.execute(
         "INSERT INTO meta (k, v) VALUES ('schema_version', ?) "
         'ON CONFLICT(k) DO UPDATE SET v = excluded.v',
@@ -127,6 +128,14 @@ class ZaojiDb {
       db.execute(
         'ALTER TABLE device ADD COLUMN visitor INTEGER NOT NULL DEFAULT 0');
     }
+  }
+
+  /// R22 数据修形：旧 `_openConflict` 把 null 字符串化成 `'null'` 存进冲突箱。
+  /// 裁决选它会把文本 "null" 写进业务列（真库里就有一条 cover_sha256 撞了这个）。
+  /// 幂等清一遍；业务值恰好是 "null" 四个字母的误伤概率按可忽略处理。
+  void _migrateConflictNullValues() {
+    db.execute("UPDATE conflict_item SET local_value = NULL WHERE local_value = 'null'");
+    db.execute("UPDATE conflict_item SET remote_value = NULL WHERE remote_value = 'null'");
   }
 
   /// 库里记录的 schema 版本；**全新的库返回 null**（那时连 meta 表都还没有）。

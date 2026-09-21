@@ -660,6 +660,28 @@ class SyncService {
     }
 
     // ── 已存在：交给 shared 的冲突判定，不自己写一套 ──
+    //
+    // ★ 但先挡「过期回声」：R13 水位线设计的副作用是拉回来的行会被再推一遍，
+    // 内容一致时靠 identical/takeLocal 判 skipped 吞掉（计划书 §5.4 的已知代价）。
+    // R22 冲突裁决打破了这个假设——服务端已把行改成定稿值，客户端手里还是裁决前
+    // 那份，内容不一致 + 无 base → 保守判定会**把刚裁完的冲突再开一遍**。
+    // 识别靠盖章者身份：updated_at 的 HLC 节点是本服务端 = 这行是我发出去的，
+    // 且不比现存新 → 纯回声。**客户端的真实编辑永远带自己的节点 id**，
+    // 这条判断不依赖两端时钟对齐（比单纯比时间戳安全）。
+    final incomingHlc = '${incoming['updated_at'] ?? ''}';
+    final existingHlc = '${existing['updated_at'] ?? ''}';
+    final echo = Hlc.tryDecode(incomingHlc);
+    if (echo != null &&
+        echo.nodeId == serverId &&
+        incomingHlc.compareTo(existingHlc) <= 0) {
+      return {
+        'tbl': tbl,
+        'rowId': rowId,
+        'outcome': 'skipped',
+        'reason': '过期回声（服务端已有同戳或更新的版本）',
+      };
+    }
+
     final base = _snapshotOf(change['base'], allowed);
     final resolution = resolveConflict(
       local: _snapshotOf(existing, allowed)!, // local = 服务端现存
@@ -830,28 +852,157 @@ class SyncService {
   }) {
     // 一行一字段一条记录：用户要能逐字段裁决，
     // 而不是面对"整行选 A 还是选 B"。
+    // R22：值**原样存**（null 就是 NULL）。以前用 '$v' 字符串化，
+    // 于是「被清空」与「有人真的打了 null 四个字符」长得一样，
+    // 裁决写回时没法还原。
+    // ★ 开票本身必须进 change_log：票不广播的话，其它设备的冲突箱
+    //   从生到死都看不到这张卡，客户端逐字段裁决就成了空谈。
     for (final f in fields) {
+      final id = Ulid.generate();
+      final hlc = _mintHlc();
       db.db.execute(
         'INSERT INTO conflict_item (id, updated_at, updated_by, rev, '
         'tbl, row_id, field, local_value, remote_value, local_hlc, remote_hlc, '
         'local_by, remote_by) '
         'VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
-          Ulid.generate(),
-          _mintHlc(),
+          id,
+          hlc,
           device.id,
           tbl,
           rowId,
           f,
-          '${existing[f]}',
-          '${incoming[f]}',
+          existing[f],
+          incoming[f],
           '${existing['updated_at']}',
           '${incoming['updated_at']}',
           '${existing['updated_by']}',
           '${incoming['updated_by']}',
         ],
       );
+      _log('conflict_item', id, 'upsert', hlc, device.id);
     }
+  }
+
+  /// R22 · 冲突裁决（`POST /api/conflicts/resolve` 的服务层）。
+  ///
+  /// **裁决为什么放在服务端而不是客户端**：客户端改行再推时不带 base 快照，
+  /// 「把值改回旧的那个」会被 [resolveConflict] 保守判成**新一轮真冲突**——
+  /// 冲突箱越裁决越多，这是个放大环。服务端两份值都在手上、自己盖 HLC
+  ///（R6 决策④），所有设备一次拉取即收敛。
+  ///
+  /// 整批一个事务：半途失败全回滚。「同一行一半字段裁完一半没裁」比没裁更难解释。
+  /// 逐条的 SqliteException 兜底与 push 同款——一条坏记录不该挡住同批其它裁决。
+  List<Map<String, Object?>> resolveConflicts({
+    required Device device,
+    required List<Map<String, Object?>> items,
+  }) {
+    final results = <Map<String, Object?>>[];
+    db.db.execute('BEGIN');
+    try {
+      for (final item in items) {
+        try {
+          results.add(_resolveOne(device, item));
+        } on SqliteException catch (e) {
+          results.add({
+            'conflictId': '${item['conflictId']}',
+            'outcome': 'rejected',
+            'reason': '数据库拒绝：${e.message}',
+          });
+        }
+      }
+      db.db.execute('COMMIT');
+    } catch (_) {
+      db.db.execute('ROLLBACK');
+      rethrow;
+    }
+    return results;
+  }
+
+  Map<String, Object?> _resolveOne(Device device, Map<String, Object?> item) {
+    final cid = '${item['conflictId'] ?? ''}';
+    final choice = '${item['choice'] ?? ''}';
+    Map<String, Object?> rejected(String reason) =>
+        {'conflictId': cid, 'outcome': 'rejected', 'reason': reason};
+
+    if (!const {'local', 'remote', 'merged'}.contains(choice)) {
+      return rejected('choice 只接受 local / remote / merged，收到 "$choice"');
+    }
+    final tickets =
+        db.db.select('SELECT * FROM conflict_item WHERE id = ?', [cid]);
+    if (tickets.isEmpty) return {'conflictId': cid, 'outcome': 'not_found'};
+    final t = tickets.first;
+    if (t['resolved_at'] != null) {
+      return {'conflictId': cid, 'outcome': 'already_resolved'};
+    }
+
+    final tbl = '${t['tbl']}';
+    final rowId = '${t['row_id']}';
+    final field = '${t['field']}';
+    final allowed = syncWhitelist[tbl];
+    if (allowed == null) return rejected('未知表：$tbl');
+    // field 要直接拼进 UPDATE 的 SET 子句——白名单是这扇门的唯一锁。
+    // 五列里除 deleted_at（「一端删一端改」正靠它裁决恢复）外一律禁改：
+    // conflict_item 是同步来的数据，field 列被塞个 'updated_at'
+    // 就等于给外人开了伪造时间戳的接口。
+    if (!allowed.contains(field) ||
+        const {'id', 'updated_at', 'updated_by', 'rev'}.contains(field)) {
+      return rejected('这个字段不能经裁决改动：$tbl.$field');
+    }
+
+    Object? value;
+    if (choice == 'merged') {
+      final mv = item['mergedValue'];
+      if (mv is! String || mv.trim().isEmpty) {
+        return rejected('merged 必须带 mergedValue');
+      }
+      if (mv.length > 4096) return rejected('mergedValue 最长 4096 字符');
+      value = mv;
+    } else {
+      value = t[choice == 'local' ? 'local_value' : 'remote_value'];
+    }
+
+    final existing = _existingRow(tbl, rowId, allowed);
+    if (existing == null) return {'conflictId': cid, 'outcome': 'row_missing'};
+
+    final hlc = _mintHlc();
+    db.db.execute(
+      'UPDATE $tbl SET $field = ?, updated_at = ?, updated_by = ?, rev = ? '
+      'WHERE id = ?',
+      [_coerceValue(existing[field], value), hlc, device.id,
+          _revOf(existing) + 1, rowId],
+    );
+    final seq = _log(tbl, rowId, 'upsert', hlc, device.id);
+
+    // 裁决标记本身也要进 change_log：不广播的话，
+    // 别的设备的冲突箱会永远挂着一张已经裁完的卡。
+    final markHlc = _mintHlc();
+    db.db.execute(
+      'UPDATE conflict_item SET resolved_at = ?, resolution = ?, '
+      'updated_at = ?, updated_by = ?, rev = rev + 1 WHERE id = ?',
+      [markHlc, choice, markHlc, device.id, cid],
+    );
+    _log('conflict_item', cid, 'upsert', markHlc, device.id);
+
+    return {
+      'conflictId': cid,
+      'outcome': 'applied',
+      'tbl': tbl,
+      'rowId': rowId,
+      'field': field,
+      'seq': seq,
+    };
+  }
+
+  /// 冲突箱的值按 TEXT 存；写回业务行时按**该列现存值的类型**转回去。
+  /// 把 INTEGER 3 写成 "3" 的话，客户端按 int 读的地方全炸——
+  /// 而且 SQLite 类型亲和性不会拦你，这是只有断言能抓住的错。
+  Object? _coerceValue(Object? current, Object? value) {
+    if (value == null) return null;
+    final s = '$value';
+    if (current is int) return int.tryParse(s) ?? value;
+    if (current is double) return double.tryParse(s) ?? value;
+    return value;
   }
 
   // ── 幂等表 ──

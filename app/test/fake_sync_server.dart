@@ -111,6 +111,46 @@ class FakeSyncServer {
     });
   }
 
+  /// R22 · 在「服务端」放一条真冲突（conflict_item 业务行），
+  /// 客户端会像真服务端一样把它同步下来。返回 conflict_item.id。
+  String injectConflict({
+    required String rowId,
+    required String field,
+    Object? localValue,
+    Object? remoteValue,
+    String tbl = 'recipe',
+  }) {
+    final id = 'cf-$tbl-$rowId-$field';
+    final stamp = _stamp();
+    (rows['conflict_item'] ??= {})[id] = <String, Object?>{
+      'id': id,
+      'updated_at': stamp,
+      'updated_by': 'server',
+      'rev': 1,
+      'deleted_at': null,
+      'tbl': tbl,
+      'row_id': rowId,
+      'field': field,
+      'local_value': localValue,
+      'remote_value': remoteValue,
+      'local_hlc': stamp,
+      'remote_hlc': stamp,
+      'local_by': 'device-a',
+      'remote_by': 'device-b',
+      'resolved_at': null,
+      'resolution': null,
+    };
+    changeLog.add({
+      'seq': ++seq,
+      'tbl': 'conflict_item',
+      'rowId': id,
+      'op': 'upsert',
+      'updatedAt': stamp,
+      'updatedBy': 'server',
+    });
+    return id;
+  }
+
   Future<void> close() async {
     await _server.close(force: true);
   }
@@ -159,6 +199,15 @@ class FakeSyncServer {
         (status, res) = req.method == 'POST'
             ? _push(json)
             : (200, _pull(req.uri.queryParameters));
+      } else if (req.uri.path == '/api/conflicts/resolve') {
+        // R22：鉴权与数据接口同一套（token 优先，开放模式认 X-Node-Id）
+        if (_deviceIdOf(req) == null && !_allowAnonymous(req)) {
+          req.response.statusCode = 401;
+          req.response.write(jsonEncode({'error': 'unauthorized'}));
+          await req.response.close();
+          return;
+        }
+        (status, res) = _resolve(json);
       } else if (req.uri.path.startsWith('/api/media/')) {
         // 媒体接口：与真服务端同款三道语义——要 token（或开放模式匿名）、档位白名单、原图/缩略图
         if (_deviceIdOf(req) == null && !_allowAnonymous(req)) {
@@ -367,6 +416,9 @@ class FakeSyncServer {
         // 与真服务端同款语义：业务字段一致 → skipped（不盖章、不记日志）。
         // 回声重推全靠这条分支吞掉，否则每轮同步都会虚增变更日志。
         results.add({'tbl': tbl, 'rowId': rowId, 'outcome': 'skipped'});
+      } else if (_isStaleEcho(existing, incoming)) {
+        // R22 同款「过期回声」守卫：裁决后内容不再一致，只靠上面那条会漏。
+        results.add({'tbl': tbl, 'rowId': rowId, 'outcome': 'skipped'});
       } else {
         // 有差异：应用 incoming 的业务字段 + 盖章 + 记日志。
         // （真服务端此时还会按 base 情况写冲突箱/自动合并——模拟器从简，
@@ -416,6 +468,103 @@ class FakeSyncServer {
       if (va == null || vb == null ? va != vb : '$va' != '$vb') return false;
     }
     return true;
+  }
+
+  /// R22 · 与真服务端同款的「过期回声」判定：updated_at 是本模拟器盖的章
+  /// 且不比现存新 → 客户端重推拉回来的旧版本，吞掉而不是制造差异。
+  bool _isStaleEcho(
+      Map<String, Object?> existing, Map<String, Object?> incoming) {
+    final stamp = '${incoming['updated_at'] ?? ''}';
+    final decoded = Hlc.tryDecode(stamp);
+    if (decoded == null || decoded.nodeId != serverId) return false;
+    return stamp.compareTo('${existing['updated_at'] ?? ''}') <= 0;
+  }
+
+  /// R22 · 裁决端点（镜像真服务端语义：选定值写业务行 + 盖新章 + 归档冲突，
+  /// 两者都进 change_log）。状态与结果形状逐字段对齐 resolve_test。
+  (int, Map<String, Object?>) _resolve(Map<String, Object?> body) {
+    final items = body['items'];
+    if (items is! List || items.isEmpty || items.length > 200) {
+      return (
+        400,
+        {'error': 'bad_request', 'message': 'items 必须是 1..200 个对象的数组'},
+      );
+    }
+    final results = <Map<String, Object?>>[];
+    for (final raw in items.cast<Map>()) {
+      final it = raw.cast<String, Object?>();
+      final cid = '${it['conflictId'] ?? ''}';
+      final choice = '${it['choice'] ?? ''}';
+      final t = rows['conflict_item']?[cid];
+      if (t == null) {
+        results.add({'conflictId': cid, 'outcome': 'not_found'});
+        continue;
+      }
+      if (t['resolved_at'] != null) {
+        results.add({'conflictId': cid, 'outcome': 'already_resolved'});
+        continue;
+      }
+      if (!const {'local', 'remote', 'merged'}.contains(choice)) {
+        results.add({
+          'conflictId': cid,
+          'outcome': 'rejected',
+          'reason': 'choice 只接受 local / remote / merged',
+        });
+        continue;
+      }
+      Object? value = switch (choice) {
+        'local' => t['local_value'],
+        'remote' => t['remote_value'],
+        _ => it['mergedValue'],
+      };
+      if (choice == 'merged' && (value is! String || value.trim().isEmpty)) {
+        results.add({
+          'conflictId': cid,
+          'outcome': 'rejected',
+          'reason': 'merged 必须带 mergedValue',
+        });
+        continue;
+      }
+      final tbl = '${t['tbl']}';
+      final rowId = '${t['row_id']}';
+      final row = rows[tbl]?[rowId];
+      if (row == null) {
+        results.add({'conflictId': cid, 'outcome': 'row_missing'});
+        continue;
+      }
+      final stamp = _stamp();
+      row['${t['field']}'] = value;
+      row['updated_at'] = stamp;
+      changeLog.add({
+        'seq': ++seq,
+        'tbl': tbl,
+        'rowId': rowId,
+        'op': 'upsert',
+        'updatedAt': stamp,
+        'updatedBy': 'resolver',
+      });
+      final mstamp = _stamp();
+      t['resolved_at'] = mstamp;
+      t['resolution'] = choice;
+      t['updated_at'] = mstamp;
+      changeLog.add({
+        'seq': ++seq,
+        'tbl': 'conflict_item',
+        'rowId': cid,
+        'op': 'upsert',
+        'updatedAt': mstamp,
+        'updatedBy': 'resolver',
+      });
+      results.add({
+        'conflictId': cid,
+        'outcome': 'applied',
+        'tbl': tbl,
+        'rowId': rowId,
+        'field': '${t['field']}',
+        'seq': seq,
+      });
+    }
+    return (200, {'ok': true, 'results': results});
   }
 
   Map<String, Object?> _pull(Map<String, String> q) {

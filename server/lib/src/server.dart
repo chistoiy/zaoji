@@ -124,6 +124,9 @@ class ZaojiServer {
       // 数据接口：token 必过；开放模式下匿名请求按 X-Node-Id 记来访者伪设备
       ..get('/api/changes', (Request req) => _pull(state, req))
       ..post('/api/changes', (Request req) => _push(state, req))
+      // R22：冲突裁决。鉴权与数据接口同一套（token 优先、开放模式认来访者）。
+      ..post('/api/conflicts/resolve',
+          (Request req) => _resolveConflicts(state, req))
       // 媒体接口（R16）：同样要 token。GET 是显示端按需拉取，PUT 是上传。
       ..put('/api/media/<sha>',
           (Request req) => _mediaPut(state, req, req.params['sha']!))
@@ -570,6 +573,39 @@ class ZaojiServer {
       changes: changes,
     );
     return _json(result.toJson(), status: result.ok ? 200 : 400);
+  }
+
+  /// R22 · 冲突裁决。逐条结果、整批事务（见 SyncService.resolveConflicts）。
+  static Future<Response> _resolveConflicts(
+      ServerState state, Request req) async {
+    final device = _resolveDevice(state, req);
+    if (device == null) return _unauthorized(state);
+
+    final Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    final items = body?['items'];
+    if (items is! List || items.isEmpty || items.length > 200 ||
+        !items.every((e) => e is Map)) {
+      return _json({
+        'error': 'bad_request',
+        'message': 'items 必须是 1..200 个对象的数组',
+      }, status: 400);
+    }
+
+    final results = state.sync.resolveConflicts(
+      device: device,
+      items: [
+        for (final e in items) (e as Map).map((k, v) => MapEntry('$k', v)),
+      ],
+    );
+    await state.log.write(
+        '[conflict] ${device.name} 裁决 ${results.where((r) => r['outcome'] == 'applied').length} 条'
+        '（收到 ${items.length}）');
+    return _json({'ok': true, 'results': results});
   }
 
   static Response _unauthorized(ServerState state) {

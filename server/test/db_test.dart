@@ -75,6 +75,26 @@ void main() {
       }
     });
 
+    test('★ R22 数据修形：旧库把 null 字符串化成 "null" 的冲突值被清成 NULL', () {
+      final d = openDb();
+      // 模拟旧 _openConflict 的产物（真库里就有一条 cover_sha256 撞了这个）
+      d.db.execute(
+        'INSERT INTO conflict_item (id, updated_at, updated_by, rev, tbl, row_id, '
+        'field, local_value, remote_value, local_hlc, remote_hlc, local_by, remote_by) '
+        "VALUES ('cf-x', 'h-1', 's', 1, 'recipe', 'r1', 'cover_sha256', "
+        "'null', 'abc', 'h-1', 'h-1', 'a', 'b')",
+      );
+      d.close();
+
+      final again = ZaojiDb.open(dbPath);
+      addTearDown(again.close);
+      final row = again.db.select(
+          "SELECT local_value, remote_value FROM conflict_item WHERE id='cf-x'").single;
+      expect(row['local_value'], isNull,
+          reason: '裁决选它会把文本 "null" 写进哈希列——必须是真 NULL');
+      expect(row['remote_value'], 'abc', reason: '正常值不能被误伤');
+    });
+
     test('数据目录会被自动创建（部署时没人会记得先 mkdir）', () {
       final nested = '${tmp.path}${Platform.pathSeparator}a'
           '${Platform.pathSeparator}b${Platform.pathSeparator}zaoji.db';

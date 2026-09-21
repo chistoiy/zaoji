@@ -2,6 +2,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zaoji/data/recipe_store.dart';
+import 'package:zaoji/data/store_scope.dart';
 import 'package:zaoji/data/sync/sync_engine.dart';
 import 'package:zaoji/data/sync/sync_prefs.dart';
 import 'package:zaoji/data/sync/sync_scope.dart';
@@ -70,7 +71,11 @@ void main() {
       MaterialApp(
         home: SyncScope(
           engine: engine,
-          child: const MePage(),
+          // R22：MePage 多了冲突数徽标（读 store），入口版式要两个 scope 都在。
+          child: StoreScope(
+            store: store,
+            child: const MePage(),
+          ),
         ),
       ),
     );
@@ -151,6 +156,22 @@ void main() {
     await pumpMe(tester, transportUrl: 'http://127.0.0.1:9');
     expect(engine.accessMode, isNull);
     expect(find.text('配对码（5 分钟有效，一次性）'), findsOneWidget);
+    engine.dispose();
+  });
+
+  testWidgets('数据区：冲突箱入口带未裁决数徽标（R22）', (tester) async {
+    // 冲突行是同步下来的普通业务行——本地库里有，入口就该报数。
+    await store.dbOrNull!.customInsert(
+      'INSERT INTO conflict_item (id, updated_at, updated_by, rev, tbl, '
+      'row_id, field, local_value, remote_value, local_hlc, remote_hlc, '
+      'local_by, remote_by) '
+      "VALUES ('cf-x', 'h-1', 'server', 1, 'recipe', 'r-x', 'name', "
+      "'A', 'B', 'h-1', 'h-1', 'dev-a', 'dev-b')",
+    );
+    await pumpMe(tester);
+
+    expect(find.text('冲突箱'), findsOneWidget);
+    expect(find.byKey(const ValueKey('conflict-badge')), findsOneWidget);
     engine.dispose();
   });
 }

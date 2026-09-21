@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import '../data/recipe_store.dart';
 import '../data/sync/sync_engine.dart';
 import '../data/sync/sync_scope.dart';
+import '../data/store_scope.dart';
 import '../theme.dart';
+import 'conflict_box_page.dart';
 import 'trash_page.dart';
 
 /// 「我的」页（R13 最小可用版）：设备信息 + 同步配对与状态。
@@ -174,28 +177,60 @@ class _MePageState extends State<MePage> {
                 const SizedBox(height: 20),
                 _sectionTitle('数据'),
                 _SyncCard(
-                  child: ListTile(
-                    leading: const Icon(
-                      Icons.delete_outline,
-                      color: ZaojiColors.muted,
-                    ),
-                    title: const Text('回收站', style: TextStyle(fontSize: 14)),
-                    subtitle: const Text(
-                      '删除的菜谱可以在这里恢复',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: ZaojiColors.muted,
-                    ),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const TrashPage()),
-                    ),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.rule_folder_outlined,
+                          color: ZaojiColors.muted,
+                        ),
+                        title: const Text('冲突箱', style: TextStyle(fontSize: 14)),
+                        subtitle: const Text(
+                          '两端改了同一处时，逐字段选保留哪版',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _ConflictBadge(store: StoreScope.of(context)),
+                            const Icon(
+                              Icons.chevron_right,
+                              color: ZaojiColors.muted,
+                            ),
+                          ],
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const ConflictBoxPage(),
+                          ),
+                        ),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.delete_outline,
+                          color: ZaojiColors.muted,
+                        ),
+                        title: const Text('回收站', style: TextStyle(fontSize: 14)),
+                        subtitle: const Text(
+                          '删除的菜谱可以在这里恢复',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          color: ZaojiColors.muted,
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const TrashPage()),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 20),
                 const Text(
-                  '冲突箱、AI 配置、备份都会在后续版本出现在这里。',
+                  'AI 配置、备份都会在后续版本出现在这里。',
                   style: TextStyle(
                     fontSize: 11.5,
                     height: 1.6,
@@ -527,6 +562,61 @@ class _MePageState extends State<MePage> {
       ),
     ],
   );
+}
+
+/// 未裁决冲突数的徽标。监听 store——同步落库（reload）后数字自动跟上，
+/// 不为它单开任何刷新通道（R12 铺的路：store 是唯一的变更事实源）。
+class _ConflictBadge extends StatefulWidget {
+  const _ConflictBadge({required this.store});
+
+  final RecipeStore store;
+
+  @override
+  State<_ConflictBadge> createState() => _ConflictBadgeState();
+}
+
+class _ConflictBadgeState extends State<_ConflictBadge> {
+  int _count = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_refresh);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_refresh);
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    final n = await widget.store.openConflictCount();
+    if (mounted) setState(() => _count = n);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_count == 0) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0x14D2491C),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$_count',
+        key: const ValueKey('conflict-badge'),
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: ZaojiColors.accent,
+        ),
+      ),
+    );
+  }
 }
 
 class _SyncCard extends StatelessWidget {

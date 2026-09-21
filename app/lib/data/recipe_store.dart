@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import 'art_registry.dart';
 import 'seed.dart';
+import 'sync/conflict_box.dart';
 import 'zaoji_db.dart';
 import '../models.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
@@ -266,6 +267,87 @@ class RecipeStore extends ChangeNotifier {
 
   Recipe? recipeById(String id) => _byId[id];
 
+  // ───────────────────────── 冲突箱（R22） ─────────────────────────
+
+  /// 未裁决的冲突，按 (表, 行) 分组。
+  ///
+  /// 数据是同步引擎拉回来的普通业务行（conflict_item 在白名单里），
+  /// 这里只负责分组与「这行属于哪道菜」的翻译——墓碑行找不到菜名时退化成 id 片段。
+  Future<List<ConflictGroup>> conflictGroups() async {
+    final db = _db;
+    if (db == null) return const [];
+    final rows = await db
+        .customSelect(
+          'SELECT * FROM conflict_item WHERE resolved_at IS NULL '
+          'ORDER BY tbl, row_id, field',
+        )
+        .get();
+
+    final groups = <String, ConflictGroup>{};
+    final order = <String>[];
+    for (final r in rows) {
+      final d = r.data;
+      final tbl = '${d['tbl']}';
+      final rowId = '${d['row_id']}';
+      final key = '$tbl/$rowId';
+      if (!order.contains(key)) {
+        order.add(key);
+        groups[key] = ConflictGroup(
+          tbl: tbl,
+          rowId: rowId,
+          title: await _conflictTitle(tbl, rowId),
+          fields: const [],
+        );
+      }
+      // ConflictGroup 是不可变的，边收边拼要可变列表——先攒 map 再定稿。
+      final g = groups[key]!;
+      groups[key] = ConflictGroup(
+        tbl: tbl,
+        rowId: rowId,
+        title: g.title,
+        fields: [
+          ...g.fields,
+          ConflictField(
+            id: '${d['id']}',
+            field: '${d['field']}',
+            localValue: d['local_value'],
+            remoteValue: d['remote_value'],
+            localBy: '${d['local_by'] ?? ''}',
+            remoteBy: '${d['remote_by'] ?? ''}',
+            localHlc: '${d['local_hlc'] ?? ''}',
+            remoteHlc: '${d['remote_hlc'] ?? ''}',
+          ),
+        ],
+      );
+    }
+    return [for (final k in order) groups[k]!];
+  }
+
+  Future<int> openConflictCount() async =>
+      (await conflictGroups()).length;
+
+  Future<String> _conflictTitle(String tbl, String rowId) async {
+    final recipe = recipeById(rowId);
+    if (recipe != null) return recipe.name;
+    final db = _db!;
+    // 子表行：顺着 recipe_id 找到它属于的菜。找不到也别报错——
+    // 冲突恰恰可能发生在「一端删了菜」的场景里。
+    final parentTable = const {'step', 'ingredient', 'nutrition'};
+    if (parentTable.contains(tbl)) {
+      final rows = await db
+          .customSelect(
+            'SELECT recipe_id FROM $tbl WHERE id = ?',
+            variables: [Variable(rowId)],
+          )
+          .get();
+      if (rows.isNotEmpty) {
+        final owner = recipeById('${rows.first.data['recipe_id']}');
+        if (owner != null) return owner.name;
+      }
+    }
+    return rowId.length > 8 ? '记录 ${rowId.substring(0, 8)}…' : '记录 $rowId';
+  }
+
   void _reindex() {
     _byId
       ..clear()
@@ -298,6 +380,12 @@ class RecipeStore extends ChangeNotifier {
 
   /// 收藏在本机偏好表里的键。值是 JSON 字符串数组。
   static const _favKey = 'fav_recipe_ids';
+
+  /// 单调 ULID 工厂：同毫秒创建的行**字典序必须递增**——
+  /// 「取自己最新一条」这类 `ORDER BY ... , id DESC` 的定序全靠它。
+  /// 之前用 `_ulids.next()`（纯随机后缀），同毫秒谁新谁旧是掷硬币，
+  /// cooking_test 的 flake（R22 抓到，3 连跑红 1 次）就是这个。
+  static final UlidFactory _ulids = UlidFactory();
 
   Future<void> _loadFavs(ZaojiDb db) async {
     final rows = await db
@@ -369,7 +457,7 @@ class RecipeStore extends ChangeNotifier {
       String next() =>
           (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
 
-      final recipeId = Ulid.generate();
+      final recipeId = _ulids.next();
       await _insert(db, kRecipeTable, {
         'id': recipeId,
         'updated_at': next(),
@@ -396,7 +484,7 @@ class RecipeStore extends ChangeNotifier {
       for (var i = 0; i < draft.ingredients.length; i++) {
         final ing = draft.ingredients[i];
         await _insert(db, kIngredientTable, {
-          'id': '$recipeId-i${Ulid.generate()}',
+          'id': '$recipeId-i${_ulids.next()}',
           'updated_at': next(),
           'updated_by': nodeId,
           'rev': 1,
@@ -414,7 +502,7 @@ class RecipeStore extends ChangeNotifier {
 
       for (var i = 0; i < draft.steps.length; i++) {
         await _insert(db, kStepTable, {
-          'id': '$recipeId-s${Ulid.generate()}',
+          'id': '$recipeId-s${_ulids.next()}',
           'updated_at': next(),
           'updated_by': nodeId,
           'rev': 1,
@@ -531,7 +619,7 @@ class RecipeStore extends ChangeNotifier {
       for (var i = 0; i < draft.ingredients.length; i++) {
         final ing = draft.ingredients[i];
         await _insert(db, kIngredientTable, {
-          'id': '$recipeId-i${Ulid.generate()}',
+          'id': '$recipeId-i${_ulids.next()}',
           'updated_at': next(),
           'updated_by': nodeId,
           'rev': 1,
@@ -548,7 +636,7 @@ class RecipeStore extends ChangeNotifier {
       }
       for (var i = 0; i < draft.steps.length; i++) {
         await _insert(db, kStepTable, {
-          'id': '$recipeId-s${Ulid.generate()}',
+          'id': '$recipeId-s${_ulids.next()}',
           'updated_at': next(),
           'updated_by': nodeId,
           'rev': 1,
@@ -644,7 +732,7 @@ class RecipeStore extends ChangeNotifier {
     final db = _db!;
     final nodeId = await _resolveNodeId();
     final now = DateTime.now();
-    final id = Ulid.generate();
+    final id = _ulids.next();
     await _insert(db, kCookSessionTable, {
       'id': id,
       'updated_at': Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch).encode(),

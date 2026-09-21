@@ -210,6 +210,45 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
+  /// 提交冲突裁决（R22），返回服务端的逐条结果。
+  ///
+  /// **裁决为什么走服务端而不是本地改行再推**：推上去的行不带 base 快照，
+  /// 「把值改回旧的那个」会被冲突判定认成新一轮真冲突——冲突箱越裁决越多。
+  /// 服务端盖 HLC 后所有设备一次拉取即收敛，所以成功后**立刻跑一轮 [sync]**
+  /// 把盖章结果拉回本机（冲突卡消失、行值变定稿）。
+  ///
+  /// 失败不抛：结果里逐条给 outcome，网络/鉴权错误记进 [lastError] 并原样返回空表。
+  Future<List<Map<String, Object?>>> resolveConflicts(
+    List<Map<String, Object?>> items,
+  ) async {
+    final serverUrl = await _prefs.serverUrl();
+    if (serverUrl == null) {
+      _fail('尚未接入服务端，无法提交裁决');
+      return const [];
+    }
+    final token = await _prefs.token();
+    try {
+      final res = await (await _transportOf(serverUrl)).post(
+        '/api/conflicts/resolve',
+        {'items': items},
+        token: token,
+      );
+      _lastError = null;
+      final results = (res['results'] as List? ?? const [])
+          .cast<Map>()
+          .map((r) => r.map((k, v) => MapEntry('$k', v)))
+          .toList();
+      await sync();
+      return results;
+    } on SyncTransportException catch (e) {
+      _fail(e.message);
+      return const [];
+    } on SyncNetworkException catch (e) {
+      _fail('连不上服务端：${e.message}');
+      return const [];
+    }
+  }
+
   /// 配对：服务端地址 + 6 位配对码 → 长期 token。
   ///
   /// 成功后立刻跑一轮 [sync]（把本地数据首推上去），失败时凭证已保存、
