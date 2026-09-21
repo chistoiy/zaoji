@@ -14,7 +14,10 @@ class Ingredient {
   /// 主食材。推荐算法里缺主食材要 ×0.5，所以这个标记有用。
   final bool isMain;
 
-  const Ingredient(this.name, this.qty, {this.isMain = false});
+  /// 归一键（R23 备菜合并用）：西红柿 → 番茄。null = 未算，由合并现场兜底。
+  final String? aliasKey;
+
+  const Ingredient(this.name, this.qty, {this.isMain = false, this.aliasKey});
 }
 
 class Step {

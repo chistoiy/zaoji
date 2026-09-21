@@ -98,6 +98,8 @@ class RecipeStore extends ChangeNotifier {
     });
     recipes = await _loadAll(db);
     await _loadFavs(db);
+    await _loadMenus(db);
+    await _loadPrepBoards(db);
     _reindex();
     notifyListeners();
   }
@@ -371,6 +373,9 @@ class RecipeStore extends ChangeNotifier {
     final db = _db!;
     final out = await _loadAll(db);
     recipes = out;
+    // R23：同步引擎拉回的可能就是别人排的菜单——menus/备菜板跟着一起重载。
+    await _loadMenus(db);
+    await _loadPrepBoards(db);
     _reindex();
     notifyListeners();
     return out;
@@ -943,6 +948,315 @@ class RecipeStore extends ChangeNotifier {
     ];
   }
 
+  // ═══════════════════ R23 · 菜单 + 一键备菜 ═══════════════════
+  //
+  // menu / menu_item 是业务表：五列 + HLC + 「先提交后广播」，和菜谱同款，
+  // 同步引擎零新增代码把它们带上天。备菜清单**不落库**——它是几道菜的
+  // 食材合并出来的纯派生视图（shared 的 mergeIngredients），落库只会造出
+  // 第二份真相。唯一落的是「备菜板」：勾选/排除/手动项，进 local_pref
+  // （本机偏好，永不外发）——谁买菜谁勾，不该顶掉别人屏幕上的勾。
+
+  /// 菜单内存态，按（日期, 开饭时间）序。随 [reload] 一起刷新。
+  List<MenuPlan> menus = const [];
+
+  /// menuId → 备菜板。启动时整批载入（家庭量级最多几十行）。
+  final Map<String, PrepBoard> _prepBoards = {};
+
+  static const _prepKeyPrefix = 'prep_board_';
+
+  Future<void> _loadMenus(ZaojiDb db) async {
+    final rows = await db.customSelect(
+      'SELECT * FROM menu WHERE deleted_at IS NULL '
+      'ORDER BY day, COALESCE(serve_at, \'24:00\'), id',
+    ).get();
+    final itemRows = await db.customSelect(
+      'SELECT menu_id, recipe_id FROM menu_item WHERE deleted_at IS NULL '
+      'ORDER BY sort, id',
+    ).get();
+    final dishesByMenu = <String, List<String>>{};
+    for (final r in itemRows) {
+      dishesByMenu
+          .putIfAbsent('${r.data['menu_id']}', () => [])
+          .add('${r.data['recipe_id']}');
+    }
+    menus = [
+      for (final row in rows)
+        MenuPlan(
+          id: '${row.data['id']}',
+          day: '${row.data['day']}',
+          meal: '${row.data['meal']}',
+          serveAt: '${row.data['serve_at'] ?? ''}',
+          note: '${row.data['note'] ?? ''}',
+          recipeIds: dishesByMenu['${row.data['id']}'] ?? const [],
+        ),
+    ];
+  }
+
+  Future<void> _loadPrepBoards(ZaojiDb db) async {
+    _prepBoards.clear();
+    final rows = await db.customSelect(
+      'SELECT pref_key, pref_value FROM local_pref '
+      'WHERE pref_key LIKE ?',
+      variables: [Variable('$_prepKeyPrefix%')],
+    ).get();
+    for (final r in rows) {
+      final id = '${r.data['pref_key']}'.substring(_prepKeyPrefix.length);
+      _prepBoards[id] = PrepBoard.parse('${r.data['pref_value']}');
+    }
+  }
+
+  MenuPlan? menuById(String id) {
+    for (final m in menus) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
+
+  Future<MenuPlan> createMenu({
+    required String day,
+    required String meal,
+    String serveAt = '',
+    String note = '',
+  }) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() =>
+        (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
+
+    final id = _ulids.next();
+    await _insert(db, kMenuTable, {
+      'id': id,
+      'updated_at': next(),
+      'updated_by': nodeId,
+      'rev': 1,
+      'deleted_at': null,
+      'day': day,
+      'meal': meal,
+      'serve_at': serveAt.trim().isEmpty ? null : serveAt.trim(),
+      'note': note,
+    });
+    await _loadMenus(db);
+    notifyListeners();
+    _fireLocalWrite();
+    return menuById(id)!;
+  }
+
+  Future<void> updateMenu(
+    String id, {
+    String? day,
+    String? meal,
+    String? serveAt,
+    String? note,
+  }) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final hlc = Hlc.now(nodeId).tick(nodeId).encode();
+
+    final sets = <String>[];
+    final vals = <Object?>[];
+    if (day != null) {
+      sets.add('day = ?');
+      vals.add(day);
+    }
+    if (meal != null) {
+      sets.add('meal = ?');
+      vals.add(meal);
+    }
+    if (serveAt != null) {
+      sets.add('serve_at = ?');
+      vals.add(serveAt.trim().isEmpty ? null : serveAt.trim());
+    }
+    if (note != null) {
+      sets.add('note = ?');
+      vals.add(note);
+    }
+    if (sets.isEmpty) return;
+    sets.add('updated_at = ?');
+    vals.add(hlc);
+    sets.add('updated_by = ?');
+    vals.add(nodeId);
+    sets.add('rev = rev + 1');
+    vals.add(id);
+    await db.customStatement(
+      'UPDATE menu SET ${sets.join(', ')} '
+      'WHERE id = ? AND deleted_at IS NULL',
+      vals,
+    );
+    await _loadMenus(db);
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 加入菜品。**幂等**：同一道菜重复加入只留一条——「加入菜单」按钮
+  /// 连点两下是常态，不该长出两个菜单行。
+  Future<void> addDish(String menuId, String recipeId) async {
+    final db = _db!;
+    final existing = await db.customSelect(
+      'SELECT id FROM menu_item WHERE menu_id = ? AND recipe_id = ? '
+      'AND deleted_at IS NULL',
+      variables: [Variable(menuId), Variable(recipeId)],
+    ).get();
+    if (existing.isNotEmpty) return;
+
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() =>
+        (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
+
+    final sortRow = await db.customSelect(
+      'SELECT COALESCE(MAX(sort) + 1, 0) AS s FROM menu_item '
+      'WHERE menu_id = ? AND deleted_at IS NULL',
+      variables: [Variable(menuId)],
+    ).getSingle();
+
+    await _insert(db, kMenuItemTable, {
+      'id': '$menuId-m${_ulids.next()}',
+      'updated_at': next(),
+      'updated_by': nodeId,
+      'rev': 1,
+      'deleted_at': null,
+      'menu_id': menuId,
+      'recipe_id': recipeId,
+      'sort': sortRow.data['s'] as int,
+    });
+    await _loadMenus(db);
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  Future<void> removeDish(String menuId, String recipeId) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final hlc = Hlc.now(nodeId).tick(nodeId).encode();
+    await db.customUpdate(
+      'UPDATE menu_item SET deleted_at = ?, updated_at = ?, updated_by = ?, '
+      'rev = rev + 1 WHERE menu_id = ? AND recipe_id = ? AND deleted_at IS NULL',
+      variables: [
+        Variable(hlc),
+        Variable(hlc),
+        Variable(nodeId),
+        Variable(menuId),
+        Variable(recipeId),
+      ],
+    );
+    await _loadMenus(db);
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 软删菜单，**连坐**它的菜品行——只埋头不留身子，别的设备会拉到
+  /// 一个"还在但点不开"的菜单。
+  Future<void> deleteMenu(String id) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() =>
+        (hlc = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch)).encode();
+
+    await db.transaction(() async {
+      final h = next();
+      await db.customUpdate(
+        'UPDATE menu SET deleted_at = ?, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE id = ? AND deleted_at IS NULL',
+        variables: [Variable(h), Variable(h), Variable(nodeId), Variable(id)],
+      );
+      final h2 = next();
+      await db.customUpdate(
+        'UPDATE menu_item SET deleted_at = ?, updated_at = ?, updated_by = ?, rev = rev + 1 '
+        'WHERE menu_id = ? AND deleted_at IS NULL',
+        variables: [Variable(h2), Variable(h2), Variable(nodeId), Variable(id)],
+      );
+    });
+
+    await _loadMenus(db);
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// ★ 一键备菜的合并视图（R23）。
+  ///
+  /// 词表 = **全库食材名**（含种子），别名 = 内置同义词表（`kDefaultAliases`）。
+  /// 合并是纯派生计算，不落库——落库只会造出第二份真相。
+  List<MergedLine> mergeForPrep(List<String> recipeIds) {
+    final batches = <List<IngredientRef>>[];
+    final names = <String>[];
+    for (final id in recipeIds) {
+      final r = _byId[id];
+      if (r == null) continue; // 菜被删了就静默跳过——清单不该为一行坏数据炸掉
+      batches.add([
+        for (final i in r.ingredients)
+          IngredientRef(name: i.name, qty: i.qty, isMain: i.isMain),
+      ]);
+      names.add(r.name);
+    }
+    final known = {
+      for (final r in recipes)
+        for (final i in r.ingredients) i.name,
+    };
+    final resolver =
+        PantryAliasResolver(known, explicit: kDefaultAliases);
+    return mergeIngredients(batches,
+        sourceNames: names, resolver: resolver.resolve);
+  }
+
+  /// 某菜单的备菜板（内存态，恒有——没勾过就是空板）。
+  PrepBoard prepBoardOf(String menuId) =>
+      _prepBoards.putIfAbsent(menuId, PrepBoard.new);
+
+  Future<void> _persistPrepBoard(String menuId) async {
+    final db = _db;
+    if (db == null) return;
+    final cols = kLocalPrefTable.columnNames;
+    await db.customInsert(
+      'INSERT INTO ${kLocalPrefTable.name} (${cols.join(', ')}) '
+      'VALUES (?, ?) ON CONFLICT(${cols[0]}) DO UPDATE SET ${cols[1]} = excluded.${cols[1]}',
+      variables: [
+        Variable('$_prepKeyPrefix$menuId'),
+        Variable(jsonEncode(prepBoardOf(menuId).toJson())),
+      ],
+    );
+  }
+
+  Future<void> setPrepDone(String menuId, String key, bool on) async {
+    final b = prepBoardOf(menuId);
+    if (on) {
+      b.done.add(key);
+    } else {
+      b.done.remove(key);
+    }
+    await _persistPrepBoard(menuId);
+    notifyListeners();
+  }
+
+  Future<void> setPrepExcluded(String menuId, String key, bool on) async {
+    final b = prepBoardOf(menuId);
+    if (on) {
+      b.excluded.add(key);
+    } else {
+      b.excluded.remove(key);
+    }
+    await _persistPrepBoard(menuId);
+    notifyListeners();
+  }
+
+  Future<void> addPrepExtra(String menuId, String name, String qty) async {
+    final t = name.trim();
+    if (t.isEmpty) return;
+    prepBoardOf(menuId).extra[t] = qty.trim();
+    await _persistPrepBoard(menuId);
+    notifyListeners();
+  }
+
+  Future<void> removePrepExtra(String menuId, String name) async {
+    prepBoardOf(menuId).extra.remove(name);
+    await _persistPrepBoard(menuId);
+    notifyListeners();
+  }
+
   // ── 内部助手 ──
 
   Future<String> _resolveNodeId() async {
@@ -1080,3 +1394,83 @@ final TableSpec kStepTable = kTables.firstWhere((t) => t.name == 'step');
 final TableSpec kLocalPrefTable = kTables.firstWhere(
   (t) => t.name == 'local_pref',
 );
+final TableSpec kMenuTable = kTables.firstWhere((t) => t.name == 'menu');
+final TableSpec kMenuItemTable =
+    kTables.firstWhere((t) => t.name == 'menu_item');
+
+/// R23 · 内置同义词表（备菜归一用）。
+///
+/// 值必须是**库里可能出现的写法**；同义词是产品知识不是算法，
+/// 宁少勿错——合并错一道菜的用量，用户会买错东西（见 shared 加工形态黑名单）。
+const Map<String, String> kDefaultAliases = {
+  '西红柿': '番茄',
+  '马铃薯': '土豆',
+  '洋芋': '土豆',
+  '包菜': '卷心菜',
+  '圆白菜': '卷心菜',
+};
+
+/// 一顿饭的安排（menu 行的内存态）。
+class MenuPlan {
+  final String id;
+
+  /// YYYY-MM-DD。列名刻意不叫 date（schema 注：省得跟类型名混淆）。
+  final String day;
+  final String meal;
+
+  /// HH:MM，''= 没定开饭时间。
+  final String serveAt;
+  final String note;
+
+  /// 这一餐的菜（按 sort 序，只含未删的）。
+  final List<String> recipeIds;
+
+  const MenuPlan({
+    required this.id,
+    required this.day,
+    required this.meal,
+    this.serveAt = '',
+    this.note = '',
+    this.recipeIds = const [],
+  });
+}
+
+/// 某菜单的备菜板：勾选/排除/手动项。
+///
+/// **本机偏好，不同步**（local_pref 一行 JSON）——和 R20 做菜进度同一立场：
+/// 谁买菜谁勾，另一台设备不该被这些勾顶掉屏幕。
+class PrepBoard {
+  final Set<String> done = {};
+  final Set<String> excluded = {};
+
+  /// 手动项：名称 → 分量文本。
+  final Map<String, String> extra = {};
+
+  PrepBoard();
+
+  Map<String, Object?> toJson() => {
+        'done': done.toList(),
+        'excluded': excluded.toList(),
+        'extra': extra,
+      };
+
+  /// 坏 JSON 按空板处理——偏好存坏了不能挡启动（与收藏同一立场）。
+  static PrepBoard parse(String raw) {
+    final b = PrepBoard();
+    try {
+      final j = jsonDecode(raw);
+      if (j is! Map) return b;
+      final d = j['done'];
+      if (d is List) b.done.addAll(d.map((e) => '$e'));
+      final x = j['excluded'];
+      if (x is List) b.excluded.addAll(x.map((e) => '$e'));
+      final e = j['extra'];
+      if (e is Map) {
+        for (final entry in e.entries) {
+          b.extra['${entry.key}'] = '${entry.value}';
+        }
+      }
+    } catch (_) {}
+    return b;
+  }
+}

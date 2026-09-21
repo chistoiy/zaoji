@@ -8,6 +8,7 @@ import '../widgets/chili_scale.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/time_capsule_text.dart';
 import 'cooking_page.dart';
+import 'menus_page.dart';
 import 'recipe_edit_page.dart';
 import 'timer_sheet.dart';
 
@@ -59,6 +60,63 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     await _loadSession();
   }
 
+  /// 加入菜单（R23）：选一餐把这道菜加进去。addDish 幂等，连点不长两个行。
+  Future<void> _pickMenu(BuildContext context, Recipe recipe) async {
+    final store = StoreScope.of(context);
+    final menus = store.menus;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: ZaojiColors.paper,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('加到哪一餐',
+                  style:
+                      TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
+                children: [
+                  for (final m in menus)
+                    ListTile(
+                      key: ValueKey('addmenu-${m.id}'),
+                      dense: true,
+                      title: Text('${dayLabel(m.day)} · ${m.meal}',
+                          style: const TextStyle(fontSize: 14)),
+                      subtitle: Text(
+                          '${m.serveAt.isEmpty ? '' : '${m.serveAt} 开饭 · '}${m.recipeIds.length} 道菜',
+                          style: const TextStyle(
+                              fontSize: 11.5, color: ZaojiColors.muted)),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        store.addDish(m.id, recipe.id);
+                      },
+                    ),
+                  if (menus.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text('还没有排过餐次——去「菜单」页先排一顿',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontSize: 12.5, color: ZaojiColors.muted)),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // store 通知驱动重画：做菜计数、编辑、别的设备同步下来都会走到这里
@@ -75,6 +133,12 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 tooltip: '开始做菜',
                 onPressed: () => _cook(recipe),
                 icon: const Icon(Icons.local_fire_department_outlined),
+              ),
+              IconButton(
+                key: const ValueKey('add-to-menu'),
+                tooltip: '加入菜单',
+                onPressed: () => _pickMenu(context, recipe),
+                icon: const Icon(Icons.event_outlined),
               ),
               IconButton(
                 tooltip: '删除',

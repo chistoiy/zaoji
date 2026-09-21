@@ -2671,6 +2671,8 @@ const S = {
   favOverride:{},      // 收藏覆盖
   prepSelection:[],    // 一键备菜选中的菜品
   prepSource:'menu',
+  mealForm:null,       // 新建/编辑餐次的表单草稿 {day, meal, custom, editId}
+  ingOpen:{},          // 合并食材的「来源」展开态
   calSel:'2026-09-17',
   calMonth:{ y:2026, m:8 },
   editorTags:{},
@@ -3585,7 +3587,7 @@ SCREENS.menus = function () {
   return '<div class="screen">' +
     appbar('菜单', '按餐次安排，到点自动进待办', false,
       '<button type="button" class="iconbtn" data-act="nav" data-screen="timeline" aria-label="时间线">' + ic('list', 20) + '</button>' +
-      '<button type="button" class="iconbtn is-solid" data-act="toast" data-msg="新建餐次（原型示意）" aria-label="新建菜单">' + ic('plus', 20) + '</button>') +
+      '<button type="button" class="iconbtn is-solid" data-act="sheet-meal-new" aria-label="新建菜单">' + ic('plus', 20) + '</button>') +
 
     '<div class="px" style="margin-top:6px"><div class="synccard" style="display:flex;align-items:center;gap:14px;padding:15px">' +
       '<span class="row-ico accent" style="width:42px;height:42px">' + ic('bell', 21) + '</span>' +
@@ -3598,7 +3600,7 @@ SCREENS.menus = function () {
 
     '<div class="sec-head"><span class="sec-num">今天</span><span class="sec-title">今日餐次</span></div>' +
     '<div class="px menu-stack">' + today.map(menuCard).join('') +
-      '<button type="button" class="btn btn-ghost btn-block" data-act="toast" data-msg="新建餐次（原型示意）" style="grid-column:1/-1">' + ic('plus', 16) + '再排一顿</button>' +
+      '<button type="button" class="btn btn-ghost btn-block" data-act="sheet-meal-new" style="grid-column:1/-1">' + ic('plus', 16) + '再排一顿</button>' +
     '</div>' +
 
     '<div class="sec-head"><span class="sec-num">' + pad(upcoming.length) + '</span><span class="sec-title">接下来几天</span></div>' +
@@ -3644,7 +3646,7 @@ SCREENS['menu-detail'] = function (p) {
     appbar(m.weekday + ' · ' + m.meal, m.time + ' 开饭 · 共 ' + m.dishes.length + ' 道', { act:'back' },
       '<button type="button" class="iconbtn" data-act="share-open" data-kind="menu" data-id="' + m.id + '" aria-label="分享菜单">' + ic('upload', 19) + '</button>' +
       '<button type="button" class="iconbtn" data-act="nav" data-screen="schedule" aria-label="排时间轴">' + ic('chart', 19) + '</button>' +
-      '<button type="button" class="iconbtn" data-act="toast" data-msg="编辑菜单（原型示意）">' + ic('edit', 19) + '</button>') +
+      '<button type="button" class="iconbtn" data-act="sheet-meal-edit" data-id="' + m.id + '" aria-label="编辑菜单">' + ic('edit', 19) + '</button>') +
 
     menuBanner +
 
@@ -3666,12 +3668,15 @@ SCREENS['menu-detail'] = function (p) {
         const warn = hard.length
           ? '<span class="row-sub" style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">' +
             hard.map(allergenTag).join('') + '</span>' : '';
-        return '<button type="button" class="row row-btn" data-act="nav" data-screen="recipe-detail" data-id="' + r.id + '">' +
+        return '<div class="row" style="display:flex;align-items:stretch;gap:8px;padding:0">' +
+          '<button type="button" class="row row-btn" style="flex:1;padding:0" data-act="nav" data-screen="recipe-detail" data-id="' + r.id + '">' +
           '<span class="step-img" style="width:44px;height:44px;border-radius:10px">' + dishArt(r.art, r.pal, true) + '</span>' +
           '<span class="row-main"><span class="row-title">' + esc(r.name) + '</span>' +
             '<span class="row-sub">' + chili(r.diff) + ' ' + diffLabel(r.diff) + ' · ' + r.selfTime + ' 分钟 · 做过 ' + r.cooked + ' 次</span>' +
             warn + '</span>' +
-          ic('chevR', 16, 'row-chevr') + '</button>';
+          ic('chevR', 16, 'row-chevr') + '</button>' +
+          '<button type="button" class="iconbtn" style="align-self:center" data-act="menu-dish-remove" data-menu="' + m.id + '" data-id="' + r.id + '" aria-label="从这一餐移除">' + ic('close', 16) + '</button>' +
+          '</div>';
       }).join('') +
       '<button type="button" class="row row-btn" data-act="sheet-menupick" data-id="' + m.id + '">' + rowIcon('plus', true) +
         '<span class="row-main"><span class="row-title" style="color:var(--accent)">添加菜品到这一餐</span></span></button>' +
@@ -3681,10 +3686,13 @@ SCREENS['menu-detail'] = function (p) {
         '<span class="sec-title">合并后的食材</span><span class="sec-more">已去重 · 分量累加</span></div>' +
       '<div class="card pad">' + list.map(function (it) {
         const hard = allergenHits(it.n).filter(function (h) { return h.kind === 'allergy'; });
+        const key = m.id + '|' + it.n;
+        const open = !!S.ingOpen[key];
         return '<div class="ing' + (hard.length ? ' is-allergen' : '') + '">' +
           '<span class="ing-name">' + esc(it.n) + (hard.length ? '<br>' + hard.map(allergenTag).join('') : '') + '</span>' +
           '<span class="ing-qty">' + esc(it.q) +
-          (it.merged ? '<span class="merged">' + it.from.length + ' 道菜合并</span>' : '') + '</span></div>';
+          (it.merged ? '<button type="button" class="merged" data-act="ing-sources" data-key="' + esc(key) + '" aria-pressed="' + open + '" style="border:0;background:none;cursor:inherit;font:inherit;padding:0">' + it.from.length + ' 道菜合并' + '</button>' : '') + '</span>' +
+          (open && it.merged ? '<span class="row-sub" style="flex-basis:100%;margin-top:4px">来自：' + it.from.map(esc).join('、') + '</span>' : '') + '</div>';
       }).join('') + '</div>' +
     '</div>' +
 
@@ -3724,12 +3732,13 @@ SCREENS.prep = function () {
         (hard.length ? '<div class="todo-sub" style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap">' + hard.map(allergenTag).join('') + '</div>' : '') +
       '</div>' +
       '<span class="badge ' + (t.kind === '菜品制作' ? 'badge-warn' : 'badge-idle') + '">' + esc(t.kind) + '</span>' +
+      '<button type="button" class="iconbtn" style="width:28px;height:28px" data-act="prep-item-remove" data-id="' + t.id + '" aria-label="删除这行">' + ic('close', 14) + '</button>' +
     '</div>';
   }
 
   return '<div class="screen">' +
     appbar('厨房', '备菜、库存、推荐都在这里', false,
-      '<button type="button" class="iconbtn" data-act="toast" data-msg="已手动添加待办（原型示意）" aria-label="添加">' + ic('plus', 20) + '</button>') +
+      '<button type="button" class="iconbtn" data-act="sheet-prep-add" aria-label="添加">' + ic('plus', 20) + '</button>') +
     kitchenSeg('prep') +
 
     '<div class="px"><div class="synccard">' +
@@ -3939,8 +3948,56 @@ function sheetMenuPick(id) {
       '<span style="flex:1"><span class="row-title">' + esc(m.weekday) + ' · ' + esc(m.meal) + '</span>' +
         '<span class="row-sub">' + esc(m.time) + ' · 已有 ' + m.dishes.length + ' 道菜</span></span>' + ic('chevR', 16, 'row-chevr') + '</button>';
   }).join('') +
-    '<button type="button" class="btn btn-ghost btn-block btn-sm" data-act="toast" data-msg="新建餐次（原型示意）">' + ic('plus', 15) + '新建餐次</button>';
+    '<button type="button" class="btn btn-ghost btn-block btn-sm" data-act="sheet-meal-new">' + ic('plus', 15) + '新建餐次</button>';
   return sheet('加入菜单', body, null);
+}
+
+/* ═══════════ 弹层：新建 / 编辑餐次（R23 真交互，替换原「原型示意」占位） ═══════════ */
+const MEAL_DAY_OFFSET = { '今天':0, '明天':1, '后天':2 };
+const WEEKDAY_CN = ['周日','周一','周二','周三','周四','周五','周六'];
+function mealDayDate(day) {
+  const d = new Date('2026-09-17T00:00:00');
+  d.setDate(d.getDate() + (MEAL_DAY_OFFSET[day] || 0));
+  return d;
+}
+function sheetMealNew() {
+  const f = S.mealForm;
+  const editing = f.editId ? MENUS.filter(function (m) { return m.id === f.editId; })[0] : null;
+  function chip(group, label, on) {
+    return '<button type="button" class="chip' + (on ? ' is-on' : '') + '" data-act="meal-form-set" data-k="' + group + '" data-v="' + esc(label) + '" aria-pressed="' + !!on + '">' + esc(label) + '</button>';
+  }
+  const body =
+    '<div class="field"><div class="field-label">哪一天</div><div class="chips">' +
+      Object.keys(MEAL_DAY_OFFSET).map(function (d) { return chip('day', d, f.day === d); }).join('') +
+    '</div></div>' +
+    '<div class="field"><div class="field-label">餐次</div><div class="chips">' +
+      ['早餐','午餐','晚餐'].map(function (m) { return chip('meal', m, !f.custom && f.meal === m); }).join('') +
+      chip('meal', '自定义', f.custom) +
+    '</div>' +
+      (f.custom ? '<input class="input" style="margin-top:8px" data-mfield="custom" placeholder="如：下午茶 / 夜宵 / 朋友来做客" value="' + esc(f.customText || '') + '" aria-label="自定义餐次名">' : '') +
+    '</div>' +
+    '<div class="field"><div class="field-label">开饭时间</div>' +
+      '<input class="input" type="time" data-mfield="time" value="' + esc(f.time || '18:30') + '" aria-label="开饭时间" style="max-width:140px">' +
+    '</div>' +
+    '<div class="field"><div class="field-label">备注<span class="field-hint">可留空</span></div>' +
+      '<input class="input" data-mfield="note" placeholder="如：虾今天到期，安排掉" value="' + esc(f.note || '') + '" aria-label="备注">' +
+    '</div>';
+  return sheet(editing ? '编辑餐次' : '新建餐次', body,
+    '<button type="button" class="btn btn-primary btn-block" data-act="meal-new-save">' + ic('calendar', 16) + (editing ? '保存修改' : '就这么安排') + '</button>');
+}
+
+/* ═══════════ 弹层：备菜待办手动加一项（R23 真交互） ═══════════ */
+function sheetPrepAdd() {
+  const groups = Array.from(new Set(PREP.map(function (t) { return t.group; })));
+  const body =
+    '<div class="field"><div class="field-label">要办的事</div>' +
+      '<input class="input" data-pfield="title" placeholder="如：买两块嫩豆腐" aria-label="事项"></div>' +
+    '<div class="field"><div class="field-label">挂在哪一组<span class="field-hint">对应哪一餐</span></div>' +
+      '<select class="select" data-pfield="group">' +
+        groups.map(function (g) { return '<option>' + esc(g) + '</option>'; }).join('') +
+        '<option>自己记一笔</option></select></div>';
+  return sheet('添加待办', body,
+    '<button type="button" class="btn btn-primary btn-block" data-act="prep-add-run">' + ic('check', 16) + '加上</button>');
 }
 
 
@@ -6415,6 +6472,80 @@ document.addEventListener('click', function (e) {
     tabTo('prep');
     toast('已生成 ' + n + ' 项备菜待办');
     return;
+  }
+
+  /* —— 菜单：新建 / 编辑餐次、移除菜品、食材来源（R23） —— */
+  if (act === 'sheet-meal-new') {
+    S.mealForm = { day:'今天', meal:'晚餐', custom:false, customText:'', time:'18:30', note:'' };
+    S.sheet = sheetMealNew(); renderOverlays(); return;
+  }
+  if (act === 'sheet-meal-edit') {
+    const m = MENUS.filter(function (x) { return x.id === el.dataset.id; })[0]; if (!m) return;
+    S.mealForm = {
+      day:(m.weekday.indexOf('今天') === 0 ? '今天' : m.weekday.indexOf('明天') === 0 ? '明天' : m.weekday.indexOf('后天') === 0 ? '后天' : '今天'),
+      meal:m.meal, custom:!!m.custom, customText:m.custom ? m.meal : '',
+      time:m.time, note:m.note || '', editId:m.id
+    };
+    S.sheet = sheetMealNew(); renderOverlays(); return;
+  }
+  if (act === 'meal-form-set') {
+    const k = el.dataset.k, v = el.dataset.v;
+    if (k === 'meal') {
+      const std = ['早餐','午餐','晚餐'].indexOf(v) >= 0;
+      S.mealForm.custom = !std;
+      if (std) S.mealForm.meal = v;
+    } else { S.mealForm[k] = v; }
+    S.sheet = sheetMealNew(); renderOverlays(); return;
+  }
+  if (act === 'meal-new-save') {
+    const host = document.getElementById('host') || document;
+    function val(attr) { const i = host.querySelector('[data-mfield="' + attr + '"]'); return i ? i.value.trim() : ''; }
+    const f = S.mealForm || {};
+    const customText = val('custom');
+    const mealName = f.custom ? (customText || '自定义餐') : f.meal;
+    const time = val('time') || '18:30';
+    const note = val('note');
+    if (f.custom && !customText) { toast('自定义餐次总得有个名字'); return; }
+    const d = mealDayDate(f.day);
+    const wd = WEEKDAY_CN[d.getDay()];
+    const iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    const dayLabel = f.day === '今天' ? '今天 · ' + wd : f.day + ' · ' + wd;
+    if (f.editId) {
+      const m = MENUS.filter(function (x) { return x.id === f.editId; })[0];
+      if (m) { m.meal = mealName; m.custom = !!f.custom; m.time = time; m.note = note; m.date = iso; m.weekday = dayLabel; m.isToday = f.day === '今天'; }
+      S.sheet = null; S.mealForm = null; renderScreen(false); renderOverlays();
+      toast('餐次已更新'); return;
+    }
+    MENUS.push({ id:'m' + (MENUS.length + 1) + '-' + Date.now() % 1000, date:iso, weekday:dayLabel,
+      meal:mealName, time:time, dishes:[], note:note, prepped:false, isToday:f.day === '今天', custom:!!f.custom });
+    S.sheet = null; S.mealForm = null;
+    tabTo('menus');
+    toast('已排下「' + dayLabel + ' · ' + mealName + '」，去加菜吧'); return;
+  }
+  if (act === 'menu-dish-remove') {
+    const m = MENUS.filter(function (x) { return x.id === el.dataset.menu; })[0]; if (!m) return;
+    m.dishes = m.dishes.filter(function (x) { return x !== el.dataset.id; });
+    renderScreen(false);
+    toast('已从这一餐移除 ' + (R_MAP[el.dataset.id] ? R_MAP[el.dataset.id].name : '菜品')); return;
+  }
+  if (act === 'ing-sources') { S.ingOpen[el.dataset.key] = !S.ingOpen[el.dataset.key]; renderScreen(false); return; }
+
+  /* —— 备菜待办：手动加 / 删（R23） —— */
+  if (act === 'sheet-prep-add') { S.sheet = sheetPrepAdd(); renderOverlays(); return; }
+  if (act === 'prep-add-run') {
+    const host = document.getElementById('host') || document;
+    const ti = host.querySelector('[data-pfield="title"]'), gi = host.querySelector('[data-pfield="group"]');
+    const title = ti ? ti.value.trim() : '', group = gi ? gi.value : '今天 · 晚餐 18:30';
+    if (!title) { toast('总得先写要办什么'); return; }
+    PREP.push({ id:'pm' + Date.now() % 100000, group:group, title:title, sub:'自己加的一项', done:false, kind:'食材准备' });
+    S.sheet = null; renderScreen(false); renderOverlays();
+    toast('已加上：' + title); return;
+  }
+  if (act === 'prep-item-remove') {
+    for (let i = 0; i < PREP.length; i++) {
+      if (PREP[i].id === el.dataset.id) { PREP.splice(i, 1); break; }
+    }
+    renderScreen(false); toast('已删除这行待办'); return;
   }
 
   /* —— 日历 —— */

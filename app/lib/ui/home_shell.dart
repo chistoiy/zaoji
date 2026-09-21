@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 import 'me_page.dart';
+import 'menus_page.dart';
 import 'recipe_list_page.dart';
 
 /// 主页外壳：底部 5 标签 + 页面栈。
@@ -10,13 +11,17 @@ import 'recipe_list_page.dart';
 /// 菜谱 / 菜单 / 备菜 / 日历 / 我的。
 ///
 /// **R13：「我的」升级为同步设置页**（配对 / 立即同步 / 设备身份），
-/// 其余三页仍是占位空态——这比两种做法都好：
+/// **R23：「菜单」做实**（餐次卡 / 详情 / 一键备菜）；
+/// 其余两页仍是占位空态——这比两种做法都好：
 /// 导航结构先立起来（否则主页就缺一块，和高保真对不上），
 /// 又不至于用半成品假数据冒充已实现。
 /// 用 `IndexedStack` 而不是切换路由，是为了**保住列表页的筛选/收藏/滚动位置**——
 /// 挑完菜回到菜谱页，状态还在。
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  const HomeShell({super.key, this.initialTab = 0});
+
+  /// 深链入口用（`#/menus` → 1）。
+  final int initialTab;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -34,7 +39,7 @@ const List<_TabData> _kTabs = [
 ];
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = 0;
+  late int _index = widget.initialTab;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +49,7 @@ class _HomeShellState extends State<HomeShell> {
         index: _index,
         children: [
           const RecipeListPage(),
-          _ComingSoon(icon: Icons.receipt_long, title: '菜单'),
+          const MenusPage(),
           _ComingSoon(icon: Icons.shopping_basket, title: '备菜'),
           _ComingSoon(icon: Icons.calendar_month, title: '日历'),
           const MePage(),
