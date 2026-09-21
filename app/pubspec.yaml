@@ -3,7 +3,7 @@ description: "灶记 ZAOJI —— 家庭菜谱手账。Android 用 App，iPhone 
 publish_to: 'none'
 
 # 版本号。Android 的 versionName/versionCode 由它决定。
-version: 0.11.0+4
+version: 0.12.0+5
 
 environment:
   sdk: ^3.10.8

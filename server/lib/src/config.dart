@@ -68,8 +68,10 @@ class ServerConfig {
   ///   `/api/join`、`/api/admin/settings`（仅本机）。
   /// 0.11.0：服务端代码零改动——与 app 0.11.0（菜单 + 一键备菜）对齐发布线，
   /// menu/menu_item 自 R5 就在同步白名单，本轮只是托管产物更新。
+  /// 0.12.0：服务端代码零改动——与 app 0.12.0（日历页）对齐发布线，
+  /// 日历是纯客户端派生读（cook_session/menu 早已在白名单），本轮只换托管的 Web 产物。
   /// 0.10.0：冲突裁决 `POST /api/conflicts/resolve`（服务端盖 HLC，含过期回声守卫）。
-  static const String version = '0.11.0';
+  static const String version = '0.12.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
