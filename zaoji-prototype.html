@@ -3834,8 +3834,7 @@ SCREENS.calendar = function () {
   const today = '2026-09-17';
   const LEG = [
     { k:'cook', n:'做过菜品', c:'var(--accent)' },
-    { k:'menu', n:'菜单安排', c:'var(--t-method)' },
-    { k:'recipe', n:'新增菜品', c:'var(--t-ingredient)' }
+    { k:'menu', n:'菜单安排', c:'var(--t-method)' }
   ];
   let cells = '';
   for (let i = 0; i < 42; i++) {
@@ -3845,7 +3844,7 @@ SCREENS.calendar = function () {
     else dd = i - startWd + 1;
     const dt = new Date(yy, mm, dd);
     const ds = dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate());
-    const marks = CAL_MARKS[ds] || [];
+    const marks = (CAL_MARKS[ds] || []).filter(function (k) { return k === 'cook' || k === 'menu'; });
     const isToday = ds === today;
     const sel = ds === S.calSel;
     cells += '<button type="button" class="cal-cell' + (out ? ' is-out' : '') + (isToday ? ' is-today' : '') + '" ' +
@@ -3856,12 +3855,11 @@ SCREENS.calendar = function () {
         return '<i style="background:' + (c ? c.c : 'var(--muted)') + '"></i>';
       }).join('') + '</span></button>';
   }
-  const selEvents = EVENTS.filter(function (e) { return e.date === S.calSel; });
+  const selEvents = EVENTS.filter(function (e) { return e.date === S.calSel && e.kind === 'cook'; });
   const selMenus = MENUS.filter(function (x) { return x.date === S.calSel; });
 
   return '<div class="screen">' +
-    appbar('日历', '做过什么、排了什么，一眼看全', false,
-      '<button type="button" class="iconbtn" data-act="nav" data-screen="timeline" aria-label="时间线">' + ic('list', 20) + '</button>') +
+    appbar('日历', '做过什么、排了什么，一眼看全', false) +
 
     '<div class="split c-b"><div>' +
     '<div class="cal-head">' +
@@ -3903,8 +3901,7 @@ SCREENS.calendar = function () {
               '<div class="tl-title">' + e.title + '</div><div class="tl-desc">' + e.desc + '</div></div>';
           }).join('') + '</div>'
         : '<div class="empty"><div class="empty-ico">' + ic('calendar', 28) + '</div>' +
-          '<div class="empty-t">这一天还没有记录</div><p class="empty-d">做了菜或排了菜单，都会自动落到这里。</p>' +
-          '<button type="button" class="btn btn-ghost btn-sm" data-act="toast" data-msg="已新建记录（原型示意）">' + ic('plus', 15) + '手动记一笔</button></div>') +
+          '<div class="empty-t">这一天还没有记录</div><p class="empty-d">做了菜或排了菜单，都会自动落到这里。</p></div>') +
     '</div>' +
     '</div></div>' +
   '</div>';

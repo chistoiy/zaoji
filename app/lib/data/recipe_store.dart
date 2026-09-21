@@ -1257,6 +1257,64 @@ class RecipeStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ═══════════════════ R24 · 日历（做过什么 / 排了什么） ═══════════════════
+  //
+  // cook_session 的 started_at / finished_at 是 ISO8601 **业务时间戳**
+  // （R20 定样——HLC 只当同步元数据用），所以日历折算日期直接截串，
+  // 不需要也不应该去解 HLC。跨设备的记录都算：日历是全家的账本。
+
+  /// 某一月的点标记：哪几天做过菜 / 排了菜单，以及本月开火总场次。
+  Future<MonthMarks> monthMarks(int year, int month) async {
+    final db = _db;
+    if (db == null) return const MonthMarks.empty();
+    final prefix = '${year.toString().padLeft(4, '0')}-'
+        '${month.toString().padLeft(2, '0')}';
+    final cookRows = await db.customSelect(
+      "SELECT finished_at FROM cook_session WHERE finished_at LIKE ? "
+      "AND deleted_at IS NULL",
+      variables: [Variable<String>('$prefix%')],
+    ).get();
+    final menuRows = await db.customSelect(
+      'SELECT day FROM menu WHERE day LIKE ? AND deleted_at IS NULL',
+      variables: [Variable<String>('$prefix%')],
+    ).get();
+    return MonthMarks(
+      cookDays: {for (final r in cookRows) '${r.data['finished_at']}'.substring(0, 10)},
+      menuDays: {for (final r in menuRows) '${r.data['day']}'},
+      cookCount: cookRows.length,
+    );
+  }
+
+  /// 某一天的做菜记录（按完成时刻升序还原那天的顺序）。
+  Future<List<CookEvent>> cookEventsOn(String day) async {
+    final db = _db;
+    if (db == null) return const [];
+    final rows = await db.customSelect(
+      'SELECT recipe_id, started_at, finished_at FROM cook_session '
+      'WHERE finished_at LIKE ? AND deleted_at IS NULL ORDER BY finished_at',
+      variables: [Variable<String>('$day%')],
+    ).get();
+    return [
+      for (final r in rows)
+        CookEvent(
+          recipeId: '${r.data['recipe_id']}',
+          recipeName:
+              _byId['${r.data['recipe_id']}']?.name ?? '（已删除的菜）',
+          time: '${r.data['finished_at']}'.substring(11, 16),
+          minutes: _minutesBetween(
+              '${r.data['started_at']}', '${r.data['finished_at']}'),
+        ),
+    ];
+  }
+
+  static int _minutesBetween(String startedIso, String finishedIso) {
+    final s = DateTime.tryParse(startedIso);
+    final f = DateTime.tryParse(finishedIso);
+    if (s == null || f == null) return 0;
+    final m = f.difference(s).inMinutes;
+    return m < 0 ? 0 : m;
+  }
+
   // ── 内部助手 ──
 
   Future<String> _resolveNodeId() async {
@@ -1455,8 +1513,7 @@ class PrepBoard {
       };
 
   /// 坏 JSON 按空板处理——偏好存坏了不能挡启动（与收藏同一立场）。
-  static PrepBoard parse(String raw) {
-    final b = PrepBoard();
+  static PrepBoard parse(String raw) {    final b = PrepBoard();
     try {
       final j = jsonDecode(raw);
       if (j is! Map) return b;
@@ -1473,4 +1530,46 @@ class PrepBoard {
     } catch (_) {}
     return b;
   }
+}
+
+/// 某月的日历点标记（R24）。
+class MonthMarks {
+  /// 有做菜完成的日期集合（YYYY-MM-DD）。
+  final Set<String> cookDays;
+
+  /// 有菜单安排的日期集合。
+  final Set<String> menuDays;
+
+  /// 本月开火场次（按会话计数，一天做两道算两次）。
+  final int cookCount;
+
+  const MonthMarks({
+    required this.cookDays,
+    required this.menuDays,
+    required this.cookCount,
+  });
+
+  const MonthMarks.empty()
+      : cookDays = const {},
+        menuDays = const {},
+        cookCount = 0;
+}
+
+/// 日历里的一条做菜记录（R24）。
+class CookEvent {
+  final String recipeId;
+  final String recipeName;
+
+  /// HH:MM，完成时刻。
+  final String time;
+
+  /// 开始→完成的分钟数；解析不出来是 0。
+  final int minutes;
+
+  const CookEvent({
+    required this.recipeId,
+    required this.recipeName,
+    required this.time,
+    required this.minutes,
+  });
 }

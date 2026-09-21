@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'calendar_page.dart';
 import 'me_page.dart';
 import 'menus_page.dart';
 import 'recipe_list_page.dart';
@@ -11,8 +12,8 @@ import 'recipe_list_page.dart';
 /// 菜谱 / 菜单 / 备菜 / 日历 / 我的。
 ///
 /// **R13：「我的」升级为同步设置页**（配对 / 立即同步 / 设备身份），
-/// **R23：「菜单」做实**（餐次卡 / 详情 / 一键备菜）；
-/// 其余两页仍是占位空态——这比两种做法都好：
+/// **R23：「菜单」做实**（餐次卡 / 详情 / 一键备菜），**R24：「日历」做实**（月视图 + 当日记录）；
+/// 备菜 tab 仍是占位（备菜清单挂在每一餐里，从菜单详情进），
 /// 导航结构先立起来（否则主页就缺一块，和高保真对不上），
 /// 又不至于用半成品假数据冒充已实现。
 /// 用 `IndexedStack` 而不是切换路由，是为了**保住列表页的筛选/收藏/滚动位置**——
@@ -51,7 +52,7 @@ class _HomeShellState extends State<HomeShell> {
           const RecipeListPage(),
           const MenusPage(),
           _ComingSoon(icon: Icons.shopping_basket, title: '备菜'),
-          _ComingSoon(icon: Icons.calendar_month, title: '日历'),
+          const CalendarPage(),
           const MePage(),
         ],
       ),

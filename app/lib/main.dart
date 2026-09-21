@@ -202,6 +202,7 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
                 // 主页 = 带底部标签栏的外壳，菜谱库是它的第一页
                 '/': (_) => const HomeShell(),
                 '/menus': (_) => const HomeShell(initialTab: 1),
+                '/calendar': (_) => const HomeShell(initialTab: 3),
               },
               onGenerateRoute: _generateRoute,
             ),
