@@ -1,5 +1,6 @@
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import 'backup.dart';
 import 'media.dart';
 import 'media_gc.dart';
 import 'server_state.dart';
@@ -137,6 +138,66 @@ Future<String> statusPageHtml(ServerState st, List<String> ips,
     }
     </script>
   </div>''' : ''}''';
+
+  // ── R26 · 备份 ──
+  // 整块只给本机渲染：远端地址与备份历史属于「这台机器怎么活下去」的事。
+  final bcfg = BackupConfig.load(st.config.dataDir);
+  final blast = st.backup.last;
+  final blastLine = blast == null
+      ? '还没跑过备份。'
+      : '${blast.at.toIso8601String().substring(0, 19).replaceFirst('T', ' ')} · '
+          '${blast.ok ? '成功' : '失败'}'
+          '${blast.fileName != null ? ' · ${blast.fileName}' : ''}'
+          '${blast.bytes != null ? ' · ${(blast.bytes! / 1024 / 1024).toStringAsFixed(1)} MB' : ''}'
+          '${blast.ok && !blast.uploaded && bcfg.hasRemote ? '（未上传远端）' : ''}'
+          '${blast.uploaded ? ' · 已上传远端' : ''}'
+          '${blast.error != null ? '<br><span style="color:var(--accent)">${esc(blast.error!)}</span>' : ''}';
+  final backupSection = isAdmin
+      ? '''<h2>备份</h2>
+  <p class="hint">$blastLine</p>
+  <div style="padding:12px;border:1px dashed var(--line);border-radius:10px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px">
+      <label><input id="bk-e" type="checkbox" ${bcfg.enabled ? 'checked' : ''}> 启用定期备份</label>
+      <label>间隔(小时) <input id="bk-i" type="number" min="1" max="720" value="${bcfg.intervalHours}" style="width:64px"></label>
+      <label><input id="bk-m" type="checkbox" ${bcfg.includeMedia ? 'checked' : ''}> 含照片</label>
+      <label>远端保留 <input id="bk-k" type="number" min="1" max="60" value="${bcfg.remoteKeep}" style="width:56px"></label>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:13px">
+      <label style="flex:1 1 320px">WebDAV <input id="bk-u" type="text" value="${esc(bcfg.webdavUrl ?? '')}" placeholder="https://dav.jianguoyun.com/dav/zaoji-backup/" style="width:100%"></label>
+      <label>用户 <input id="bk-ru" type="text" value="${esc(bcfg.webdavUser ?? '')}" style="width:180px"></label>
+      <label>应用密码 <input id="bk-rp" type="password" value="${bcfg.hasRemote ? BackupConfig.redacted : ''}" style="width:160px"></label>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px;font-size:13px">
+      <button onclick="bkSave()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--paper-2);cursor:pointer">保存配置</button>
+      <button onclick="bkTest()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--paper-2);cursor:pointer">测试远端</button>
+      <button onclick="bkRun()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer">立即备份一次</button>
+      <span id="bk-r" class="hint"></span>
+    </div>
+    <p class="hint" style="margin-top:8px">本地副本永远留在 <code>data/backups/</code>（保留 ${bcfg.localKeep} 份）；远端只是副本。
+    恢复：<code>zaoji_server.exe restore &lt;zip&gt; &lt;新目录&gt;</code>，逐文件校验哈希，坏包会拒绝。</p>
+    <script>
+    function bkBody(){return {enabled:document.getElementById('bk-e').checked,
+      intervalHours:+document.getElementById('bk-i').value,
+      includeMedia:document.getElementById('bk-m').checked,
+      remoteKeep:+document.getElementById('bk-k').value,
+      webdavUrl:document.getElementById('bk-u').value.trim(),
+      webdavUser:document.getElementById('bk-ru').value.trim(),
+      webdavPass:document.getElementById('bk-rp').value};}
+    async function bkPost(path,body,btn){
+      const s=document.getElementById('bk-r');s.textContent=btn+'…';
+      try{
+        const r=await fetch(path,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{method:'POST'});
+        const j=await r.json();
+        s.textContent = j.ok===false ? ('失败：'+(j.message||j.error||r.status)) : (j.message||'完成');
+        if(path==='/api/admin/backup'&&j.ok) setTimeout(()=>location.reload(),900);
+      }catch(e){s.textContent='失败：'+e;}
+    }
+    const bkSave=()=>bkPost('/api/admin/backup/config',bkBody(),'已保存');
+    const bkTest=()=>bkPost('/api/admin/backup/test',null,'测试中');
+    const bkRun=()=>bkPost('/api/admin/backup',null,'备份中');
+    </script>
+  </div>'''
+      : '';
 
   final httpChips = ips
       .map((ip) => '<a class="addr" href="http://$ip:${st.config.port}/">'
@@ -323,6 +384,7 @@ code.path{background:transparent;padding:0;color:var(--ink);font-weight:500}
   </table>
 
   $accessSection
+  $backupSection
 
   <h2>同步设备（已配对 + 来访者）</h2>
   $deviceRows

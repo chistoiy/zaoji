@@ -24,6 +24,9 @@ dependencies:
   # 缩略图派生（R17）。纯 Dart 实现，AOT 编译进 exe，不需要任何本地库。
   # 只在服务端用——客户端那边 Flutter 用的也是它（编辑页压缩），两端同一套编解码语义。
   image: ^4.0.0
+  # 备份打包（R26）：zip 编解码。纯 Dart；此前已作为 image 的传递依赖在包里，
+  # 现在是我们自己的直接依赖，版本钉在同一代 API 上（3.x 的 ZipFileEncoder 流式写）。
+  archive: ^3.6.0
 
 dev_dependencies:
   test: ^1.25.0

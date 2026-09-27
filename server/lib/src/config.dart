@@ -73,7 +73,10 @@ class ServerConfig {
   /// 0.12.0：服务端代码零改动——与 app 0.12.0（日历页）对齐发布线，
   /// 日历是纯客户端派生读（cook_session/menu 早已在白名单），本轮只换托管的 Web 产物。
   /// 0.10.0：冲突裁决 `POST /api/conflicts/resolve`（服务端盖 HLC，含过期回声守卫）。
-  static const String version = '0.12.1';
+  /// 0.13.0：备份能力（R26）——在线 SQLite 快照 + 自描述清单（逐文件 sha256）
+  ///   打 zip，本地留底 + WebDAV（坚果云实测）上传 + 双侧保留裁剪；
+  ///   `/api/admin/backup*`（仅本机）与 `restore` 子命令。
+  static const String version = '0.13.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 

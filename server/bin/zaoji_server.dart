@@ -7,6 +7,12 @@ import 'package:zaoji_server/zaoji_server.dart';
 /// 开发期：`dart run bin/zaoji_server.dart`
 /// 部署期：`dart compile exe bin/zaoji_server.dart -o zaoji_server.exe`
 Future<void> main(List<String> args) async {
+  // R26：restore 是独立子命令，不经过参数解析——恢复场景下没有「运行中的配置」可言。
+  if (args.isNotEmpty && args.first == 'restore') {
+    exitCode = await restoreCliMain(args.sublist(1));
+    return;
+  }
+
   final config = ServerConfig.parse(args);
 
   final ZaojiServer server;

@@ -51,6 +51,10 @@ desktop.ini
 # ── 项目规划文档（交接文档/计划书/需求/评审报告，仅本机保留）──
 /灶记-*.md
 
+# ── 本机外部服务凭据（DeepSeek / 缤纷云 / 坚果云），永远不进仓库 ──
+/.secrets/
+*.local.env
+
 # ── Node（app/tool/boot_check.cjs / sync_e2e.cjs 的 playwright-core）──
 node_modules/
 package-lock.json

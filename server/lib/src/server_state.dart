@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import 'backup.dart';
 import 'config.dart';
 import 'db.dart';
 import 'file_log.dart';
@@ -76,6 +77,24 @@ const List<Map<String, Object?>> kEndpoints = [
     'status': 'ready'
   },
   {
+    'path': '/api/admin/backup',
+    'method': 'GET/POST',
+    'title': '备份：查看状态 / 立即执行一次（只能从本机触发）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/admin/backup/config',
+    'method': 'POST',
+    'title': '备份配置（WebDAV 目标/间隔/保留；口令不回显）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/admin/backup/test',
+    'method': 'POST',
+    'title': '备份目标连通性测试（PUT+DELETE 探测文件）',
+    'status': 'ready'
+  },
+  {
     'path': '/api/sync/config',
     'method': 'GET',
     'title': '准入模式与同步策略查询（免鉴权，不含口令）',
@@ -133,6 +152,16 @@ class ServerState {
   /// 文件日志（R19③）。控制台与文件双写同一份内容。
   /// `config.logsDir == null`（测试/未配置）时自动退化为纯控制台。
   late final FileLog log = FileLog(config.logsDir, echo: stdout.writeln);
+
+  /// 备份服务（R26）。配置在 `data/backup_config.json`——
+  /// **故意不进库**：库会被打进备份包，凭据不能跟着包上云（自我引用）。
+  late final BackupService backup = BackupService(
+    dataDir: config.dataDir,
+    source: db.db,
+    media: media,
+    log: log,
+    serverId: serverId,
+  );
 
   ServerState._(this.config, this.serverId, this.startedAt, this.db);
 
@@ -205,6 +234,13 @@ class ServerState {
       // 盘上的真实占用（遍历文件算的，不是库里的引用）。数据库行数看不出
       // 「照片占了多少」，而不看这个就没法发现磁盘在只涨不跌。
       'media': media.stats().toJson(),
+      // R26 备份：只报「配没配、上次什么时候、成没成」——
+      // 状态页局域网可见，远端地址与口令都不出现。
+      'backup': {
+        'configured': BackupConfig.load(config.dataDir).hasRemote,
+        'enabled': BackupConfig.load(config.dataDir).enabled,
+        'last': backup.last?.toJson(),
+      },
       // 日志只报路径与大小，**不报内容**：状态页在局域网里谁都能打开，
       // 日志里有绝对路径等环境信息。
       'logPath': log.path,

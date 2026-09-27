@@ -60,7 +60,7 @@ zaoji_server.exe -w ..\app\build\web     # 浏览器访问 https://<IP>:8667/
 cd server; dart pub get
 dart run bin/zaoji_server.dart -w ..\app\build\web
 dart compile exe bin/zaoji_server.dart -o zaoji_server.exe
-dart test                      # 全量（当前 224 个）
+dart test                      # 全量（当前 240 个）
 
 # 客户端（Android 调试直跑；Web 见上文）
 cd app; flutter pub get; flutter test    # 当前 144 个
@@ -72,7 +72,25 @@ cd shared; dart test           # 当前 126 个
 服务端 `data/`、`certs/`、`logs/` 一律相对 **exe（或运行时入口）所在目录**解析——
 把编译产物放哪，数据就跟到哪；换机器部署 = 整个目录拷走。
 
-## 四、更多
+## 四、备份与恢复（数据的整包退路）
+
+服务端自带备份（R26）：SQLite 在线一致快照 + 全部照片打成自描述 zip
+（`manifest.json` 逐文件记 sha256），**本地永远先留一份**，再按配置上传到 WebDAV
+（坚果云实测可用；地址/账号/应用密码在状态页「备份」区配置，口令只进不出）。
+
+- 定期：设置间隔（默认 24h）与远端保留份数（默认 7），到期自动跑；手动随时可在状态页点「立即备份一次」。
+- 配置存 `server/data/backup_config.json`（不进库、不进备份包、不进 git）。
+- 恢复（先在安全位置验证，不会碰现有数据）：
+
+```powershell
+zaoji_server.exe restore zaoji-backup-20260928-031500-a1b2.zip D:\zaoji-restore\data
+# 逐文件校验哈希，坏包直接拒绝；确认无误后把恢复目录换回服务目录（或 -d 指过去启动）
+```
+
+- 灾难场景：家里笔记本整机报废 → 新机器装 exe → 从坚果云下载最新一份 zip → restore → 启动。
+  设备不用重新配对（serverId 在库里），但恢复即回滚到打包时刻。
+
+## 五、更多
 
 - 每一轮的决策、踩坑与验收记录在项目内的交接文档（进度日志，不随仓库发布）。
 - 已知边界：真机人工验收清单未完成（通知 / WakeLock / Web 后台节流等 M2 项）；

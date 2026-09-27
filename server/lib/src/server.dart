@@ -7,6 +7,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import 'backup.dart';
 import 'config.dart';
 import 'file_log.dart';
 import 'media.dart';
@@ -23,13 +24,18 @@ class ZaojiServer {
   final ServerState state;
   final HttpServer _http;
 
+  /// 备份定时器（R26）。只在真正 [start] 监听时运行——
+  /// 测试走 buildHandler 直连，永远不会碰到网络定时器。
+  final BackupScheduler? backupSchedule;
+
   /// HTTPS 监听。证书不存在时为 null —— 那时 http 仍可用，
   /// 但 iOS 端的屏幕常亮 / 计时通知 / PWA 离线 / 调相机四样能力都会失效。
   final HttpServer? _https;
 
   final List<String> localIps;
 
-  ZaojiServer._(this.state, this._http, this._https, this.localIps);
+  ZaojiServer._(this.state, this._http, this._https, this.localIps,
+      {this.backupSchedule});
 
   int get port => _http.port;
   int get tlsPort => _https?.port ?? state.config.tlsPort;
@@ -67,7 +73,13 @@ class ZaojiServer {
     final https = await _startTls(config, handler, state.log);
     state.tlsReady = https != null; // 回填给 /api/health 与状态页
 
-    return ZaojiServer._(state, http, https, ips);
+    // R26：备份定时器。是否真的会跑由配置决定（enabled + 远端已配），
+    // 这里只负责让「每 30 分钟看一眼」这件事存在。
+    final schedule = BackupScheduler(
+        dataDir: config.dataDir, service: state.backup)
+      ..start();
+
+    return ZaojiServer._(state, http, https, ips, backupSchedule: schedule);
   }
 
   /// 证书在就开 HTTPS，不在就安静跳过。
@@ -99,6 +111,7 @@ class ZaojiServer {
   }
 
   Future<void> stop() async {
+    backupSchedule?.stop();
     await _http.close(force: true);
     await _https?.close(force: true);
     // 关库放在最后：先把对外的门关上，再收内部资源。
@@ -139,7 +152,16 @@ class ZaojiServer {
       // 把准入门开关交给局域网里任何设备，等于没有门。
       ..get('/api/admin/settings', (Request req) => _adminSettings(state, req))
       ..post('/api/admin/settings',
-          (Request req) => _adminSettings(state, req));
+          (Request req) => _adminSettings(state, req))
+      // R26：备份。同样**仅本机**——备份包里有全家数据，触发和配置都不能
+      // 交给局域网里随手打开页面的人。子路径必须注册在 /api/admin/backup
+      // 之前（shelf_router 按注册顺序匹配，前缀会吃掉后面的路径）。
+      ..post('/api/admin/backup/config',
+          (Request req) => _backupConfig(state, req))
+      ..post('/api/admin/backup/test',
+          (Request req) => _backupTest(state, req))
+      ..get('/api/admin/backup', (Request req) => _backupStatus(state, req))
+      ..post('/api/admin/backup', (Request req) => _backupRun(state, req));
 
     /// 首页：如果托管了 Flutter Web 产物，让位给它——
     /// 否则用户打开地址看到的永远是状态页，而不是他要的 App。
@@ -815,6 +837,92 @@ class ZaojiServer {
           ? '这是预演（dry-run），一个文件都没删。确认无误后加 ?dry=0 真正执行。'
           : '已执行真实回收。',
     });
+  }
+
+  // ───────────────────── R26 · 备份（仅本机） ─────────────────────
+
+  /// 备份统一的本机闸门。备份包=全家数据的副本，四个入口一个都不许远程碰。
+  static Response? _backupGuard(ServerState state, Request req) {
+    if (_isLocalRequest(req)) return null;
+    return _json({
+      'error': 'forbidden',
+      'message': '备份的查看、配置与执行只能在服务端那台电脑上进行（/status 状态页）。',
+    }, status: 403);
+  }
+
+  static Future<Response> _backupStatus(ServerState state, Request req) async {
+    if (_backupGuard(state, req) case final deny?) return deny;
+    final cfg = BackupConfig.load(state.config.dataDir);
+    final backupsDir = state.backup.backupsDir;
+    final local = <Map<String, Object?>>[];
+    if (backupsDir.existsSync()) {
+      for (final f in backupsDir.listSync().whereType<File>().toList()
+        ..sort((a, b) => a.path.compareTo(b.path))) {
+        final name = f.uri.pathSegments.last;
+        if (!name.endsWith('.zip')) continue;
+        final st = f.statSync();
+        local.add({
+          'name': name,
+          'bytes': st.size,
+          'modified': DateTime.fromMillisecondsSinceEpoch(st.modified.millisecondsSinceEpoch)
+              .toIso8601String(),
+        });
+      }
+      local.sort((a, b) => '${b['name']}'.compareTo('${a['name']}'));
+    }
+    return _json({
+      'ok': true,
+      'config': cfg.toJson(), // 永远掩码：状态页/局域网里口令只进不出
+      'remoteConfigured': cfg.hasRemote,
+      'running': state.backup.running,
+      'last': state.backup.last?.toJson(),
+      'local': local,
+    });
+  }
+
+  static Future<Response> _backupRun(ServerState state, Request req) async {
+    if (_backupGuard(state, req) case final deny?) return deny;
+    if (state.backup.running) {
+      return _json({'error': 'busy', 'message': '已经有一次备份在跑'},
+          status: 409);
+    }
+    final r = await state.backup.runOnce();
+    return _json({...r.toJson()}, status: r.ok ? 200 : 500);
+  }
+
+  static Future<Response> _backupConfig(
+      ServerState state, Request req) async {
+    if (_backupGuard(state, req) case final deny?) return deny;
+    final Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    if (body == null) {
+      return _json({'error': 'bad_request', 'message': '请求体必须是 JSON'},
+          status: 400);
+    }
+    final merged = BackupConfig.merge(
+        BackupConfig.load(state.config.dataDir), body);
+    final err = merged.validate();
+    if (err != null) {
+      return _json({'error': 'bad_request', 'message': err}, status: 400);
+    }
+    await merged.save(state.config.dataDir);
+    await state.log
+        .write('[backup] 备份配置已更新（enabled=${merged.enabled} '
+            'interval=${merged.intervalHours}h remote=${merged.hasRemote ? '已配置' : '未配置'}）');
+    return _json({'ok': true, 'config': merged.toJson()});
+  }
+
+  static Future<Response> _backupTest(ServerState state, Request req) async {
+    if (_backupGuard(state, req) case final deny?) return deny;
+    final cfg = BackupConfig.load(state.config.dataDir);
+    final err = await state.backup.testRemote(cfg);
+    return _json(err == null
+        ? {'ok': true, 'message': '远端可写可删，连通正常'}
+        : {'ok': false, 'message': err}, status: err == null ? 200 : 502);
   }
 
   /// 读 JSON 请求体。解析失败返回 null（调用方给 400），不要抛；
