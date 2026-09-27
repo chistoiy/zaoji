@@ -208,6 +208,70 @@ class Nutrition {
   int get totalKcalRounded => totalKcal.round();
 }
 
+/// 库存条目（R28，schema 的 pantry_item 表）。
+///
+/// **「辅助决策，不是账本」**（schema 注释原话）——允许只记「有/没有」：
+/// `qtyValue=null` 就是模糊库存，步进器只在有数值分量时出现。
+class PantryItem {
+  final String id;
+  final String name;
+  final String? aliasKey;
+  final String? category; // 冷藏/冷冻/常温/干货…（自由文本，UI 归组用）
+  final double? qtyValue;
+  final String? qtyUnit;
+  final bool have; // false = 没有（提醒用），不是删除
+  final String? expireAt; // YYYY-MM-DD
+  final bool isStaple; // 常备调料：不参与缺失判定（FR-PAN-05）
+
+  const PantryItem({
+    required this.id,
+    required this.name,
+    this.aliasKey,
+    this.category,
+    this.qtyValue,
+    this.qtyUnit,
+    this.have = true,
+    this.expireAt,
+    this.isStaple = false,
+  });
+
+  factory PantryItem.fromRow(Map<String, Object?> row) => PantryItem(
+        id: '${row['id']}',
+        name: '${row['name']}',
+        aliasKey: row['alias_key'] as String?,
+        category: row['category'] as String?,
+        qtyValue: (row['qty_value'] as num?)?.toDouble(),
+        qtyUnit: row['qty_unit'] as String?,
+        have: (row['have'] as int? ?? 1) == 1,
+        expireAt: row['expire_at'] as String?,
+        isStaple: (row['is_staple'] as int? ?? 0) == 1,
+      );
+
+  /// 分量展示文案：`250 g` / `约` / 空。
+  String get qtyLabel {
+    if (!have) return '没有';
+    final v = qtyValue;
+    if (v == null) return '';
+    final s = v == v.roundToDouble() ? v.round().toString() : '$v';
+    return qtyUnit == null || qtyUnit!.isEmpty ? s : '$s $qtyUnit';
+  }
+
+  /// 保质期状态（FR-PAN-04）：过期 / 3 天内到期 / 其余不提示。
+  /// 用**日期字符串比较**不做 now 减法——同一自然日内多次打开不跳变。
+  String expState(DateTime now) {
+    final e = expireAt;
+    if (e == null || e.length < 10) return '';
+    final d = DateTime.tryParse(e);
+    if (d == null) return '';
+    final today = DateTime(now.year, now.month, now.day);
+    final dd = DateTime(d.year, d.month, d.day);
+    final diff = dd.difference(today).inDays;
+    if (diff <= 0) return 'bad';
+    if (diff <= 3) return 'soon';
+    return '';
+  }
+}
+
 /// 写热量用的草稿（saveNutrition 的入参）。
 class NutritionDraft {
   final double perServingKcal;

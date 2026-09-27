@@ -375,12 +375,195 @@ class RecipeStore extends ChangeNotifier {
     recipes = out;
     // R27：热量是菜谱的附属同步数据（FR-AI-51），跟菜谱一起重载。
     await _loadNutrition(db);
+    // R28：库存同样随重载刷新（同步引擎拉回别人买的菜）。
+    await _loadPantry(db);
     // R23：同步引擎拉回的可能就是别人排的菜单——menus/备菜板跟着一起重载。
     await _loadMenus(db);
     await _loadPrepBoards(db);
     _reindex();
     notifyListeners();
     return out;
+  }
+
+  // ─────────────── R28 · 库存（pantry_item） ───────────────
+
+  List<PantryItem> pantryItems = const [];
+
+  Future<void> _loadPantry(ZaojiDb db) async {
+    final rows = await db
+        .customSelect('SELECT * FROM pantry_item WHERE deleted_at IS NULL')
+        .get();
+    pantryItems = [for (final r in rows) PantryItem.fromRow(r.data)];
+  }
+
+  /// 新增/更新一条库存（同名不重复建：**按 name 精确复用现有行**，
+  /// 「添加牛奶」点了两次不该变两条——库存是清单不是流水）。
+  Future<void> upsertPantry({
+    String? id,
+    required String name,
+    String? category,
+    double? qtyValue,
+    String? qtyUnit,
+    bool have = true,
+    String? expireAt,
+    bool isStaple = false,
+  }) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() => hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+
+    final existing = id != null
+        ? pantryItems.where((p) => p.id == id).firstOrNull
+        : pantryItems.where((p) => p.name == name).firstOrNull;
+
+    final values = <String, Object?>{
+      'name': name,
+      'alias_key': PantryMatch.aliasKeyOf(name),
+      'category': category,
+      'qty_value': qtyValue,
+      'qty_unit': qtyUnit,
+      'have': have ? 1 : 0,
+      'expire_at': expireAt,
+      'is_staple': isStaple ? 1 : 0,
+    };
+    late PantryItem stored;
+    await db.transaction(() async {
+      if (existing == null) {
+        final newId = _ulids.next();
+        await _insert(db, kPantryTable, {
+          'id': newId,
+          'updated_at': next(),
+          'updated_by': nodeId,
+          'rev': 1,
+          'deleted_at': null,
+          ...values,
+        });
+        stored = PantryItem(
+            id: newId,
+            name: name,
+            aliasKey: values['alias_key'] as String?,
+            category: category,
+            qtyValue: qtyValue,
+            qtyUnit: qtyUnit,
+            have: have,
+            expireAt: expireAt,
+            isStaple: isStaple);
+      } else {
+        await db.customUpdate(
+          'UPDATE pantry_item SET updated_at = ?, updated_by = ?, rev = rev + 1, '
+          'name = ?, alias_key = ?, category = ?, qty_value = ?, qty_unit = ?, '
+          'have = ?, expire_at = ?, is_staple = ? WHERE id = ?',
+          variables: [
+            Variable(next()),
+            Variable(nodeId),
+            for (final k in [
+              'name', 'alias_key', 'category', 'qty_value', 'qty_unit',
+              'have', 'expire_at', 'is_staple'
+            ])
+              Variable(values[k]),
+            Variable(existing.id),
+          ],
+        );
+        stored = PantryItem(
+            id: existing.id,
+            name: name,
+            aliasKey: values['alias_key'] as String?,
+            category: category,
+            qtyValue: qtyValue,
+            qtyUnit: qtyUnit,
+            have: have,
+            expireAt: expireAt,
+            isStaple: isStaple);
+      }
+    });
+    pantryItems = [
+      for (final p in pantryItems)
+        if (p.id == (existing?.id ?? stored.id)) stored else p,
+      if (existing == null) stored,
+    ];
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 步进器：±1（无数值的模糊库存加一次变成 1，减到 0 翻成 have=0——
+  /// 「没有」是库存状态不是删除，回收站那套语义不在这用）。
+  Future<void> adjustPantry(String id, int delta) async {
+    final p = pantryItems.where((x) => x.id == id).firstOrNull;
+    if (p == null) return;
+    final v = (p.qtyValue ?? 0) + delta;
+    if (v <= 0) {
+      await upsertPantry(id: id, name: p.name, category: p.category,
+          qtyValue: 0, qtyUnit: p.qtyUnit, have: false,
+          expireAt: p.expireAt, isStaple: p.isStaple);
+    } else {
+      await upsertPantry(id: id, name: p.name, category: p.category,
+          qtyValue: v.toDouble(), qtyUnit: p.qtyUnit, have: true,
+          expireAt: p.expireAt, isStaple: p.isStaple);
+    }
+  }
+
+  /// 删除库存行（软删：这条数据参与同步，别的端要看到它消失）。
+  Future<void> deletePantry(String id) async {
+    final db = _db!;
+    final p = pantryItems.where((x) => x.id == id).firstOrNull;
+    if (p == null) return;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    final hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    await db.transaction(() async {
+      await db.customUpdate(
+        'UPDATE pantry_item SET updated_at = ?, updated_by = ?, rev = rev + 1, '
+        'deleted_at = ? WHERE id = ?',
+        variables: [
+          Variable(hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode()),
+          Variable(nodeId),
+          Variable(hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode()),
+          Variable(id),
+        ],
+      );
+    });
+    pantryItems = pantryItems.where((x) => x.id != id).toList();
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 清空冰箱的推荐结果（FR-RECO-01~04 本地匹配部分）。
+  /// 派生不落库——和备菜清单同一条立场（R23）。
+  Map<String, Object?> recommendByPantry() {
+    return PantryMatch.recommend(
+      recipes: [
+        for (final r in recipes)
+          {
+            'id': r.id,
+            'name': r.name,
+            'ingredients': [
+              for (final i in r.ingredients)
+                {
+                  'name': i.name,
+                  'qtyText': i.qty,
+                  'isMain': i.isMain,
+                  'aliasKey': i.aliasKey,
+                  // 库存里被标了常备的同名食材，这道菜里也按豁免算
+                  'isStaple': pantryItems
+                      .any((p) => p.isStaple && (p.name == i.name ||
+                          p.aliasKey == (i.aliasKey ?? ''))),
+                }
+            ],
+          }
+      ],
+      pantry: [
+        for (final p in pantryItems)
+          {
+            'name': p.name,
+            'aliasKey': p.aliasKey,
+            'have': p.have ? 1 : 0,
+            'qtyValue': p.qtyValue,
+            'isStaple': p.isStaple,
+          }
+      ],
+    );
   }
 
   // ─────────────── R27 · 热量（nutrition 表，与菜谱一对一） ───────────────
@@ -1571,6 +1754,8 @@ const String kSeedNodeId = 'seed';
 final TableSpec kRecipeTable = kTables.firstWhere((t) => t.name == 'recipe');
 final TableSpec kNutritionTable =
     kTables.firstWhere((t) => t.name == 'nutrition');
+final TableSpec kPantryTable =
+    kTables.firstWhere((t) => t.name == 'pantry_item');
 final TableSpec kCookSessionTable = kTables.firstWhere(
     (t) => t.name == 'cook_session');
 final TableSpec kIngredientTable = kTables.firstWhere(

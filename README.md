@@ -63,10 +63,10 @@ dart compile exe bin/zaoji_server.dart -o zaoji_server.exe
 dart test                      # 全量（当前 251 个）
 
 # 客户端（Android 调试直跑；Web 见上文）
-cd app; flutter pub get; flutter test    # 当前 148 个
+cd app; flutter pub get; flutter test    # 当前 154 个
 
 # 共享库
-cd shared; dart test           # 当前 126 个
+cd shared; dart test           # 当前 132 个
 ```
 
 服务端 `data/`、`certs/`、`logs/` 一律相对 **exe（或运行时入口）所在目录**解析——
@@ -103,6 +103,5 @@ Web 端与 App 端都不持有 Key、Key 不参与同步、任何接口只回掩
 ## 六、更多
 
 - 每一轮的决策、踩坑与验收记录在项目内的交接文档（进度日志，不随仓库发布）。
-- 已知边界：真机人工验收清单未完成（通知 / WakeLock / Web 后台节流等 M2 项）；
-  App 底部「备菜」tab 为占位，备菜入口在菜单详情页。
+- 已知边界：真机人工验收清单未完成（通知 / WakeLock / Web 后台节流等 M2 项）。
 - 服务端仅面向家庭局域网，请勿直接暴露公网。

@@ -48,7 +48,8 @@ void main() {
     expect(find.text('全部菜品'), findsOneWidget);
     expect(find.text('最近做过'), findsOneWidget);
     // 底部标签栏五项
-    for (final t in ['菜单', '备菜', '日历', '我的']) {
+    // R28：第三个 tab 从占位「备菜」做实为「厨房」（库存+能做什么）
+    for (final t in ['菜单', '厨房', '日历', '我的']) {
       expect(find.text(t), findsOneWidget, reason: '底部标签栏缺「$t」');
     }
   });

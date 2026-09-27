@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import 'calendar_page.dart';
 import 'me_page.dart';
+import 'kitchen_page.dart';
 import 'menus_page.dart';
 import 'recipe_list_page.dart';
 
@@ -34,7 +35,7 @@ typedef _TabData = ({IconData icon, IconData activeIcon, String label});
 const List<_TabData> _kTabs = [
   (icon: Icons.menu_book_outlined, activeIcon: Icons.menu_book, label: '菜谱'),
   (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: '菜单'),
-  (icon: Icons.shopping_basket_outlined, activeIcon: Icons.shopping_basket, label: '备菜'),
+  (icon: Icons.shopping_basket_outlined, activeIcon: Icons.shopping_basket, label: '厨房'),
   (icon: Icons.calendar_month_outlined, activeIcon: Icons.calendar_month, label: '日历'),
   (icon: Icons.person_outline, activeIcon: Icons.person, label: '我的'),
 ];
@@ -51,7 +52,7 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           const RecipeListPage(),
           const MenusPage(),
-          _ComingSoon(icon: Icons.shopping_basket, title: '备菜'),
+          const KitchenPage(),
           const CalendarPage(),
           const MePage(),
         ],
@@ -156,53 +157,6 @@ class _TabItem extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 未实现屏的占位。
-///
-/// **给的是状态和下一步，不是一句「开发中」就完了**——
-/// 用户点过来是要干一件事的，得告诉他这事现在去哪儿干。
-class _ComingSoon extends StatelessWidget {
-  const _ComingSoon({required this.icon, required this.title});
-
-  final IconData icon;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: ZaojiColors.paper,
-      appBar: AppBar(title: Text(title)),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: const BoxDecoration(
-                  color: ZaojiColors.paper2,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 32, color: ZaojiColors.muted),
-              ),
-              const SizedBox(height: 16),
-              Text('$title还没有做出来',
-                  style: ZaojiText.display(fontSize: 17, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              const Text(
-                '先把菜谱库用起来。这一屏在 M2/M3 排期里，\n做完会自动出现在这里。',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12.5, height: 1.7, color: ZaojiColors.muted),
-              ),
-            ],
-          ),
         ),
       ),
     );

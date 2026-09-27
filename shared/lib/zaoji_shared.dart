@@ -12,6 +12,7 @@ export 'src/cn_number.dart';
 export 'src/conflict.dart';
 export 'src/hlc.dart';
 export 'src/ingredient.dart';
+export 'src/pantry_match.dart';
 export 'src/schema.dart';
 export 'src/step_time.dart';
 export 'src/sync_access.dart';
