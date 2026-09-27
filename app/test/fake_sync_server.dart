@@ -36,6 +36,19 @@ class FakeSyncServer {
   /// 这类退化不会报错，只会让手机白白多解一张 1600px 的图。
   final mediaPaths = <String>[];
 
+  // ── R27 AI（镜像真服务端 /api/ai/* 的形状）──
+  // 状态是**可编程的**：配置写进来即翻成 configured/enabled，
+  // 热量与补全的回复可整体替换（测失败分支不用碰真网络）。
+  bool aiConfigured = false;
+  bool aiEnabled = false;
+  String aiModel = 'deepseek-flash';
+  final aiConfigWrites = <Map<String, Object?>>[];
+  int aiCaloriesCalls = 0;
+  int aiFillCalls = 0;
+  Map<String, Object?>? aiCaloriesReply;
+  Map<String, Object?>? aiFillReply;
+  String? aiFailWith; // 'off' | 'auth'：非 null 时能力端点直接回该错误
+
   static const serverId = 'fake-server';
   static const goodCode = 'TEST24';
 
@@ -70,6 +83,15 @@ class FakeSyncServer {
     passcode = null;
     visitorManualSync = false;
     visitorNodes.clear();
+    aiConfigured = false;
+    aiEnabled = false;
+    aiModel = 'deepseek-flash';
+    aiConfigWrites.clear();
+    aiCaloriesCalls = 0;
+    aiFillCalls = 0;
+    aiCaloriesReply = null;
+    aiFillReply = null;
+    aiFailWith = null;
   }
 
   var _hlc = Hlc.now(serverId);
@@ -208,6 +230,11 @@ class FakeSyncServer {
           return;
         }
         (status, res) = _resolve(json);
+      } else if (req.uri.path.startsWith('/api/ai/')) {
+        final handled = await _ai(req, json);
+        if (handled) return;
+        status = 404;
+        res = {'error': 'not_found'};
       } else if (req.uri.path.startsWith('/api/media/')) {
         // 媒体接口：与真服务端同款三道语义——要 token（或开放模式匿名）、档位白名单、原图/缩略图
         if (_deviceIdOf(req) == null && !_allowAnonymous(req)) {
@@ -254,6 +281,108 @@ class FakeSyncServer {
       req.response.statusCode = 500;
       await req.response.close();
     }
+  }
+
+  /// R27 AI 端点。返回 true = 已应答并关闭响应。
+  /// 鉴权门与 /api/changes 同一形状（token 或开放模式 X-Node-Id）。
+  Future<bool> _ai(HttpRequest req, Map<String, Object?> json) async {
+    if (_deviceIdOf(req) == null && !_allowAnonymous(req)) {
+      req.response.statusCode = 401;
+      req.response.write(jsonEncode({'error': 'unauthorized'}));
+      await req.response.close();
+      return true;
+    }
+    final path = req.uri.path;
+    Map<String, Object?> res;
+    var status = 200;
+    if (path == '/api/ai/status' && req.method == 'GET') {
+      res = {
+        'ok': true,
+        'enabled': aiEnabled,
+        'provider': 'deepseek',
+        'baseUrl': 'https://api.deepseek.com/v1',
+        'model': aiModel,
+        'keyMasked': aiConfigured ? '••••abcd' : '',
+        'configured': aiConfigured,
+        'flags': {'nutrition': true, 'recipe': true, 'recommend': true},
+        'usage': {'calls': aiCaloriesCalls + aiFillCalls, 'inTok': 0, 'outTok': 0},
+        'providers': [
+          {'k': 'deepseek', 'n': 'DeepSeek', 'url': 'https://api.deepseek.com/v1',
+            'model': 'deepseek-flash', 'note': '默认'},
+          {'k': 'ollama', 'n': 'Ollama', 'url': 'http://127.0.0.1:11434/v1',
+            'model': 'qwen2.5:7b', 'note': '零外发'},
+        ],
+      };
+    } else if (path == '/api/ai/config' && req.method == 'POST') {
+      aiConfigWrites.add(json);
+      if (json['key'] != null && '${json['key']}'.isNotEmpty &&
+          !'${json['key']}'.startsWith('••••')) {
+        aiConfigured = true;
+      }
+      if (json['enabled'] is bool) aiEnabled = json['enabled'] as bool;
+      if (json['model'] != null) aiModel = '${json['model']}';
+      res = {'ok': true, 'configured': aiConfigured,
+        'keyMasked': aiConfigured ? '••••abcd' : ''};
+    } else if (path == '/api/ai/test' && req.method == 'POST') {
+      res = {'ok': true, 'message': '连通正常'};
+    } else if (path == '/api/ai/calories' && req.method == 'POST') {
+      aiCaloriesCalls++;
+      if (aiFailWith != null) {
+        status = aiFailWith == 'off' ? 409 : 502;
+        res = {'ok': false, 'error': aiFailWith, 'message': 'mock $aiFailWith'};
+      } else {
+        res = {
+          'ok': true,
+          'model': aiModel,
+          'result': aiCaloriesReply ?? {
+            'kcal_per_serving': 250, 'total_kcal': 500,
+            'protein_g': 22, 'fat_g': 30, 'carb_g': 20,
+            'per_ingredient': [
+              {'name': '番茄', 'kcal': 54},
+              {'name': '鸡蛋', 'kcal': 257},
+            ],
+            'confidence': 'medium',
+            'note': '按常见营养数据估算',
+          },
+        };
+      }
+    } else if (path == '/api/ai/recipe-fill' && req.method == 'POST') {
+      aiFillCalls++;
+      if (aiFailWith != null) {
+        status = aiFailWith == 'off' ? 409 : 502;
+        res = {'ok': false, 'error': aiFailWith, 'message': 'mock $aiFailWith'};
+      } else {
+        res = {
+          'ok': true,
+          'model': aiModel,
+          'result': aiFillReply ?? {
+            'sub': '酸甜开胃的经典下饭菜',
+            'difficulty': 2,
+            'self_time': 20,
+            'servings': 2,
+            'tags': ['家常'],
+            'ingredients': [
+              {'name': '番茄', 'amount': '2个', 'kind': 'main'},
+              {'name': '鸡蛋', 'amount': '3个', 'kind': 'main'},
+            ],
+            'steps': [
+              {'text': '鸡蛋打散，加盐搅匀，静置 5 分钟', 'minutes': 5},
+              {'text': '热油下蛋液，大火炒 2 分钟至凝固'},
+              {'text': '下番茄块，转中小火焖 8 分钟'},
+              {'text': '回锅鸡蛋翻匀，收汁 2 分钟出锅'},
+            ],
+            'notes': '糖按口味取舍',
+          },
+        };
+      }
+    } else {
+      return false;
+    }
+    req.response.statusCode = status;
+    req.response.headers.contentType = ContentType.json;
+    req.response.write(jsonEncode(res));
+    await req.response.close();
+    return true;
   }
 
   /// 开放模式的匿名放行判定（与真服务端同一规则：合法 X-Node-Id 才算设备）。

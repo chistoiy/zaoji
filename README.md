@@ -60,10 +60,10 @@ zaoji_server.exe -w ..\app\build\web     # 浏览器访问 https://<IP>:8667/
 cd server; dart pub get
 dart run bin/zaoji_server.dart -w ..\app\build\web
 dart compile exe bin/zaoji_server.dart -o zaoji_server.exe
-dart test                      # 全量（当前 240 个）
+dart test                      # 全量（当前 251 个）
 
 # 客户端（Android 调试直跑；Web 见上文）
-cd app; flutter pub get; flutter test    # 当前 144 个
+cd app; flutter pub get; flutter test    # 当前 148 个
 
 # 共享库
 cd shared; dart test           # 当前 126 个
@@ -73,7 +73,6 @@ cd shared; dart test           # 当前 126 个
 把编译产物放哪，数据就跟到哪；换机器部署 = 整个目录拷走。
 
 ## 四、备份与恢复（数据的整包退路）
-
 服务端自带备份（R26）：SQLite 在线一致快照 + 全部照片打成自描述 zip
 （`manifest.json` 逐文件记 sha256），**本地永远先留一份**，再按配置上传到 WebDAV
 （坚果云实测可用；地址/账号/应用密码在状态页「备份」区配置，口令只进不出）。
@@ -90,7 +89,18 @@ zaoji_server.exe restore zaoji-backup-20260928-031500-a1b2.zip D:\zaoji-restore\
 - 灾难场景：家里笔记本整机报废 → 新机器装 exe → 从坚果云下载最新一份 zip → restore → 启动。
   设备不用重新配对（serverId 在库里），但恢复即回滚到打包时刻。
 
-## 五、更多
+## 五、大模型能力（可选，不配也完全能用）
+
+服务端内置 OpenAI 兼容代理（R27）：**API Key 统一存在自家服务端**，
+Web 端与 App 端都不持有 Key、Key 不参与同步、任何接口只回掩码。
+
+- 配置入口：App「我的 → 大模型能力」（预设 DeepSeek / 通义 / Ollama 本地等 10 家），
+  填 Base URL + Key + 模型名即可「测试连接」，四类失败（Key 错 / 模型不存在 / 网络不通 / 超时）分开报。
+- 能力：详情页「估算热量」（结果进 nutrition 表、跨端同步）；
+  新建页「AI 自动补全」（只填没动过的字段，保存带来源标记）；列表卡「≈N 千卡/份」徽标。
+- DeepSeek 注意：`deepseek-flash` 是推理模型，代理已按结构化输出留足 token 预算（≥2048）。
+
+## 六、更多
 
 - 每一轮的决策、踩坑与验收记录在项目内的交接文档（进度日志，不随仓库发布）。
 - 已知边界：真机人工验收清单未完成（通知 / WakeLock / Web 后台节流等 M2 项）；

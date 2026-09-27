@@ -330,6 +330,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
                                 delegate: SliverChildBuilderDelegate(
                                   (context, i) => _RecipeCard(
                                     recipe: list[i],
+                                    nutrition: store.nutritionFor(list[i].id),
                                     isFav: store.isFav(list[i].id),
                                     onFav: () => store.toggleFav(list[i].id),
                                     onTap: () => Navigator.of(context).push(
@@ -758,9 +759,13 @@ class _RecipeCard extends StatelessWidget {
     required this.isFav,
     required this.onFav,
     required this.onTap,
+    this.nutrition,
   });
 
   final Recipe recipe;
+
+  /// R27：这道菜的热量（null = 没算过，不占位）。
+  final Nutrition? nutrition;
   final bool isFav;
   final VoidCallback onFav;
   final VoidCallback onTap;
@@ -804,9 +809,31 @@ class _RecipeCard extends StatelessWidget {
                           width: MediaWidth.card,
                         ),
                       const ArtVeil(),
-                      if (recipe.isAi)
+                      // R27 热量徽标（FR-REC-22/23）：**只看有没有数据**，
+                      // 与本机配没配 AI 无关——手机上算的，Web 打开也该看得到。
+                      if (nutrition != null)
                         Positioned(
                           top: 8,
+                          left: 8,
+                          child: _PillBadge(
+                            icon: Icons.auto_awesome,
+                            label: '≈ ${nutrition?.perServingKcalRounded ?? 0} 千卡/份',
+                          ),
+                        )
+                      else if (recipe.isAi)
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: _PillBadge(
+                            icon: Icons.auto_awesome,
+                            label: 'AI 生成',
+                          ),
+                        ),
+                      // AI 菜但已有热量徽标占位时，来源词挪到热量下面一层，
+                      // 两个信息都不丢（热量是「信息」，来源是「出身」）。
+                      if (nutrition != null && recipe.isAi)
+                        Positioned(
+                          top: 34,
                           left: 8,
                           child: _PillBadge(
                             icon: Icons.auto_awesome,

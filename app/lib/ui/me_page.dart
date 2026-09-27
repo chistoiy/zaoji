@@ -7,6 +7,7 @@ import '../data/sync/sync_engine.dart';
 import '../data/sync/sync_scope.dart';
 import '../data/store_scope.dart';
 import '../theme.dart';
+import 'ai_settings_page.dart';
 import 'conflict_box_page.dart';
 import 'trash_page.dart';
 
@@ -229,8 +230,16 @@ class _MePageState extends State<MePage> {
                   ),
                 ),
                 const SizedBox(height: 20),
+                _sectionTitle('大模型'),
+                _SyncCard(
+                  child: ListenableBuilder(
+                    listenable: engine,
+                    builder: (context, _) => _AiEntryCard(engine: engine),
+                  ),
+                ),
+                const SizedBox(height: 20),
                 const Text(
-                  'AI 配置、备份都会在后续版本出现在这里。',
+                  '备份能力在服务端状态页（http://127.0.0.1:8666/）配置。',
                   style: TextStyle(
                     fontSize: 11.5,
                     height: 1.6,
@@ -566,6 +575,84 @@ class _MePageState extends State<MePage> {
 
 /// 未裁决冲突数的徽标。监听 store——同步落库（reload）后数字自动跟上，
 /// 不为它单开任何刷新通道（R12 铺的路：store 是唯一的变更事实源）。
+/// R27 · 大模型入口卡（FR-AI-10：入口恒定存在，未配置只是少一枚状态徽记）。
+///
+/// 状态来自服务端 `/api/ai/status`——**配置在自家服务端，两端看到的是同一份**。
+/// 读不到（没接入/服务端旧）按「未配置」渲染，布局不跳变。
+class _AiEntryCard extends StatefulWidget {
+  const _AiEntryCard({required this.engine});
+
+  final SyncEngine engine;
+
+  @override
+  State<_AiEntryCard> createState() => _AiEntryCardState();
+}
+
+class _AiEntryCardState extends State<_AiEntryCard> {
+  Map<String, Object?>? _status;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final s = await widget.engine.aiCall('/api/ai/status');
+      if (mounted) setState(() => _status = s);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = _status ?? widget.engine.aiStatusCache;
+    final configured = s?['configured'] == true;
+    final enabled = s?['enabled'] == true;
+    final state = !configured
+        ? '未配置'
+        : enabled
+            ? '已启用 · ${s?['model'] ?? ''}'
+            : '已配置未启用';
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.auto_awesome,
+          color: ZaojiColors.ai, size: 22),
+      title: const Text('大模型能力', style: TextStyle(fontSize: 14)),
+      subtitle: Text(
+        _error != null && s == null
+            ? '连到服务端后可配置'
+            : '$state。Key 存在自家服务端，不随同步外发',
+        style: const TextStyle(fontSize: 12),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!configured)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: ZaojiColors.paper2,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: const Text('未配置',
+                  style: TextStyle(
+                      fontSize: 10.5, color: ZaojiColors.muted)),
+            ),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right, color: ZaojiColors.muted),
+        ],
+      ),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AiSettingsPage()),
+      ),
+    );
+  }
+}
+
 class _ConflictBadge extends StatefulWidget {
   const _ConflictBadge({required this.store});
 

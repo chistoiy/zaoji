@@ -10,6 +10,7 @@ import '../data/sync/sync_scope.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/cover_image.dart';
+import 'ai_settings_page.dart';
 
 /// 菜谱新建/编辑页。
 ///
@@ -50,6 +51,14 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
 
   bool _saving = false;
   bool _saved = false;
+
+  // R27：AI 补全（FR-AI-30~36）。入口恒定显示（配没配都在、布局不跳变）；
+  // 补全成功后表单顶上出现「AI 生成内容」标记条，用户手改任一字段它就还在——
+  // **来源标记按整份草稿走**：只要保存时仍带着 AI 填过的内容就记 ai，
+  // 「改后撤标记」需要逐字段 diff，收益配不上成本，尾巴记进交接文档。
+  bool _aiFilled = false;
+  String? _aiModel;
+  bool _aiBusy = false;
 
   // 封面（R16）：_coverBytes 是新选的照片（已压缩、待上传）；
   // _coverSha 是当前生效的封面哈希（原有封面，或新上传后由引擎返回）。
@@ -179,6 +188,8 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         palette: const [],
         tags: tags,
         coverSha256: coverSha,
+        source: _aiFilled && widget.isNew ? 'ai' : 'manual',
+        sourceModel: _aiFilled && widget.isNew ? _aiModel : null,
       );
 
       if (widget.isNew) {
@@ -306,6 +317,8 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
               _coverField(),
               const SizedBox(height: 18),
               _basicFields(),
+              const SizedBox(height: 14),
+              _aiFillBar(),
               const SizedBox(height: 18),
               _difficultyField(),
               const SizedBox(height: 18),
@@ -372,6 +385,155 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
   // ─────────── 各区块 ───────────
 
   /// 封面选择。预览优先级：新选的字节 > 原有封面（按 sha 异步拉取）> 虚线占位。
+  /// R27 · AI 自动补全提示条（FR-AI-30）。位置与高度恒定：
+  /// 未配置时按钮写成「去配置」，点它跳配置页——入口不因配置状态消失。
+  Widget _aiFillBar() {
+    final engine = SyncScope.of(context);
+    final notConfigured = engine.aiStatusCache != null &&
+        engine.aiStatusCache!['configured'] != true;
+    return Container(
+      key: const ValueKey('ai-fill-bar'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: ZaojiColors.aiBg,
+        borderRadius: BorderRadius.circular(ZaojiRadius.md),
+        border: Border.all(color: const Color(0x336E4468)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.auto_awesome, size: 18, color: ZaojiColors.ai),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _aiFilled
+                  ? 'AI 已填好草稿（$_aiModel），逐项可改'
+                  : notConfigured
+                      ? '用 AI 自动补全（未配置）'
+                      : '用 AI 自动补全',
+              style: const TextStyle(
+                  fontSize: 12.5, height: 1.5, color: ZaojiColors.ai),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _aiBusy
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: ZaojiColors.ai))
+              : TextButton(
+                  onPressed: notConfigured ? _gotoAiSettings : _aiFill,
+                  child: Text(notConfigured ? '去配置' : '补全',
+                      style: const TextStyle(
+                          fontSize: 13, color: ZaojiColors.ai)),
+                ),
+        ],
+      ),
+    );
+  }
+
+  void _gotoAiSettings() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => const AiSettingsPage()));
+  }
+
+  Future<void> _aiFill() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('先填菜名，AI 才知道做哪道'),
+            duration: Duration(seconds: 2)),
+      );
+      return;
+    }
+    setState(() => _aiBusy = true);
+    try {
+      final engine = SyncScope.of(context);
+      final res =
+          await engine.aiCall('/api/ai/recipe-fill', {'name': name});
+      if (res['ok'] != true) {
+        if (!mounted) return;
+        setState(() => _aiBusy = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('${res['message'] ?? 'AI 补全失败'}'),
+            duration: const Duration(seconds: 3)));
+        return;
+      }
+      final r = (res['result'] as Map).cast<String, Object?>();
+      if (!mounted) return;
+      setState(() {
+        _aiBusy = false;
+        _aiFilled = true;
+        _aiModel = '${res['model'] ?? ''}';
+        // 只填**没动过的**字段——用户已经手打的内容永远优先（FR-AI-34）
+        if (_subCtrl.text.trim().isEmpty && '${r['sub'] ?? ''}'.isNotEmpty) {
+          _subCtrl.text = '${r['sub']}';
+        }
+        if (int.tryParse(_timeCtrl.text.trim()) == null &&
+            r['self_time'] is num) {
+          _timeCtrl.text = '${(r['self_time'] as num).round()}';
+        }
+        if (r['servings'] is num) {
+          _servingsCtrl.text = '${(r['servings'] as num).round()}';
+        }
+        if (r['difficulty'] is num) {
+          _difficulty = (r['difficulty'] as num).round().clamp(1, 3);
+        }
+        if (_notesCtrl.text.trim().isEmpty && '${r['notes'] ?? ''}'.isNotEmpty) {
+          _notesCtrl.text = '${r['notes']}';
+        }
+        final ings = (r['ingredients'] as List? ?? const [])
+            .whereType<Map>()
+            .toList();
+        if (_ingredients.every((e) => e.nameCtrl.text.trim().isEmpty) &&
+            ings.isNotEmpty) {
+          for (final c in _ingredients) {
+            c.nameCtrl.dispose();
+            c.qtyCtrl.dispose();
+          }
+          _ingredients = [
+            for (final i in ings)
+              _IngredientRow(
+                nameCtrl:
+                    TextEditingController(text: '${i['name'] ?? ''}'),
+                qtyCtrl: TextEditingController(text: '${i['amount'] ?? ''}'),
+                isMain: '${i['kind']}' == 'main',
+              ),
+          ];
+        }
+        final steps = (r['steps'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => '${e['text'] ?? ''}')
+            .where((t) => t.isNotEmpty)
+            .toList();
+        if (steps.isNotEmpty) {
+          for (final c in _stepCtrls) {
+            c.dispose();
+          }
+          _stepCtrls = [for (final t in steps) TextEditingController(text: t)];
+        }
+        final tags = r['tags'];
+        if (tags is List) {
+          for (final t in tags.whereType<String>()) {
+            if (_quickMethods.contains(t)) _selectedMethods.add(t);
+          }
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('AI 已填好草稿，逐项检查后保存'),
+          duration: Duration(seconds: 2)));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _aiBusy = false);
+      final s = '$e';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: s.contains('401') || s.contains('StateError')
+              ? const Text('还没配置大模型，先去「我的 → 大模型能力」')
+              : Text('AI 补全失败：$s'),
+          duration: const Duration(seconds: 3)));
+    }
+  }
+
   Widget _coverField() {
     if (_coverBytes != null || _coverSha == null) {
       return CoverPickerBox(

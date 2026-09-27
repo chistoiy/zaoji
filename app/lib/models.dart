@@ -143,3 +143,102 @@ class CookSession {
   /// 本次实际耗时（进行中就取到现在）。
   Duration get elapsed => (finishedAt ?? DateTime.now()).difference(startedAt);
 }
+
+/// 热量估算（R27，schema 的 nutrition 表）。与菜谱一对一。
+///
+/// `confidence` 在 schema 里是 REAL（0.9/0.6/0.3 ↔ 高/中/低）——
+/// 存数值是为了将来能排序聚合；UI 按阈值翻回「高/中/低」。
+/// **它是普通业务数据，跨端同步（FR-AI-51）；显示只取决于有没有值（FR-REC-23）。**
+class Nutrition {
+  final String id;
+  final String recipeId;
+  final double perServingKcal;
+  final double totalKcal;
+  final double? proteinG;
+  final double? fatG;
+  final double? carbG;
+
+  /// 逐食材贡献（JSON 字符串，原样存取——UI 只在「看依据」里展开）。
+  final String? basisJson;
+  final double? confidence;
+  final String source; // ai / manual
+  final String? model;
+  final int? servingsBasis;
+
+  const Nutrition({
+    required this.id,
+    required this.recipeId,
+    required this.perServingKcal,
+    required this.totalKcal,
+    this.proteinG,
+    this.fatG,
+    this.carbG,
+    this.basisJson,
+    this.confidence,
+    this.source = 'ai',
+    this.model,
+    this.servingsBasis,
+  });
+
+  factory Nutrition.fromRow(Map<String, Object?> row) => Nutrition(
+        id: '${row['id']}',
+        recipeId: '${row['recipe_id']}',
+        perServingKcal: (row['per_serving_kcal'] as num?)?.toDouble() ?? 0,
+        totalKcal: (row['total_kcal'] as num?)?.toDouble() ?? 0,
+        proteinG: (row['protein_g'] as num?)?.toDouble(),
+        fatG: (row['fat_g'] as num?)?.toDouble(),
+        carbG: (row['carb_g'] as num?)?.toDouble(),
+        basisJson: row['basis'] as String?,
+        confidence: (row['confidence'] as num?)?.toDouble(),
+        source: '${row['source'] ?? 'ai'}',
+        model: row['model'] as String?,
+        servingsBasis: row['servings_basis'] as int?,
+      );
+
+  /// 把握度文案（对齐原型 badge：高/中/低）。
+  String get confidenceLabel {
+    final c = confidence;
+    if (c == null) return '—';
+    if (c >= 0.8) return '高';
+    if (c >= 0.5) return '中';
+    return '低';
+  }
+
+  int get perServingKcalRounded => perServingKcal.round();
+  int get totalKcalRounded => totalKcal.round();
+}
+
+/// 写热量用的草稿（saveNutrition 的入参）。
+class NutritionDraft {
+  final double perServingKcal;
+  final double totalKcal;
+  final double? proteinG;
+  final double? fatG;
+  final double? carbG;
+  final String? basisJson;
+  final double? confidence;
+  final String source;
+  final String? model;
+  final int? servingsBasis;
+
+  const NutritionDraft({
+    required this.perServingKcal,
+    required this.totalKcal,
+    this.proteinG,
+    this.fatG,
+    this.carbG,
+    this.basisJson,
+    this.confidence,
+    this.source = 'ai',
+    this.model,
+    this.servingsBasis,
+  });
+
+  /// AI 的 high/medium/low → 数值。
+  static double? confidenceFromWire(String? c) => switch (c) {
+        'high' => 0.9,
+        'medium' => 0.6,
+        'low' => 0.3,
+        _ => null,
+      };
+}

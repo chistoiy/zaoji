@@ -1,12 +1,16 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../data/store_scope.dart';
 import '../data/sync/sync_engine.dart';
+import '../data/sync/sync_scope.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/chili_scale.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/time_capsule_text.dart';
+import 'ai_settings_page.dart';
 import 'cooking_page.dart';
 import 'menus_page.dart';
 import 'recipe_edit_page.dart';
@@ -169,6 +173,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 const SizedBox(height: 10),
               ],
               _Hero(recipe: recipe),
+              const SizedBox(height: 16),
+              _NutritionBlock(recipe: recipe),
               const SizedBox(height: 22),
               _SectionTitle(
                 num: '01',
@@ -286,6 +292,243 @@ class _ResumeBanner extends StatelessWidget {
           TextButton(
             onPressed: onDiscard,
             child: const Text('放弃', style: TextStyle(fontSize: 12.5)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// R27 · 热量区（FR-AI-20~28 + FR-REC-22/23）。
+///
+/// 三种形态：**有数据** → 结果卡（AI 估算，仅供参考 + 模型 + 把握度 + 免责）；
+/// **没数据** → 「估算热量」入口按钮——入口**恒定显示**，配没配 AI 都在，
+/// 未配置时点它引导去配置页（一个默认隐藏的能力等于不存在）。
+class _NutritionBlock extends StatefulWidget {
+  const _NutritionBlock({required this.recipe});
+
+  final Recipe recipe;
+
+  @override
+  State<_NutritionBlock> createState() => _NutritionBlockState();
+}
+
+class _NutritionBlockState extends State<_NutritionBlock> {
+  bool _busy = false;
+
+  Future<void> _estimate() async {
+    final store = StoreScope.of(context);
+    final engine = SyncScope.of(context);
+    final r = widget.recipe;
+    setState(() => _busy = true);
+    void say(String msg, {bool goSettings = false}) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 3),
+        action: goSettings
+            ? SnackBarAction(
+                label: '去配置',
+                textColor: Colors.white,
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const AiSettingsPage()),
+                ),
+              )
+            : null,
+      ));
+    }
+
+    try {
+      final res = await engine.aiCall('/api/ai/calories', {
+        'name': r.name,
+        'servings': r.servings,
+        'ingredients': [
+          for (final i in r.ingredients)
+            {
+              'name': i.name,
+              'amount': i.qty,
+              'kind': i.isMain ? 'main' : 'side',
+            }
+        ],
+      });
+      if (res['ok'] != true) {
+        final msg = '${res['message'] ?? res['error'] ?? '估算失败'}';
+        say(msg.contains('未启用') || res['error'] == 'off'
+            ? 'AI 或「卡路里估算」未启用 · $msg'
+            : msg);
+        return;
+      }
+      final n = (res['result'] as Map).cast<String, Object?>();
+      num d(Object? v) => v is num ? v : num.tryParse('$v') ?? 0;
+      await store.saveNutrition(
+        r.id,
+        NutritionDraft(
+          perServingKcal: d(n['kcal_per_serving']).toDouble(),
+          totalKcal: d(n['total_kcal']).toDouble(),
+          proteinG: d(n['protein_g']).toDouble(),
+          fatG: d(n['fat_g']).toDouble(),
+          carbG: d(n['carb_g']).toDouble(),
+          basisJson: jsonEncode(n['per_ingredient'] ?? const []),
+          confidence:
+              NutritionDraft.confidenceFromWire('${n['confidence']}'),
+          source: 'ai',
+          model: '${res['model'] ?? ''}',
+          servingsBasis: r.servings,
+        ),
+      );
+      if (!mounted) return;
+      final kcal = d(n['kcal_per_serving']).round();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('估算完成 · 每份 ≈ $kcal 千卡'),
+            duration: const Duration(seconds: 2)),
+      );
+    } catch (e) {
+      final s = '$e';
+      final notConfigured =
+          s.contains('401') || s.contains('未配置') || s.contains('StateError');
+      final off = s.contains('未启用') || s.contains('off');
+      say(notConfigured
+          ? '还没配置大模型，配好就能估算热量'
+          : off
+              ? '「卡路里估算」能力当前是关闭的，可在配置页打开'
+              : '估算失败：$s', goSettings: notConfigured || off);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final store = StoreScope.of(context);
+    // SyncScope 做成**可选依赖**：详情页在个别测试里是脱离引擎单独 pump 的
+    // （R24 就有这情况），缺它只影响「未配置」徽标的显示，入口照常渲染。
+    final engine =
+        context.getInheritedWidgetOfExactType<SyncScope>()?.engine;
+    final n = store.nutritionFor(widget.recipe.id);
+
+    if (n == null) {
+      final unconfigured =
+          engine?.aiStatusCache != null && engine!.aiStatusCache!['configured'] != true;
+      return OutlinedButton.icon(
+        key: const ValueKey('ai-calories-entry'),
+        onPressed: _busy ? null : _estimate,
+        icon: _busy
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: ZaojiColors.ai))
+            : const Icon(Icons.auto_awesome, size: 16, color: ZaojiColors.ai),
+        label: Text(
+          _busy
+              ? '正在估算…'
+              : unconfigured
+                  ? '估算热量（未配置）'
+                  : '估算热量',
+          style: const TextStyle(fontSize: 13, color: ZaojiColors.ai),
+        ),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: Color(0x406E4468)),
+          backgroundColor: ZaojiColors.aiBg,
+        ),
+      );
+    }
+
+    return Container(
+      key: const ValueKey('nutrition-card'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(ZaojiRadius.lg),
+        border: Border.all(color: const Color(0x336E4468)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, size: 14, color: ZaojiColors.ai),
+              const SizedBox(width: 6),
+              const Text('AI 估算',
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: ZaojiColors.ai)),
+              const Spacer(),
+              Text('把握度 ${n.confidenceLabel}',
+                  style: const TextStyle(
+                      fontSize: 11, color: ZaojiColors.muted)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text('≈ ${n.perServingKcalRounded}',
+                  style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w700,
+                      color: ZaojiColors.ai,
+                      height: 1)),
+              const SizedBox(width: 8),
+              // Flexible：数字与说明文字共处一 Row，窄屏上必须让文字换行
+              // 而不是把卡撑爆（widget 测试 414 宽实测溢出 52px 的教训）
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Text(
+                    '千卡 / 每份 · 整锅约 ${n.totalKcalRounded} 千卡',
+                    style: const TextStyle(
+                        fontSize: 12, color: ZaojiColors.ink2),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              for (final e in [
+                ('蛋白质', n.proteinG),
+                ('脂肪', n.fatG),
+                ('碳水', n.carbG),
+              ])
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          e.$2 == null
+                              ? '—'
+                              : '${e.$2!.round()}g',
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w700)),
+                      Text(e.$1,
+                          style: const TextStyle(
+                              fontSize: 11, color: ZaojiColors.muted)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '${n.source == 'ai' && n.model != null && n.model!.isNotEmpty ? '${n.model} · ' : ''}'
+            '来源：${n.source == 'ai' ? 'AI 估算' : '手动填写'}。'
+            'AI 估算，仅供参考，不能用于医疗或饮食处方。',
+            style:
+                const TextStyle(fontSize: 10.5, color: ZaojiColors.muted, height: 1.6),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _busy ? null : _estimate,
+              child: Text(_busy ? '正在重算…' : '重新估算',
+                  style: const TextStyle(
+                      fontSize: 12, color: ZaojiColors.ai)),
+            ),
           ),
         ],
       ),

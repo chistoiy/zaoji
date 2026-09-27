@@ -663,6 +663,35 @@ class SyncEngine extends ChangeNotifier {
     return rows.isEmpty ? null : rows.first.data;
   }
 
+  // ───────────────────────── AI 代理（R27） ─────────────────────────
+
+  /// `/api/ai/*` 的统一直达通道：鉴权与同步走同一个 token，
+  /// 失败原样抛（`SyncTransportException` 带服务端的 error/message，
+  /// UI 按 kind 分支：off=去开开关、auth=Key 被拒、timeout=去设置页…）。
+  ///
+  /// 服务端返回非 2xx 也走异常；缓存状态留在 [aiStatusCache] 供入口徽标同步读。
+  Future<Map<String, Object?>> aiCall(String path,
+      [Map<String, Object?>? body]) async {
+    final token = await _prefs.token();
+    final serverUrl = await _prefs.serverUrl();
+    if (serverUrl == null) {
+      throw StateError('还没有可用的服务端地址，无法使用 AI 能力');
+    }
+    final t = await _transportOf(serverUrl);
+    final res = body == null
+        ? await t.get(path, token: token)
+        : await t.post(path, body, token: token);
+    if (path == '/api/ai/status') aiStatusCache = res;
+    return res;
+  }
+
+  /// 最近一次 `/api/ai/status` 的响应。null = 本会话还没读到。
+  /// 入口徽标（FR-AI-10「未配置」）读它——**读不到按未配置渲染**，
+  /// 布局照旧占位，绝不因「还没查」而把入口抹掉。
+  Map<String, Object?>? aiStatusCache;
+
+  bool get aiLooksConfigured => aiStatusCache?['configured'] == true;
+
   // ───────────────────────── 媒体（R16 / R17） ─────────────────────────
 
   /// 已拉取的媒体字节缓存。内容寻址 = 同一个 `(sha256, 档位)` 永远是同一份字节，

@@ -373,12 +373,126 @@ class RecipeStore extends ChangeNotifier {
     final db = _db!;
     final out = await _loadAll(db);
     recipes = out;
+    // R27：热量是菜谱的附属同步数据（FR-AI-51），跟菜谱一起重载。
+    await _loadNutrition(db);
     // R23：同步引擎拉回的可能就是别人排的菜单——menus/备菜板跟着一起重载。
     await _loadMenus(db);
     await _loadPrepBoards(db);
     _reindex();
     notifyListeners();
     return out;
+  }
+
+  // ─────────────── R27 · 热量（nutrition 表，与菜谱一对一） ───────────────
+
+  final Map<String, Nutrition> _nutritionByRecipe = {};
+
+  /// 这道菜的热量估算；null = 没算过。
+  ///
+  /// **显示只看有没有数据，不看本机配没配 AI**（FR-REC-23）——
+  /// 数据是同步来的普通业务数据，在 Android 上算的，iOS 打开就该看到。
+  Nutrition? nutritionFor(String recipeId) => _nutritionByRecipe[recipeId];
+
+  Future<void> _loadNutrition(ZaojiDb db) async {
+    _nutritionByRecipe.clear();
+    final rows = await db
+        .customSelect(
+          'SELECT * FROM nutrition WHERE deleted_at IS NULL',
+        )
+        .get();
+    for (final row in rows) {
+      final n = Nutrition.fromRow(row.data);
+      _nutritionByRecipe[n.recipeId] = n;
+    }
+  }
+
+  /// 写入/覆盖一道菜的热量（一对一：已有活行则 UPDATE rev+1，否则 INSERT）。
+  /// 与 createRecipe 同一条纪律：五列规范 + HLC 盖章 + 事务，
+  /// 内存态与防抖通知放在事务提交之后（R15 的 zone 教训）。
+  Future<void> saveNutrition(String recipeId, NutritionDraft draft) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    final existing = _nutritionByRecipe[recipeId];
+
+    late Nutrition stored;
+    await db.transaction(() async {
+      var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+      String next() => hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+      final values = <String, Object?>{
+        'recipe_id': recipeId,
+        'per_serving_kcal': draft.perServingKcal,
+        'total_kcal': draft.totalKcal,
+        'protein_g': draft.proteinG,
+        'fat_g': draft.fatG,
+        'carb_g': draft.carbG,
+        'basis': draft.basisJson,
+        'confidence': draft.confidence,
+        'source': draft.source,
+        'model': draft.model,
+        'servings_basis': draft.servingsBasis,
+      };
+      if (existing == null) {
+        final id = _ulids.next();
+        await _insert(db, kNutritionTable, {
+          'id': id,
+          'updated_at': next(),
+          'updated_by': nodeId,
+          'rev': 1,
+          'deleted_at': null,
+          ...values,
+        });
+        stored = Nutrition(
+          id: id,
+          recipeId: recipeId,
+          perServingKcal: draft.perServingKcal,
+          totalKcal: draft.totalKcal,
+          proteinG: draft.proteinG,
+          fatG: draft.fatG,
+          carbG: draft.carbG,
+          basisJson: draft.basisJson,
+          confidence: draft.confidence,
+          source: draft.source,
+          model: draft.model,
+          servingsBasis: draft.servingsBasis,
+        );
+      } else {
+        await db.customUpdate(
+          'UPDATE nutrition SET updated_at = ?, updated_by = ?, rev = rev + 1, '
+          'per_serving_kcal = ?, total_kcal = ?, protein_g = ?, fat_g = ?, '
+          'carb_g = ?, basis = ?, confidence = ?, source = ?, model = ?, '
+          'servings_basis = ? WHERE id = ?',
+          variables: [
+            Variable(next()),
+            Variable(nodeId),
+            for (final k in [
+              'per_serving_kcal', 'total_kcal', 'protein_g', 'fat_g', 'carb_g',
+              'basis', 'confidence', 'source', 'model', 'servings_basis'
+            ])
+              Variable(values[k]),
+            Variable(existing.id),
+          ],
+        );
+        stored = Nutrition(
+          id: existing.id,
+          recipeId: recipeId,
+          perServingKcal: draft.perServingKcal,
+          totalKcal: draft.totalKcal,
+          proteinG: draft.proteinG,
+          fatG: draft.fatG,
+          carbG: draft.carbG,
+          basisJson: draft.basisJson,
+          confidence: draft.confidence,
+          source: draft.source,
+          model: draft.model,
+          servingsBasis: draft.servingsBasis,
+        );
+      }
+    });
+
+    _nutritionByRecipe[recipeId] = stored;
+    notifyListeners();
+    _fireLocalWrite();
   }
 
   // ── 本机偏好（local_pref 表）──
@@ -479,9 +593,12 @@ class RecipeStore extends ChangeNotifier {
         'servings': draft.servings,
         'notes': draft.notes,
         'tags': jsonEncode(draft.tags),
-        'source': 'manual',
-        'source_model': null,
-        'source_at': null,
+        // R27：来源不再写死——AI 补全的菜谱带 'ai' + 模型名 + 生成时间（FR-REC-35）
+        'source': draft.source,
+        'source_model': draft.sourceModel,
+        'source_at': draft.source == 'ai'
+            ? now.toIso8601String()
+            : null,
         'last_cooked_at': null,
         'cover_sha256': draft.coverSha256,
       });
@@ -532,7 +649,9 @@ class RecipeStore extends ChangeNotifier {
             .map((i) => Ingredient(i.name, i.qty, isMain: i.isMain))
             .toList(),
         steps: draft.steps.map((t) => Step(t)).toList(),
-        source: RecipeSource.manual,
+        source: RecipeSource.values.asNameMap()[draft.source] ??
+            RecipeSource.manual,
+        sourceModel: draft.sourceModel,
         cookedCount: 0,
         art: draft.art,
         palette: draft.palette,
@@ -1360,6 +1479,11 @@ class RecipeDraft {
   /// 封面照片的内容哈希。null = 无封面（编辑时也传现有值以保持不变）。
   final String? coverSha256;
 
+  /// R27：来源标记（FR-REC-21/35）。AI 补全后保存 = 'ai' + 模型名；
+  /// 默认 'manual'——不传就和以前完全一样。
+  final String source;
+  final String? sourceModel;
+
   const RecipeDraft({
     required this.name,
     this.sub = '',
@@ -1373,6 +1497,8 @@ class RecipeDraft {
     this.palette = const [],
     this.tags = const {},
     this.coverSha256,
+    this.source = 'manual',
+    this.sourceModel,
   });
 
   RecipeDraft copyWith({
@@ -1443,6 +1569,8 @@ const String kSeedNodeId = 'seed';
 
 // ── 表引用（来自 shared 的 schema，客户端不另写列清单）──
 final TableSpec kRecipeTable = kTables.firstWhere((t) => t.name == 'recipe');
+final TableSpec kNutritionTable =
+    kTables.firstWhere((t) => t.name == 'nutrition');
 final TableSpec kCookSessionTable = kTables.firstWhere(
     (t) => t.name == 'cook_session');
 final TableSpec kIngredientTable = kTables.firstWhere(
