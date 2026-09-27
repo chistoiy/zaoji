@@ -7,6 +7,7 @@
 /// ③ 代理大模型调用（Web 端前端不持有 API Key）。
 library;
 
+export 'src/ai.dart';
 export 'src/backup.dart';
 export 'src/config.dart';
 export 'src/db.dart';

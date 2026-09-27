@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import 'ai.dart';
 import 'backup.dart';
 import 'config.dart';
 import 'db.dart';
@@ -113,10 +114,28 @@ const List<Map<String, Object?>> kEndpoints = [
     'status': 'ready'
   },
   {
+    'path': '/api/ai/status',
+    'method': 'GET',
+    'title': 'AI 配置状态（只回掩码，绝不回 Key）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/config',
+    'method': 'POST',
+    'title': 'AI 配置写入（Key 加密存服务端，不读回）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/test',
+    'method': 'POST',
+    'title': 'AI 连通测试（区分 Key 错 / 模型错 / 网络不通）',
+    'status': 'ready'
+  },
+  {
     'path': '/api/ai/{feature}',
     'method': 'POST',
-    'title': '大模型代理（Web 端专用通道）',
-    'status': 'planned'
+    'title': '大模型代理：calories / recipe_fill（Web 与 App 同一通道）',
+    'status': 'ready'
   },
 ];
 
@@ -152,6 +171,10 @@ class ServerState {
   /// 文件日志（R19③）。控制台与文件双写同一份内容。
   /// `config.logsDir == null`（测试/未配置）时自动退化为纯控制台。
   late final FileLog log = FileLog(config.logsDir, echo: stdout.writeln);
+
+  /// AI 代理（R27）。Key 存 server_setting（非同步表），只回掩码。
+  late final AiService ai =
+      AiService(settings: DbSettingStore(db), log: log, serverId: serverId);
 
   /// 备份服务（R26）。配置在 `data/backup_config.json`——
   /// **故意不进库**：库会被打进备份包，凭据不能跟着包上云（自我引用）。

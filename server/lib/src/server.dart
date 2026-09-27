@@ -7,6 +7,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import 'ai.dart';
 import 'backup.dart';
 import 'config.dart';
 import 'file_log.dart';
@@ -161,7 +162,15 @@ class ZaojiServer {
       ..post('/api/admin/backup/test',
           (Request req) => _backupTest(state, req))
       ..get('/api/admin/backup', (Request req) => _backupStatus(state, req))
-      ..post('/api/admin/backup', (Request req) => _backupRun(state, req));
+      ..post('/api/admin/backup', (Request req) => _backupRun(state, req))
+      // R27：AI 代理。鉴权与数据接口同一套（token 优先，开放模式认来访者）——
+      // 花的是家里的 API 费用，门槛不能低于看家里菜谱。
+      ..get('/api/ai/status', (Request req) => _aiStatus(state, req))
+      ..post('/api/ai/config', (Request req) => _aiConfigWrite(state, req))
+      ..post('/api/ai/test', (Request req) => _aiTest(state, req))
+      ..post('/api/ai/calories', (Request req) => _aiCalories(state, req))
+      ..post('/api/ai/recipe-fill',
+          (Request req) => _aiRecipeFill(state, req));
 
     /// 首页：如果托管了 Flutter Web 产物，让位给它——
     /// 否则用户打开地址看到的永远是状态页，而不是他要的 App。
@@ -923,6 +932,121 @@ class ZaojiServer {
     return _json(err == null
         ? {'ok': true, 'message': '远端可写可删，连通正常'}
         : {'ok': false, 'message': err}, status: err == null ? 200 : 502);
+  }
+
+  // ───────────────────────── R27 · AI 代理 ─────────────────────────
+
+  /// AI 的统一鉴权：与 `/api/media` 同一道门（token 优先，开放模式按 X-Node-Id）。
+  static Response? _aiGuard(ServerState state, Request req) {
+    final device = _resolveDevice(state, req);
+    if (device == null) return _unauthorized(state);
+    return null;
+  }
+
+  static Future<Response> _aiStatus(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    final cfg = state.ai.config();
+    return _json({
+      'ok': true,
+      ...cfg.redacted(),
+      'usage': state.ai.usage(),
+      'providers': kAiProviders,
+    });
+  }
+
+  static Future<Response> _aiConfigWrite(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    final Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    if (body == null) {
+      return _json({'error': 'bad_request', 'message': '请求体必须是 JSON'},
+          status: 400);
+    }
+    final merged = state.ai.config().mergedWith(body);
+    await state.ai.saveConfig(merged);
+    return _json({'ok': true, ...merged.redacted()}); // 永远掩码
+  }
+
+  static Future<Response> _aiTest(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    Map<String, Object?> body = const {};
+    try {
+      body = await _readJson(req) ?? const {};
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    try {
+      await state.ai.testConnection(
+        baseUrl: body['baseUrl'] as String?,
+        model: body['model'] as String?,
+        key: body['key'] as String?,
+      );
+      return _json({'ok': true, 'message': '连通正常'});
+    } on AiUpstreamException catch (e) {
+      // 四类失败给四种文案（FR-AI-03），kind 原样透传给 UI
+      return _json({'ok': false, 'error': e.kind, 'message': e.detail},
+          status: 502);
+    }
+  }
+
+  static Future<Response> _aiCalories(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    if (body == null || body['name'] == null) {
+      return _json({'error': 'bad_request', 'message': '需要 name 与 ingredients'},
+          status: 400);
+    }
+    final ingredients = (body['ingredients'] as List? ?? const [])
+        .whereType<Map<Object?, Object?>>()
+        .map((e) => e.cast<String, Object?>())
+        .toList();
+    if (ingredients.isEmpty) {
+      return _json({'error': 'bad_request', 'message': '食材清单是空的'},
+          status: 400);
+    }
+    try {
+      final r = await state.ai.calories(
+        name: '${body['name']}',
+        servings: body['servings'] is int ? body['servings'] as int : 2,
+        ingredients: ingredients,
+      );
+      return _json({'ok': true, ...r});
+    } on AiUpstreamException catch (e) {
+      return _json({'ok': false, 'error': e.kind, 'message': e.detail},
+          status: e.kind == 'off' ? 409 : 502);
+    }
+  }
+
+  static Future<Response> _aiRecipeFill(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    final name = '${body?['name'] ?? ''}'.trim();
+    if (name.isEmpty) {
+      return _json({'error': 'bad_request', 'message': '至少要给菜名'},
+          status: 400);
+    }
+    try {
+      final r = await state.ai.recipeFill(
+          name: name, hint: body?['hint'] as String?);
+      return _json({'ok': true, ...r});
+    } on AiUpstreamException catch (e) {
+      return _json({'ok': false, 'error': e.kind, 'message': e.detail},
+          status: e.kind == 'off' ? 409 : 502);
+    }
   }
 
   /// 读 JSON 请求体。解析失败返回 null（调用方给 400），不要抛；
