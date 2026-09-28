@@ -61,3 +61,6 @@ desktop.ini
 # ── Node（app/tool/boot_check.cjs / sync_e2e.cjs 的 playwright-core）──
 node_modules/
 package-lock.json
+
+# 手动跑服务端时重定向的控制台输出（logs/ 里已有正式文件日志）
+server/*.log
