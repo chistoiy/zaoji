@@ -63,10 +63,10 @@ dart compile exe bin/zaoji_server.dart -o zaoji_server.exe
 dart test                      # 全量（当前 267 个）
 
 # 客户端（Android 调试直跑；Web 见上文）
-cd app; flutter pub get; flutter test    # 当前 282 个
+cd app; flutter pub get; flutter test    # 当前 288 个
 
 # 共享库
-cd shared; dart test           # 当前 146 个
+cd shared; dart test           # 当前 154 个
 
 # Web 端落盘闸门（改过写入路径 / 升过 drift / 换过 Web 存储实现就必须跑）
 node tool\web_write_loss_probe.cjs          # 断言不过 exit 1；加 --headed 用真浏览器再走一遍

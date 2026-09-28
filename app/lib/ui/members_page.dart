@@ -122,6 +122,15 @@ class MembersPage extends StatelessWidget {
               value: store.allergenConfirmOnMenu,
               onChanged: store.setAllergenConfirmOnMenu,
             ),
+            // R42 · 别名归一：一个开关同时管「备菜合并」和「过敏警示」。
+            // 拆成两个开关迟早出现"合并算一样、警示算两样"这种没人解释得了的界面。
+            _SwitchRow(
+              keyName: 'alias-switch',
+              title: '食材别名归一',
+              sub: '番茄 = 西红柿：备菜合并和过敏警示都按这张表判',
+              value: store.ingredientAliasOn,
+              onChanged: store.setIngredientAlias,
+            ),
           ],
         ],
       ),

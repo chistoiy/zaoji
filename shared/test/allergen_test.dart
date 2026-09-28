@@ -147,4 +147,68 @@ void main() {
       expect(AllergenMatch.matchRecipe(ingredients: ['虾'], members: []), isEmpty);
     });
   });
+
+  // R42 · 同义词表接进判定。立场：**成员填「番茄」、菜里写「西红柿」命不中是漏报方向**，
+  // 而漏报过敏的代价是有人被送急诊——这一组钉的就是这条缝。
+  group('同义词表（R42）', () {
+    test('传了表才展开：不传表的行为与 R40 逐字一致', () {
+      expect(AllergenMatch.hit(ingredient: '西红柿', word: '番茄'), isFalse,
+          reason: '默认空表 = 逐字比；老调用点行为不许被这次改动带偏');
+      expect(AllergenMatch.hit(ingredient: '西红柿', word: '番茄',
+          aliases: kIngredientAliases), isTrue);
+    });
+
+    test('两个方向都成立：菜里写变体、成员填规范名，反过来也一样', () {
+      expect(AllergenMatch.hit(ingredient: '番茄', word: '西红柿',
+          aliases: kIngredientAliases), isTrue,
+          reason: '反向：成员填「西红柿」、菜里写「番茄」也必须报');
+    });
+
+    test('同一个规范名的兄弟变体互相认（洋芋 ↔ 马铃薯，都归土豆）', () {
+      expect(AllergenMatch.hit(ingredient: '马铃薯 500 g', word: '洋芋',
+          aliases: kIngredientAliases), isTrue,
+          reason: '表里两条各自指向「土豆」，只走一跳就命不上，必须按组展开');
+    });
+
+    test('单位尾巴先剥再比，别名展开不会把「西红柿 2 个」判成不认', () {
+      expect(AllergenMatch.hit(ingredient: '西红柿 2 个', word: '番茄',
+          aliases: kIngredientAliases), isTrue);
+    });
+
+    test('别名对忌口同样生效（同一样东西不是"同一类"，展开没有猜的成分）', () {
+      expect(AllergenMatch.hit(ingredient: '西红柿', word: '番茄',
+          expandCategory: false, aliases: kIngredientAliases), isTrue,
+          reason: '关掉类名展开只该关掉"洋葱拦住爸爸不吃葱"那种猜，别名不是猜');
+    });
+
+    test('类名展开也吃别名：成员填「西红柿」+ 菜里写「番茄酱」照样报（包含关系）', () {
+      final hits = AllergenMatch.matchRecipe(
+        ingredients: ['番茄酱', '鸡蛋'],
+        members: [member('m9', '小宝', allergies: ['西红柿'])],
+        aliases: kIngredientAliases,
+      );
+      expect(hits.map((h) => h.ingredient), contains('番茄酱'));
+    });
+
+    test('matchRecipe 透传别名表：整道菜的命中清单里带上变体那一行', () {
+      final hits = AllergenMatch.matchRecipe(
+        ingredients: ['西红柿', '土豆'],
+        members: [member('m9', '小宝', allergies: ['番茄'], dislikes: ['洋芋'])],
+        aliases: kIngredientAliases,
+      );
+      expect(hits.where((h) => h.isAllergy).map((h) => h.ingredient),
+          contains('西红柿'));
+      expect(hits.where((h) => !h.isAllergy).map((h) => h.ingredient),
+          contains('土豆'));
+    });
+
+    test('空别名表 = 全不展开（调用方关掉开关时走这条路）', () {
+      final hits = AllergenMatch.matchRecipe(
+        ingredients: ['西红柿'],
+        members: [member('m9', '小宝', allergies: ['番茄'])],
+        aliases: const {},
+      );
+      expect(hits, isEmpty);
+    });
+  });
 }

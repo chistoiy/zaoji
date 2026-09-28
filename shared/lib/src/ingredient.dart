@@ -106,6 +106,42 @@ const Set<String> _processedFormChars = {
 bool _isProcessedForm(String extra) =>
     extra.isNotEmpty && extra.split('').every(_processedFormChars.contains);
 
+/// 内置同义词表（R23 起）。**同一张表喂两处**：备菜合并的归一（下面）
+/// 和过敏原判定的归一（`allergen.dart` 的 `kIngredientAliases` 引用同一份）。
+///
+/// 值必须是**库里可能出现的写法**；同义词是产品知识不是算法，
+/// 宁少勿错——合并错一道菜的用量，用户会买错东西（见上面的加工形态黑名单）。
+///
+/// ★ R42 把它从 app 挪进 shared 的理由只有一个：**判定与合并必须共用一张表**。
+/// 以前这张表只在库存/备菜那一侧，过敏判定不查它，于是「成员填番茄、菜里写西红柿」
+/// 命不中——那是**漏报方向**（少报一次过敏的代价是有人被送急诊），
+/// 比合并错一样东西严重一个数量级。表放两边 = 迟早漂；放一份 = 结构上漂不了。
+const Map<String, String> kIngredientAliases = {
+  '西红柿': '番茄',
+  '马铃薯': '土豆',
+  '洋芋': '土豆',
+  '包菜': '卷心菜',
+  '圆白菜': '卷心菜',
+};
+
+/// 别名组：把一个写法展开成"同一个东西的所有写法"（含它自己）。
+///
+/// 传进来的表是「变体 → 规范名」（`kIngredientAliases` 的形状），
+/// 所以两边都要查：`番茄` 要能反查出 `西红柿`（只有正向映射时命不中），
+/// `洋芋` 要能连带出 `土豆` 与 `马铃薯`（同一个规范名的兄弟变体）。
+/// 空表就是原样返回——调用方关掉归一时走这条路。
+Set<String> aliasGroup(String word, Map<String, String> aliases) {
+  final w = word.trim();
+  if (w.isEmpty || aliases.isEmpty) return {w};
+  final canonOf = (String s) => aliases[s] ?? s;
+  final root = canonOf(w);
+  final out = <String>{w, root};
+  for (final e in aliases.entries) {
+    if (canonOf(e.key) == root) out.add(e.key);
+  }
+  return out;
+}
+
 /// 基于已知食材词表的归一器。
 ///
 /// 做两件事：

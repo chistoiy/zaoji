@@ -13,6 +13,9 @@
 /// - 「虾」命中"基围虾"、"虾皮"、"虾滑"（双向包含）；
 /// - 「贝类」这类**类名**光靠包含命中不了"扇贝/花甲/蚝油"——它们字面上没有"贝类"两个字。
 ///   这是原型的朴素写法真正的漏洞，也是 [kCategoryWords] 存在的唯一理由；
+/// - ★ **同物异名**（成员填「番茄」、菜里写「西红柿」）光靠包含也命中不了，
+///   而且这是**漏报方向**。别名表 [kIngredientAliases] 由调用方传进来，
+///   与备菜合并**共用同一张表**（R42 把它从 app 挪进 shared 就是为了这件事）；
 /// - 不确定的加工品（"食用香精""可能含有坚果"）不在词表里，
 ///   那种信息只有用户自己知道——所以成员页允许自由填词（填什么就命中什么）。
 ///
@@ -21,6 +24,13 @@
 /// [AllergenHit.isAllergy] 为真走**警告**（条纹 + 图标 + 写明谁），
 /// 忌口只走**提示**（淡一档）。把"爸爸不吃香菜"做成红色警告，
 /// 用户三天后就开始无视所有警告——那时真正的过敏也一起被无视了。
+///
+/// 归一器 `norm` 与别名表都来自 `ingredient.dart`：**一份表、两处用**，
+/// 判定与合并对同一样东西的叫法必须一致。
+
+library;
+
+import 'ingredient.dart';
 class AllergenWord {
   const AllergenWord(this.text);
 
@@ -129,36 +139,60 @@ class AllergenMatch {
   /// 一个过敏原词与一个食材名是否算命中。
   ///
   /// 三条任一即命中（顺序按"最常见 → 最兜底"）：
-  ///  1. 归一后相等；
+  ///  1. 归一后相等，**或两边经 [aliases] 展开成同义词后相等/互相包含**
+  ///     （R42：成员填「番茄」、菜里写「西红柿」必须命中——那是漏报方向）；
   ///  2. 双向包含（食材名含词，或词含食材名——"鸡蛋"↔"蛋"两个方向都要成立）；
   ///  3. 词是类名（在 [kCategoryWords] 里），且食材名命中该类任一成员词。
   ///
   /// 第 3 条**只对过敏做**：忌口误报的代价是"提示多了没人看"，
   /// 而"爸爸不吃葱"因为"洋葱"被拦一道菜，纯属添堵。
+  /// 第 1 条的别名展开**过敏与忌口都做**：西红柿和番茄是同一样东西，
+  /// 不是"同类"，展开它没有任何猜的成分，关掉只会漏报。
   static bool hit({
     required String ingredient,
     required String word,
     bool expandCategory = true,
+    Map<String, String> aliases = const {},
   }) {
     final i = norm(ingredient), w = norm(word);
     if (i.isEmpty || w.isEmpty) return false;
-    if (i == w) return true;
-    if (i.contains(w) || w.contains(i)) return true;
+    // 两边各自展开成同义词组（空别名表时就是各自本身，行为与 R40 完全一致）
+    // 变量别叫 is/in：`is` 是 Dart 的关键字，`in` 在 for 里也是
+    final iSet = aliases.isEmpty ? {i} : aliasGroup(i, aliases);
+    final wSet = aliases.isEmpty ? {w} : aliasGroup(w, aliases);
+    for (final a in iSet) {
+      for (final b in wSet) {
+        if (a.isEmpty || b.isEmpty) continue;
+        if (a == b) return true;
+        if (a.contains(b) || b.contains(a)) return true;
+      }
+    }
     if (!expandCategory) return false;
-    // 走 _groupOf 而不是 kCategoryWords[w]：用户填的多半是"牛奶""小麦"这种
-    // **成员词**，只查键的话这张表对半数填法直接失效（第一轮测试就是这么红的）。
-    final members = _groupOf(w);
-    if (members == null) return false;
-    return members.any((m) => m.isNotEmpty && (i.contains(m) || m.contains(i)));
+    for (final b in wSet) {
+      // 走 _groupOf 而不是 kCategoryWords[b]：用户填的多半是"牛奶""小麦"这种
+      // **成员词**，只查键的话这张表对半数填法直接失效（第一轮测试就是这么红的）。
+      final members = _groupOf(b);
+      if (members == null) continue;
+      for (final a in iSet) {
+        if (a.isEmpty) continue;
+        if (members.any((m) => m.isNotEmpty && (a.contains(m) || m.contains(a)))) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /// 一道菜 × 全家成员 → 命中清单（按人聚合，过敏排在忌口前）。
   ///
   /// [ingredients]：食材名原文列表（详情页/卡片都从这儿喂，保证四处口径一致）。
   /// [members]：`{id, name, allergens:[...], dislikes:[...]}`。
+  /// [aliases]：同义词表（`kIngredientAliases`）。调用方按本机开关决定传不传，
+  /// 判定本身不猜开关语义。
   static List<AllergenHit> matchRecipe({
     required List<String> ingredients,
     required List<Map<String, Object?>> members,
+    Map<String, String> aliases = const {},
   }) {
     final out = <AllergenHit>[];
     final seen = <String>{};
@@ -175,7 +209,11 @@ class AllergenMatch {
         for (final raw in words) {
           if (norm(raw).isEmpty) continue;
           for (final ing in ingredients) {
-            if (!hit(ingredient: ing, word: raw, expandCategory: expand)) continue;
+            if (!hit(
+                ingredient: ing,
+                word: raw,
+                expandCategory: expand,
+                aliases: aliases)) continue;
             final key = '$id|$kind|$raw|$ing';
             if (!seen.add(key)) continue;
             out.add(AllergenHit(

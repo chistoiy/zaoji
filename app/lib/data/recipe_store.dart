@@ -1795,7 +1795,7 @@ class RecipeStore extends ChangeNotifier {
         for (final i in r.ingredients) i.name,
     };
     final resolver =
-        PantryAliasResolver(known, explicit: kDefaultAliases);
+        PantryAliasResolver(known, explicit: _aliasTable);
     return mergeIngredients(batches,
         sourceNames: names, resolver: resolver.resolve);
   }
@@ -1866,6 +1866,15 @@ class RecipeStore extends ChangeNotifier {
   /// 警示开关（本机偏好）。默认全开：一个默认关闭的安全提示等于没有提示。
   bool allergenWarnInRecipes = true;
   bool allergenConfirmOnMenu = true;
+
+  /// 同义词表要不要生效（R42 · 原型「警示设置 · 食材别名归一」那一行）。
+  ///
+  /// **一处开关管两处**：备菜合并的归一 + 过敏原判定的别名展开。
+  /// 理由与 R40「控件只有一份」同源——番茄=西红柿这件事要么两头都认，
+  /// 要么两头都不认；分成两个开关，迟早出现"合并把它算一样、
+  /// 警示把它算两样"这种没人能解释的界面。
+  /// 默认开：关掉它的后果是**漏报**（少一条提示），而不是少一次麻烦。
+  bool ingredientAliasOn = true;
 
   Future<void> _loadMembers(ZaojiDb db) async {
     final rows = await db
@@ -1998,9 +2007,9 @@ class RecipeStore extends ChangeNotifier {
   /// 一道菜命中了谁（FR-SET-05 的判定入口，四处 UI 共用这一个）。
   ///
   /// 比的是**双方各自归一后的原文**（`AllergenMatch.norm` 剥空白与单位尾），
-  /// 外加双向包含 + 类名展开。同义词表（番茄=西红柿）在库存归一那一侧
-  /// （FR-SET-06 别名表管理，P1），过敏原判定目前不查它——
-  /// 菜里写"西红柿"、成员填"番茄"要命中，得等别名表接进来。
+  /// 外加双向包含 + 类名展开 + **同义词表**（R42：成员填「番茄」、菜里写「西红柿」
+  /// 必须命中——那是漏报方向）。同义词表就是备菜合并用的那一张，
+  /// 受同一个本机开关 [ingredientAliasOn] 管（原型「警示设置 · 食材别名归一」那一行）。
   List<AllergenHit> allergenHitsFor(Recipe recipe) =>
       AllergenMatch.matchRecipe(
         ingredients: [for (final i in recipe.ingredients) i.name],
@@ -2013,6 +2022,7 @@ class RecipeStore extends ChangeNotifier {
               'dislikes': m.dislikes,
             }
         ],
+        aliases: _aliasTable,
       );
 
   /// 某样食材命中了谁（详情页食材行那条条纹标注用）。
@@ -2028,7 +2038,12 @@ class RecipeStore extends ChangeNotifier {
               'dislikes': m.dislikes,
             }
         ],
+        aliases: _aliasTable,
       );
+
+  /// 判定与合并共用的那张同义词表；开关关掉就是不给表（`hit` 退回逐字比）。
+  Map<String, String> get _aliasTable =>
+      ingredientAliasOn ? kDefaultAliases : const {};
 
   /// 全库有多少道菜和这位家人**过敏**冲突（成员页顶部那条汇总）。
   ///
@@ -2080,6 +2095,20 @@ class RecipeStore extends ChangeNotifier {
   static const _prefAllergenWarn = 'allergen_warn_in_recipes';
   static const _prefAllergenConfirm = 'allergen_confirm_on_menu';
 
+  /// R42 · 同义词表开关（判定 + 合并共用），与上面两个同属本机偏好。
+  static const _prefIngredientAlias = 'ingredient_alias_on';
+
+  void setIngredientAlias(bool on) {
+    if (ingredientAliasOn == on) return;
+    ingredientAliasOn = on;
+    notifyListeners();
+    final db = _db;
+    if (db != null) {
+      unawaited(_persistPref(_prefIngredientAlias, jsonEncode(on))
+          .catchError((Object e) => debugPrint('别名归一偏好写库失败：$e')));
+    }
+  }
+
   Future<void> _persistPref(String key, String value) async {
     final db = _db;
     if (db == null) return;
@@ -2096,14 +2125,19 @@ class RecipeStore extends ChangeNotifier {
     final rows = await db
         .customSelect(
           'SELECT ${cols[0]}, ${cols[1]} FROM ${kLocalPrefTable.name} '
-          'WHERE ${cols[0]} IN (?, ?)',
-          variables: [Variable(_prefAllergenWarn), Variable(_prefAllergenConfirm)],
+          'WHERE ${cols[0]} IN (?, ?, ?)',
+          variables: [
+            Variable(_prefAllergenWarn),
+            Variable(_prefAllergenConfirm),
+            Variable(_prefIngredientAlias),
+          ],
         )
         .get();
     for (final r in rows) {
       final on = '${r.data[cols[1]]}' == 'true';
       if (r.data[cols[0]] == _prefAllergenWarn) allergenWarnInRecipes = on;
       if (r.data[cols[0]] == _prefAllergenConfirm) allergenConfirmOnMenu = on;
+      if (r.data[cols[0]] == _prefIngredientAlias) ingredientAliasOn = on;
     }
   }
 
@@ -2424,17 +2458,12 @@ final TableSpec kMenuTable = kTables.firstWhere((t) => t.name == 'menu');
 final TableSpec kMenuItemTable =
     kTables.firstWhere((t) => t.name == 'menu_item');
 
-/// R23 · 内置同义词表（备菜归一用）。
+/// R23 · 内置同义词表（备菜归一 + R42 起过敏原判定共用）。
 ///
-/// 值必须是**库里可能出现的写法**；同义词是产品知识不是算法，
-/// 宁少勿错——合并错一道菜的用量，用户会买错东西（见 shared 加工形态黑名单）。
-const Map<String, String> kDefaultAliases = {
-  '西红柿': '番茄',
-  '马铃薯': '土豆',
-  '洋芋': '土豆',
-  '包菜': '卷心菜',
-  '圆白菜': '卷心菜',
-};
+/// **表本身在 `shared` 的 [kIngredientAliases]**——判定与合并必须吃同一张表，
+/// 两边各写一份迟早会漂（R40 就漂过一次：库存认「西红柿」，过敏判定不认）。
+/// 这里留一个名字是给备菜那条调用路径的，别再往回加条目。
+const Map<String, String> kDefaultAliases = kIngredientAliases;
 
 /// 一顿饭的安排（menu 行的内存态）。
 class MenuPlan {
