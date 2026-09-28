@@ -60,10 +60,10 @@ zaoji_server.exe -w ..\app\build\web     # 浏览器访问 https://<IP>:8667/
 cd server; dart pub get
 dart run bin/zaoji_server.dart -w ..\app\build\web
 dart compile exe bin/zaoji_server.dart -o zaoji_server.exe
-dart test                      # 全量（当前 251 个）
+dart test                      # 全量（当前 255 个）
 
 # 客户端（Android 调试直跑；Web 见上文）
-cd app; flutter pub get; flutter test    # 当前 154 个
+cd app; flutter pub get; flutter test    # 当前 158 个
 
 # 共享库
 cd shared; dart test           # 当前 132 个
