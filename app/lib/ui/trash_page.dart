@@ -48,11 +48,11 @@ class _TrashPageState extends State<TrashPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(title: const Text('回收站')),
       body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: ZaojiColors.accent),
+          ? Center(
+              child: CircularProgressIndicator(color: context.zj.accent),
             )
           : _deleted.isEmpty
           ? const _Empty()
@@ -83,32 +83,32 @@ class _Empty extends StatelessWidget {
             Container(
               width: 64,
               height: 64,
-              decoration: const BoxDecoration(
-                color: ZaojiColors.paper2,
+              decoration: BoxDecoration(
+                color: context.zj.paper2,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.delete_outline,
                 size: 30,
-                color: ZaojiColors.muted,
+                color: context.zj.muted,
               ),
             ),
             const SizedBox(height: 14),
             Text(
               '回收站是空的',
-              style: ZaojiText.display(
+              style: ZaojiText.displayOf(context, 
                 fontSize: 17,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               '删掉的菜会暂时放在这里，可以恢复。',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12.5,
                 height: 1.7,
-                color: ZaojiColors.muted,
+                color: context.zj.muted,
               ),
             ),
           ],
@@ -128,9 +128,9 @@ class _TrashCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: Row(
         children: [
@@ -140,7 +140,7 @@ class _TrashCard extends StatelessWidget {
               children: [
                 Text(
                   recipe.name,
-                  style: ZaojiText.display(
+                  style: ZaojiText.displayOf(context, 
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                   ),
@@ -152,9 +152,9 @@ class _TrashCard extends StatelessWidget {
                   recipe.sub.isEmpty
                       ? '${recipe.ingredients.length} 种食材 · ${recipe.steps.length} 步'
                       : recipe.sub,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12.5,
-                    color: ZaojiColors.muted,
+                    color: context.zj.muted,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -165,7 +165,7 @@ class _TrashCard extends StatelessWidget {
           FilledButton.icon(
             onPressed: onRestore,
             style: FilledButton.styleFrom(
-              backgroundColor: ZaojiColors.accent,
+              backgroundColor: context.zj.accent,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
             icon: const Icon(Icons.restore, size: 16),

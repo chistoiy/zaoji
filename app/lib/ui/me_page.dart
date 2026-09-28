@@ -12,6 +12,7 @@ import '../theme.dart';
 import 'ai_settings_page.dart';
 import 'conflict_box_page.dart';
 import 'health_page.dart';
+import 'theme_page.dart';
 import 'trash_page.dart';
 
 /// 「我的」页（R13 最小可用版）：设备信息 + 同步配对与状态。
@@ -143,10 +144,10 @@ class _MePageState extends State<MePage> {
   Widget _connBadge(SyncEngine engine) {
     final p = engine.serverPing;
     final color = p == null
-        ? ZaojiColors.muted
+        ? context.zj.muted
         : p.ok
-            ? const Color(0xFF2E7D32)
-            : const Color(0xFFB2491C);
+            ? context.zj.ok
+            : context.zj.accent;
     final text = p == null ? '未检测连接' : p.label;
     return Row(
       children: [
@@ -201,7 +202,7 @@ class _MePageState extends State<MePage> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: ZaojiColors.accent),
+            style: FilledButton.styleFrom(backgroundColor: context.zj.accent),
             child: const Text('解除'),
           ),
         ],
@@ -223,13 +224,13 @@ class _MePageState extends State<MePage> {
   Widget build(BuildContext context) {
     final engine = SyncScope.of(context);
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(title: const Text('我的')),
       body: !_loaded
-          ? const Center(
+          ? Center(
               child: CircularProgressIndicator(
                 strokeWidth: 2.5,
-                color: ZaojiColors.accent,
+                color: context.zj.accent,
               ),
             )
           : ListView(
@@ -250,12 +251,12 @@ class _MePageState extends State<MePage> {
                     children: [
                       _kv('设备标识（nodeId）', '$_nodeIdShort…', mono: true),
                       const SizedBox(height: 8),
-                      const Text(
+                      Text(
                         '这是本机在家庭同步里的身份。换设备 = 新身份，各自配对到同一台服务端即可。',
                         style: TextStyle(
                           fontSize: 11.5,
                           height: 1.6,
-                          color: ZaojiColors.muted,
+                          color: context.zj.muted,
                         ),
                       ),
                     ],
@@ -268,9 +269,9 @@ class _MePageState extends State<MePage> {
                     children: [
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(
+                        leading: Icon(
                           Icons.rule_folder_outlined,
-                          color: ZaojiColors.muted,
+                          color: context.zj.muted,
                         ),
                         title: const Text('冲突箱', style: TextStyle(fontSize: 14)),
                         subtitle: const Text(
@@ -281,9 +282,9 @@ class _MePageState extends State<MePage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             _ConflictBadge(store: StoreScope.of(context)),
-                            const Icon(
+                            Icon(
                               Icons.chevron_right,
-                              color: ZaojiColors.muted,
+                              color: context.zj.muted,
                             ),
                           ],
                         ),
@@ -296,18 +297,18 @@ class _MePageState extends State<MePage> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         key: const ValueKey('me-health'),
-                        leading: const Icon(
+                        leading: Icon(
                           Icons.monitor_heart_outlined,
-                          color: ZaojiColors.muted,
+                          color: context.zj.muted,
                         ),
                         title: const Text('数据体检', style: TextStyle(fontSize: 14)),
                         subtitle: const Text(
                           '缺料缺步骤、过期库存、挂起的锅——一页看账',
                           style: TextStyle(fontSize: 12),
                         ),
-                        trailing: const Icon(
+                        trailing: Icon(
                           Icons.chevron_right,
-                          color: ZaojiColors.muted,
+                          color: context.zj.muted,
                         ),
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
@@ -317,18 +318,41 @@ class _MePageState extends State<MePage> {
                       ),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(
+                        key: const ValueKey('me-theme'),
+                        leading: Icon(
+                          Icons.contrast,
+                          color: context.zj.muted,
+                        ),
+                        title: const Text('主题', style: TextStyle(fontSize: 14)),
+                        subtitle: Text(
+                          '${StoreScope.of(context).tokens.label} · '
+                          '${StoreScope.of(context).tokens.hint} · 只影响这台设备',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right,
+                          color: context.zj.muted,
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const ThemePage(),
+                          ),
+                        ),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
                           Icons.delete_outline,
-                          color: ZaojiColors.muted,
+                          color: context.zj.muted,
                         ),
                         title: const Text('回收站', style: TextStyle(fontSize: 14)),
                         subtitle: const Text(
                           '删除的菜谱可以在这里恢复',
                           style: TextStyle(fontSize: 12),
                         ),
-                        trailing: const Icon(
+                        trailing: Icon(
                           Icons.chevron_right,
-                          color: ZaojiColors.muted,
+                          color: context.zj.muted,
                         ),
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(builder: (_) => const TrashPage()),
@@ -346,12 +370,12 @@ class _MePageState extends State<MePage> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Text(
+                Text(
                   '备份能力在服务端状态页（http://127.0.0.1:8666/）配置。',
                   style: TextStyle(
                     fontSize: 11.5,
                     height: 1.6,
-                    color: ZaojiColors.muted,
+                    color: context.zj.muted,
                   ),
                 ),
               ],
@@ -381,12 +405,12 @@ class _MePageState extends State<MePage> {
         ),
         const SizedBox(height: 12),
         if (!paired) ...[
-          const Text(
+          Text(
             '服务端地址',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: ZaojiColors.ink2,
+              color: context.zj.ink2,
             ),
           ),
           const SizedBox(height: 6),
@@ -399,8 +423,8 @@ class _MePageState extends State<MePage> {
             //   就切到「安全键盘」（没有云输入、长得像密码框），用户以为
             //   地址框被当成了密码输入。autocorrect: false 已经够挡住自动纠错。
             onChanged: (v) => _onUrlChanged(engine, v),
-            style: const TextStyle(fontSize: 14, color: ZaojiColors.ink),
-            cursorColor: ZaojiColors.accent,
+            style: TextStyle(fontSize: 14, color: context.zj.ink),
+            cursorColor: context.zj.accent,
             decoration: _inputDecoration(kDefaultServerUrl),
           ),
           const SizedBox(height: 12),
@@ -426,9 +450,9 @@ class _MePageState extends State<MePage> {
               ),
               TextButton(
                 onPressed: _unpair,
-                child: const Text(
+                child: Text(
                   '解除配对',
-                  style: TextStyle(fontSize: 12, color: ZaojiColors.muted),
+                  style: TextStyle(fontSize: 12, color: context.zj.muted),
                 ),
               ),
             ],
@@ -439,18 +463,18 @@ class _MePageState extends State<MePage> {
               FilledButton.icon(
                 onPressed: engine.isBusy ? null : () => engine.sync(),
                 icon: engine.isBusy
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.white,
+                          color: context.zj.onAccent,
                         ),
                       )
                     : const Icon(Icons.sync, size: 16),
                 label: Text(engine.isBusy ? '同步中…' : '立即同步'),
                 style: FilledButton.styleFrom(
-                  backgroundColor: ZaojiColors.accent,
+                  backgroundColor: context.zj.accent,
                 ),
               ),
               const SizedBox(width: 12),
@@ -473,14 +497,14 @@ class _MePageState extends State<MePage> {
                 key: const ValueKey('sync-progress'),
                 value: engine.progress!.ratio,
                 minHeight: 4,
-                backgroundColor: ZaojiColors.paper2,
-                valueColor: const AlwaysStoppedAnimation(ZaojiColors.accent),
+                backgroundColor: context.zj.paper2,
+                valueColor: AlwaysStoppedAnimation(context.zj.accent),
               ),
             ),
             const SizedBox(height: 4),
             Text(engine.progress!.label,
-                style: const TextStyle(
-                    fontSize: 11.5, color: ZaojiColors.muted)),
+                style: TextStyle(
+                    fontSize: 11.5, color: context.zj.muted)),
           ],
           const SizedBox(height: 10),
           Row(
@@ -532,15 +556,15 @@ class _MePageState extends State<MePage> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0x14D2491C),
+              color: context.zj.accentSoft,
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
             ),
             child: Text(
               engine.lastError!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11.5,
                 height: 1.55,
-                color: ZaojiColors.accent,
+                color: context.zj.accent,
               ),
             ),
           ),
@@ -561,7 +585,7 @@ class _MePageState extends State<MePage> {
               icon: const Icon(Icons.sync, size: 16),
               label: Text(engine.isBusy ? '同步中…' : '立即同步'),
               style: FilledButton.styleFrom(
-                backgroundColor: ZaojiColors.accent,
+                backgroundColor: context.zj.accent,
               ),
             ),
             const SizedBox(width: 12),
@@ -569,41 +593,41 @@ class _MePageState extends State<MePage> {
           ],
         ),
         const SizedBox(height: 10),
-        const Text(
+        Text(
           '免配对接入：点「立即同步」上传与下载数据。',
-          style: TextStyle(fontSize: 11.5, height: 1.6, color: ZaojiColors.muted),
+          style: TextStyle(fontSize: 11.5, height: 1.6, color: context.zj.muted),
         ),
       ];
     }
     return [
       Row(
         children: [
-          const Text(
+          Text(
             '免配对接入',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF2E7D32),
+              color: context.zj.ok,
             ),
           ),
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
-              color: const Color(0x142E7D32),
+              color: context.zj.okBg,
               borderRadius: BorderRadius.circular(999),
             ),
-            child: const Text(
+            child: Text(
               '自动同步',
-              style: TextStyle(fontSize: 11, color: Color(0xFF2E7D32)),
+              style: TextStyle(fontSize: 11, color: context.zj.ok),
             ),
           ),
         ],
       ),
       const SizedBox(height: 8),
-      const Text(
+      Text(
         '无需配对；改动自动上传，打开页面自动下载。',
-        style: TextStyle(fontSize: 11.5, height: 1.6, color: ZaojiColors.muted),
+        style: TextStyle(fontSize: 11.5, height: 1.6, color: context.zj.muted),
       ),
     ];
   }
@@ -611,12 +635,12 @@ class _MePageState extends State<MePage> {
   /// 模式二「固定口令」：填一次家里的连接口令，换本机专属 token。
   List<Widget> _passcodeAccess(SyncEngine engine) {
     return [
-      const Text(
+      Text(
         '连接口令',
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: ZaojiColors.ink2,
+          color: context.zj.ink2,
         ),
       ),
       const SizedBox(height: 6),
@@ -628,8 +652,8 @@ class _MePageState extends State<MePage> {
               obscureText: true,
               autocorrect: false,
               enableSuggestions: false,
-              style: const TextStyle(fontSize: 14, color: ZaojiColors.ink),
-              cursorColor: ZaojiColors.accent,
+              style: TextStyle(fontSize: 14, color: context.zj.ink),
+              cursorColor: context.zj.accent,
               decoration: _inputDecoration('向家里管服务器的人要'),
             ),
           ),
@@ -637,7 +661,7 @@ class _MePageState extends State<MePage> {
           FilledButton(
             onPressed: engine.isBusy ? null : _join,
             style: FilledButton.styleFrom(
-              backgroundColor: ZaojiColors.accent,
+              backgroundColor: context.zj.accent,
               padding: const EdgeInsets.symmetric(
                 horizontal: 22,
                 vertical: 14,
@@ -653,12 +677,12 @@ class _MePageState extends State<MePage> {
   /// 模式三「配对码」（also 未读到模式时的保守回退）：既有 6 位一次性配对码。
   List<Widget> _pairCodeAccess(SyncEngine engine) {
     return [
-      const Text(
+      Text(
         '配对码（5 分钟有效，一次性）',
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: ZaojiColors.ink2,
+          color: context.zj.ink2,
         ),
       ),
       const SizedBox(height: 6),
@@ -672,12 +696,12 @@ class _MePageState extends State<MePage> {
                 FilteringTextInputFormatter.allow(RegExp(r'[0-9A-Za-z]')),
                 LengthLimitingTextInputFormatter(6),
               ],
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 letterSpacing: 4,
-                color: ZaojiColors.ink,
+                color: context.zj.ink,
               ),
-              cursorColor: ZaojiColors.accent,
+              cursorColor: context.zj.accent,
               decoration: _inputDecoration('如 YE28Z4'),
             ),
           ),
@@ -685,7 +709,7 @@ class _MePageState extends State<MePage> {
           FilledButton(
             onPressed: engine.isBusy ? null : _pair,
             style: FilledButton.styleFrom(
-              backgroundColor: ZaojiColors.accent,
+              backgroundColor: context.zj.accent,
               padding: const EdgeInsets.symmetric(
                 horizontal: 22,
                 vertical: 14,
@@ -696,12 +720,12 @@ class _MePageState extends State<MePage> {
         ],
       ),
       const SizedBox(height: 10),
-      const Text(
+      Text(
         '配对码在服务端那台电脑上取：浏览器打开 http://127.0.0.1:8666/api/pair/code（只能本机取，这是刻意的安全设计）。',
         style: TextStyle(
           fontSize: 11.5,
           height: 1.6,
-          color: ZaojiColors.muted,
+          color: context.zj.muted,
         ),
       ),
     ];
@@ -716,23 +740,23 @@ class _MePageState extends State<MePage> {
       SyncPhase.syncing => '正在同步…',
       SyncPhase.error => lastText,
       _ => lastText,
-    }, style: const TextStyle(fontSize: 11.5, color: ZaojiColors.muted));
+    }, style: TextStyle(fontSize: 11.5, color: context.zj.muted));
   }
 
   InputDecoration _inputDecoration(String hint) => InputDecoration(
     isDense: true,
     filled: true,
-    fillColor: Colors.white,
+    fillColor: context.zj.surface,
     hintText: hint,
-    hintStyle: const TextStyle(fontSize: 13, color: ZaojiColors.muted),
+    hintStyle: TextStyle(fontSize: 13, color: context.zj.muted),
     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(ZaojiRadius.md),
-      borderSide: const BorderSide(color: ZaojiColors.line),
+      borderSide: BorderSide(color: context.zj.line),
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(ZaojiRadius.md),
-      borderSide: const BorderSide(color: ZaojiColors.accent, width: 1.4),
+      borderSide: BorderSide(color: context.zj.accent, width: 1.4),
     ),
   );
 
@@ -740,7 +764,7 @@ class _MePageState extends State<MePage> {
     padding: const EdgeInsets.only(bottom: 8, left: 4),
     child: Text(
       text,
-      style: ZaojiText.display(fontSize: 15, fontWeight: FontWeight.w600),
+      style: ZaojiText.displayOf(context, fontSize: 15, fontWeight: FontWeight.w600),
     ),
   );
 
@@ -751,7 +775,7 @@ class _MePageState extends State<MePage> {
         width: 108,
         child: Text(
           k,
-          style: const TextStyle(fontSize: 12, color: ZaojiColors.muted),
+          style: TextStyle(fontSize: 12, color: context.zj.muted),
         ),
       ),
       Expanded(
@@ -761,7 +785,7 @@ class _MePageState extends State<MePage> {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: 12.5,
-            color: ZaojiColors.ink,
+            color: context.zj.ink,
             fontFamily: mono ? 'monospace' : null,
           ),
         ),
@@ -816,8 +840,8 @@ class _AiEntryCardState extends State<_AiEntryCard> {
             : '已配置未启用';
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: const Icon(Icons.auto_awesome,
-          color: ZaojiColors.ai, size: 22),
+      leading: Icon(Icons.auto_awesome,
+          color: context.zj.ai, size: 22),
       title: const Text('大模型能力', style: TextStyle(fontSize: 14)),
       subtitle: Text(
         _error != null && s == null
@@ -832,15 +856,15 @@ class _AiEntryCardState extends State<_AiEntryCard> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: ZaojiColors.paper2,
+                color: context.zj.paper2,
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: const Text('未配置',
+              child: Text('未配置',
                   style: TextStyle(
-                      fontSize: 10.5, color: ZaojiColors.muted)),
+                      fontSize: 10.5, color: context.zj.muted)),
             ),
           const SizedBox(width: 6),
-          const Icon(Icons.chevron_right, color: ZaojiColors.muted),
+          Icon(Icons.chevron_right, color: context.zj.muted),
         ],
       ),
       onTap: () => Navigator.of(context).push(
@@ -887,16 +911,16 @@ class _ConflictBadgeState extends State<_ConflictBadge> {
       margin: const EdgeInsets.only(right: 6),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0x14D2491C),
+        color: context.zj.accentSoft,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         '$_count',
         key: const ValueKey('conflict-badge'),
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w600,
-          color: ZaojiColors.accent,
+          color: context.zj.accent,
         ),
       ),
     );
@@ -914,9 +938,9 @@ class _SyncCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: child,
     );

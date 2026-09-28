@@ -72,7 +72,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     final menus = store.menus;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -99,20 +99,20 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           style: const TextStyle(fontSize: 14)),
                       subtitle: Text(
                           '${m.serveAt.isEmpty ? '' : '${m.serveAt} 开饭 · '}${m.recipeIds.length} 道菜',
-                          style: const TextStyle(
-                              fontSize: 11.5, color: ZaojiColors.muted)),
+                          style: TextStyle(
+                              fontSize: 11.5, color: context.zj.muted)),
                       onTap: () {
                         Navigator.pop(ctx);
                         store.addDish(m.id, recipe.id);
                       },
                     ),
                   if (menus.isEmpty)
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.all(20),
                       child: Text('还没有排过餐次——去「菜单」页先排一顿',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                              fontSize: 12.5, color: ZaojiColors.muted)),
+                              fontSize: 12.5, color: context.zj.muted)),
                     ),
                 ],
               ),
@@ -229,11 +229,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               const SizedBox(height: 26),
               const _SectionTitle(num: '02', title: '做法'),
               const SizedBox(height: 4),
-              const Padding(
+              Padding(
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text(
                   '琥珀色的时间可以点一下直接起计时',
-                  style: TextStyle(fontSize: 12, color: ZaojiColors.muted),
+                  style: TextStyle(fontSize: 12, color: context.zj.muted),
                 ),
               ),
               for (var i = 0; i < recipe.steps.length; i++)
@@ -274,7 +274,7 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFC33F14),
+              backgroundColor: context.zj.accentDeep,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('删除'),
@@ -313,25 +313,25 @@ class _ResumeBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: ZaojiColors.amberBg,
+        color: context.zj.amberBg,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: ZaojiColors.amber.withValues(alpha: 0.4)),
+        border: Border.all(color: context.zj.amber.withValues(alpha: 0.4)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
       child: Row(
         children: [
-          const Icon(Icons.local_fire_department,
-              size: 18, color: ZaojiColors.amber),
+          Icon(Icons.local_fire_department,
+              size: 18, color: context.zj.amber),
           const SizedBox(width: 8),
           Expanded(
             child: GestureDetector(
               onTap: onResume,
               child: Text(
                 '继续做菜（第 ${session.currentStep + 1} 步）',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
-                  color: ZaojiColors.amber,
+                  color: context.zj.amber,
                 ),
               ),
             ),
@@ -376,7 +376,7 @@ class _NutritionBlockState extends State<_NutritionBlock> {
         action: goSettings
             ? SnackBarAction(
                 label: '去配置',
-                textColor: Colors.white,
+                textColor: context.zj.onAccent,
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
                       builder: (_) => const AiSettingsPage()),
@@ -462,23 +462,23 @@ class _NutritionBlockState extends State<_NutritionBlock> {
         key: const ValueKey('ai-calories-entry'),
         onPressed: _busy ? null : _estimate,
         icon: _busy
-            ? const SizedBox(
+            ? SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: ZaojiColors.ai))
-            : const Icon(Icons.auto_awesome, size: 16, color: ZaojiColors.ai),
+                    strokeWidth: 2, color: context.zj.ai))
+            : Icon(Icons.auto_awesome, size: 16, color: context.zj.ai),
         label: Text(
           _busy
               ? '正在估算…'
               : unconfigured
                   ? '估算热量（未配置）'
                   : '估算热量',
-          style: const TextStyle(fontSize: 13, color: ZaojiColors.ai),
+          style: TextStyle(fontSize: 13, color: context.zj.ai),
         ),
         style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: Color(0x406E4468)),
-          backgroundColor: ZaojiColors.aiBg,
+          side: BorderSide(color: context.zj.aiBg),
+          backgroundColor: context.zj.aiBg,
         ),
       );
     }
@@ -487,26 +487,26 @@ class _NutritionBlockState extends State<_NutritionBlock> {
       key: const ValueKey('nutrition-card'),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-        border: Border.all(color: const Color(0x336E4468)),
+        border: Border.all(color: context.zj.aiBg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.auto_awesome, size: 14, color: ZaojiColors.ai),
+              Icon(Icons.auto_awesome, size: 14, color: context.zj.ai),
               const SizedBox(width: 6),
-              const Text('AI 估算',
+              Text('AI 估算',
                   style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                      color: ZaojiColors.ai)),
+                      color: context.zj.ai)),
               const Spacer(),
               Text('把握度 ${n.confidenceLabel}',
-                  style: const TextStyle(
-                      fontSize: 11, color: ZaojiColors.muted)),
+                  style: TextStyle(
+                      fontSize: 11, color: context.zj.muted)),
             ],
           ),
           const SizedBox(height: 8),
@@ -514,10 +514,10 @@ class _NutritionBlockState extends State<_NutritionBlock> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text('≈ ${n.perServingKcalRounded}',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
-                      color: ZaojiColors.ai,
+                      color: context.zj.ai,
                       height: 1)),
               const SizedBox(width: 8),
               // Flexible：数字与说明文字共处一 Row，窄屏上必须让文字换行
@@ -527,8 +527,8 @@ class _NutritionBlockState extends State<_NutritionBlock> {
                   padding: const EdgeInsets.only(bottom: 3),
                   child: Text(
                     '千卡 / 每份 · 整锅约 ${n.totalKcalRounded} 千卡',
-                    style: const TextStyle(
-                        fontSize: 12, color: ZaojiColors.ink2),
+                    style: TextStyle(
+                        fontSize: 12, color: context.zj.ink2),
                   ),
                 ),
               ),
@@ -553,8 +553,8 @@ class _NutritionBlockState extends State<_NutritionBlock> {
                           style: const TextStyle(
                               fontSize: 15, fontWeight: FontWeight.w700)),
                       Text(e.$1,
-                          style: const TextStyle(
-                              fontSize: 11, color: ZaojiColors.muted)),
+                          style: TextStyle(
+                              fontSize: 11, color: context.zj.muted)),
                     ],
                   ),
                 ),
@@ -566,15 +566,15 @@ class _NutritionBlockState extends State<_NutritionBlock> {
             '来源：${n.source == 'ai' ? 'AI 估算' : '手动填写'}。'
             'AI 估算，仅供参考，不能用于医疗或饮食处方。',
             style:
-                const TextStyle(fontSize: 10.5, color: ZaojiColors.muted, height: 1.6),
+                TextStyle(fontSize: 10.5, color: context.zj.muted, height: 1.6),
           ),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: _busy ? null : _estimate,
               child: Text(_busy ? '正在重算…' : '重新估算',
-                  style: const TextStyle(
-                      fontSize: 12, color: ZaojiColors.ai)),
+                  style: TextStyle(
+                      fontSize: 12, color: context.zj.ai)),
             ),
           ),
         ],
@@ -611,10 +611,10 @@ class _Hero extends StatelessWidget {
         ],
         Text(
           recipe.sub,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13.5,
             height: 1.6,
-            color: ZaojiColors.ink2,
+            color: context.zj.ink2,
           ),
         ),
         const SizedBox(height: 14),
@@ -637,21 +637,21 @@ class _Hero extends StatelessWidget {
           Container(
             padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
             decoration: BoxDecoration(
-              color: ZaojiColors.aiBg,
+              color: context.zj.aiBg,
               borderRadius: BorderRadius.circular(ZaojiRadius.sm),
-              border: Border.all(color: ZaojiColors.ai.withValues(alpha: 0.25)),
+              border: Border.all(color: context.zj.ai.withValues(alpha: 0.25)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.auto_awesome, size: 14, color: ZaojiColors.ai),
+                Icon(Icons.auto_awesome, size: 14, color: context.zj.ai),
                 const SizedBox(width: 7),
                 Expanded(
                   child: Text(
                     '这道菜由 ${recipe.sourceModel ?? '大模型'} 生成，请核对后再做',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       height: 1.5,
-                      color: ZaojiColors.ai,
+                      color: context.zj.ai,
                     ),
                   ),
                 ),
@@ -677,15 +677,15 @@ class _Stat extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 12, color: ZaojiColors.muted),
+          style: TextStyle(fontSize: 12, color: context.zj.muted),
         ),
         const SizedBox(height: 2),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: ZaojiColors.ink,
+            color: context.zj.ink,
           ),
         ),
       ],
@@ -708,23 +708,23 @@ class _SectionTitle extends StatelessWidget {
       children: [
         Text(
           num,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w600,
-            color: ZaojiColors.accent,
+            color: context.zj.accent,
             letterSpacing: 0.5,
           ),
         ),
         const SizedBox(width: 8),
         Text(
           title,
-          style: ZaojiText.display(fontSize: 17, fontWeight: FontWeight.w500),
+          style: ZaojiText.displayOf(context, fontSize: 17, fontWeight: FontWeight.w500),
         ),
         if (trailing != null) ...[
           const Spacer(),
           Text(
             trailing!,
-            style: const TextStyle(fontSize: 12, color: ZaojiColors.muted),
+            style: TextStyle(fontSize: 12, color: context.zj.muted),
           ),
         ],
       ],
@@ -741,9 +741,9 @@ class _IngredientTable extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: Column(
         children: [
@@ -777,7 +777,7 @@ class _IngredientRow extends StatelessWidget {
           SizedBox(
             width: 14,
             child: item.isMain
-                ? const Icon(Icons.circle, size: 6, color: ZaojiColors.accent)
+                ? Icon(Icons.circle, size: 6, color: context.zj.accent)
                 : const SizedBox.shrink(),
           ),
           Expanded(
@@ -786,14 +786,14 @@ class _IngredientRow extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13.5,
                 fontWeight: item.isMain ? FontWeight.w600 : FontWeight.w400,
-                color: ZaojiColors.ink,
+                color: context.zj.ink,
               ),
             ),
           ),
           // 分量显示**原文**（「半个」不写成「0.5 个」）
           Text(
             item.qty,
-            style: const TextStyle(fontSize: 13, color: ZaojiColors.muted),
+            style: TextStyle(fontSize: 13, color: context.zj.muted),
           ),
         ],
       ),
@@ -846,10 +846,12 @@ class _StepRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const bodyStyle = TextStyle(
+    // 原来是 `bodyStyle`：颜色进了主题令牌之后它不再是常量，
+    // 每次 build 现取一份，代价可以忽略，但**不能留在 里**。
+    final bodyStyle = TextStyle(
       fontSize: 14.5,
       height: 1.85,
-      color: ZaojiColors.ink,
+      color: context.zj.ink,
     );
 
     return Padding(
@@ -862,16 +864,16 @@ class _StepRow extends StatelessWidget {
             height: 22,
             margin: const EdgeInsets.only(top: 3),
             decoration: BoxDecoration(
-              color: ZaojiColors.paper2,
+              color: context.zj.paper2,
               borderRadius: BorderRadius.circular(ZaojiRadius.xs),
             ),
             alignment: Alignment.center,
             child: Text(
               '$index',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: ZaojiColors.ink2,
+                color: context.zj.ink2,
               ),
             ),
           ),
@@ -955,9 +957,9 @@ class _Notes extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
       decoration: BoxDecoration(
-        color: ZaojiColors.paper2,
+        color: context.zj.paper2,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -967,10 +969,10 @@ class _Notes extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 5),
               child: Text(
                 line,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   height: 1.7,
-                  color: ZaojiColors.ink2,
+                  color: context.zj.ink2,
                 ),
               ),
             ),

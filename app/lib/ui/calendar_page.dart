@@ -25,6 +25,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   MonthMarks _marks = const MonthMarks.empty();
   List<CookEvent> _events = const [];
+  List<AddedRecipe> _added = const[]; // v7：这一天新增的菜品
 
   static String _iso(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -57,11 +58,13 @@ class _CalendarPageState extends State<CalendarPage> {
     _busy = true;
     final marks = await store.monthMarks(_focus.year, _focus.month);
     final events = await store.cookEventsOn(_selected);
+    final added = await store.addedRecipesOn(_selected);
     _busy = false;
     if (!mounted) return;
     setState(() {
       _marks = marks;
       _events = events;
+      _added = added;
     });
   }
 
@@ -84,10 +87,10 @@ class _CalendarPageState extends State<CalendarPage> {
     final selMenus = store.menus.where((m) => m.day == _selected).toList();
 
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         title: const Text('日历'),
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
         actions: [
           // R32：统计入口挂这里——「这个月做了多少」的问题从日历页发起最自然。
           IconButton(
@@ -109,14 +112,14 @@ class _CalendarPageState extends State<CalendarPage> {
                 child: Text(
                   '${_focus.year} 年 ${_focus.month} 月',
                   key: const ValueKey('cal-month'),
-                  style: ZaojiText.display(
+                  style: ZaojiText.displayOf(context, 
                       fontSize: 16, fontWeight: FontWeight.w700),
                 ),
               ),
               Text(
                 '本月开火 ${_marks.cookCount} 次',
-                style: const TextStyle(
-                    fontSize: 12, color: ZaojiColors.muted),
+                style: TextStyle(
+                    fontSize: 12, color: context.zj.muted),
               ),
               IconButton(
                 key: const ValueKey('cal-prev'),
@@ -135,36 +138,39 @@ class _CalendarPageState extends State<CalendarPage> {
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
-              _Dot(Color(0xFFB2491C), '做过菜品'),
+            children: [
+              _Dot(context.zj.accent, '做过菜品'),
               SizedBox(width: 16),
-              _Dot(Color(0xFF2A5F6B), '菜单安排'),
+              _Dot(context.zj.tagMethod, '菜单安排', hollow: true),
+              SizedBox(width: 16),
+              _Dot(context.zj.ok, '新增菜品', square: true),
             ],
           ),
           const SizedBox(height: 18),
           Text(
             _selected == todayIso
-                ? '今天 · ${_events.length + selMenus.length} 条记录'
+                ? '今天 · ${_events.length + selMenus.length + _added.length} 条记录'
                 : '${_selected.substring(5).replaceAll('-', '/')} · '
-                    '${_events.length + selMenus.length} 条记录',
-            style: const TextStyle(
+                    '${_events.length + selMenus.length + _added.length} 条记录',
+            style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: ZaojiColors.ink2),
+                color: context.zj.ink2),
           ),
           const SizedBox(height: 8),
           for (final m in selMenus) _menuCard(store, m),
           for (final e in _events) _cookRow(store, e),
-          if (selMenus.isEmpty && _events.isEmpty)
-            const Padding(
+          for (final a in _added) _addedRow(a),
+          if (selMenus.isEmpty && _events.isEmpty && _added.isEmpty)
+            Padding(
               padding: EdgeInsets.symmetric(vertical: 26),
               child: Center(
-                child: Text('这一天还没有记录\n做了菜或排了菜单，都会自动落到这里',
+                child: Text('这一天还没有记录\n做了菜、排了菜单或添了新菜，都会落到这里',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         fontSize: 12.5,
                         height: 1.7,
-                        color: ZaojiColors.muted)),
+                        color: context.zj.muted)),
               ),
             ),
         ],
@@ -185,6 +191,7 @@ class _CalendarPageState extends State<CalendarPage> {
         final inMonth = d.month == _focus.month;
         final hasCook = _marks.cookDays.contains(iso);
         final hasMenu = _marks.menuDays.contains(iso);
+        final hasAdded = _marks.addedDays.contains(iso);
         cells.add(
           InkWell(
             key: ValueKey('cal-$iso'),
@@ -194,11 +201,11 @@ class _CalendarPageState extends State<CalendarPage> {
               margin: const EdgeInsets.all(2),
               decoration: BoxDecoration(
                 color: iso == _selected
-                    ? const Color(0x14D2491C)
+                    ? context.zj.accentSoft
                     : null,
                 shape: BoxShape.circle,
                 border: iso == todayIso
-                    ? Border.all(color: ZaojiColors.accent, width: 1.4)
+                    ? Border.all(color: context.zj.accent, width: 1.4)
                     : null,
               ),
               child: SizedBox(
@@ -211,8 +218,8 @@ class _CalendarPageState extends State<CalendarPage> {
                       style: TextStyle(
                         fontSize: 13.5,
                         color: inMonth
-                            ? ZaojiColors.ink
-                            : ZaojiColors.muted.withValues(alpha: .5),
+                            ? context.zj.ink
+                            : context.zj.muted.withValues(alpha: .5),
                         fontWeight: iso == todayIso
                             ? FontWeight.w700
                             : FontWeight.w500,
@@ -223,9 +230,11 @@ class _CalendarPageState extends State<CalendarPage> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         if (hasCook)
-                          const _MiniDot(Color(0xFFB2491C)),
+                          _MiniDot(context.zj.accent),
                         if (hasMenu)
-                          const _MiniDot(Color(0xFF2A5F6B)),
+                          _MiniDot(context.zj.tagMethod, hollow: true),
+                        if (hasAdded)
+                          _MiniDot(context.zj.ok, square: true),
                       ],
                     ),
                   ],
@@ -244,8 +253,8 @@ class _CalendarPageState extends State<CalendarPage> {
               Expanded(
                 child: Text(w,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontSize: 11, color: ZaojiColors.muted)),
+                    style: TextStyle(
+                        fontSize: 11, color: context.zj.muted)),
               ),
           ],
         ),
@@ -263,7 +272,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Widget _menuCard(RecipeStore store, MenuPlan m) {
     return Material(
-      color: Colors.white,
+      color: context.zj.surface,
       borderRadius: BorderRadius.circular(ZaojiRadius.md),
       child: InkWell(
         key: ValueKey('cal-menu-${m.id}'),
@@ -276,12 +285,12 @@ class _CalendarPageState extends State<CalendarPage> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(ZaojiRadius.md),
-            border: Border.all(color: ZaojiColors.lineSoft),
+            border: Border.all(color: context.zj.lineSoft),
           ),
           child: Row(
             children: [
-              const Icon(Icons.event_available,
-                  size: 18, color: Color(0xFF2A5F6B)),
+              Icon(Icons.event_available,
+                  size: 18, color: context.zj.tagMethod),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -292,8 +301,8 @@ class _CalendarPageState extends State<CalendarPage> {
               ),
               if (m.serveAt.isNotEmpty)
                 Text(m.serveAt,
-                    style: const TextStyle(
-                        fontSize: 12, color: ZaojiColors.muted)),
+                    style: TextStyle(
+                        fontSize: 12, color: context.zj.muted)),
             ],
           ),
         ),
@@ -315,16 +324,16 @@ class _CalendarPageState extends State<CalendarPage> {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.zj.surface,
           borderRadius: BorderRadius.circular(ZaojiRadius.md),
-          border: Border.all(color: ZaojiColors.lineSoft),
+          border: Border.all(color: context.zj.lineSoft),
         ),
         child: Row(
           children: [
             Text(e.time,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 12.5,
-                    color: ZaojiColors.muted,
+                    color: context.zj.muted,
                     fontFeatures: [FontFeature.tabularFigures()])),
             const SizedBox(width: 10),
             Expanded(
@@ -334,7 +343,48 @@ class _CalendarPageState extends State<CalendarPage> {
             ),
             Text('${e.minutes} 分钟',
                 style:
-                    const TextStyle(fontSize: 12, color: ZaojiColors.muted)),
+                    TextStyle(fontSize: 12, color: context.zj.muted)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 某一天「新增菜品」那一行（v7 · FR-LOG-01）。
+  ///
+  /// 刻意不显示耗时：入册这件事没有"做了多久"，硬凑一个数就是假数据。
+  Widget _addedRow(AddedRecipe a) {
+    final recipe = StoreScope.of(context).recipeById(a.recipeId);
+    return InkWell(
+      key: ValueKey('cal-added-${a.recipeId}'),
+      borderRadius: BorderRadius.circular(ZaojiRadius.md),
+      onTap: recipe == null
+          ? null
+          : () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => RecipeDetailPage(recipe: recipe))),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: context.zj.surface,
+          borderRadius: BorderRadius.circular(ZaojiRadius.md),
+          border: Border.all(color: context.zj.lineSoft),
+        ),
+        child: Row(
+          children: [
+            Text(a.time,
+                style: TextStyle(
+                    fontSize: 12.5,
+                    color: context.zj.muted,
+                    fontFeatures: [FontFeature.tabularFigures()])),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(a.recipeName,
+                  style: const TextStyle(
+                      fontSize: 13.5, fontWeight: FontWeight.w600)),
+            ),
+            Text('新增菜品', style: TextStyle(fontSize: 12, color: context.zj.ok)),
           ],
         ),
       ),
@@ -342,35 +392,50 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 }
 
+/// 图例项。形状与日历格子里那三个点**一一对应**（FR-LOG-02 色盲友好）。
 class _Dot extends StatelessWidget {
-  const _Dot(this.color, this.label);
+  const _Dot(this.color, this.label, {this.hollow = false, this.square = false});
   final Color color;
   final String label;
+  final bool hollow;
+  final bool square;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        _MiniDot(color),
+        _MiniDot(color, hollow: hollow, square: square),
         const SizedBox(width: 5),
         Text(label,
             style:
-                const TextStyle(fontSize: 11.5, color: ZaojiColors.muted)),
+                TextStyle(fontSize: 11.5, color: context.zj.muted)),
       ],
     );
   }
 }
 
+/// 日历上的一个小点。
+///
+/// ★ FR-LOG-02 要求"按事件类型区分**形状**（色盲友好）"——只靠颜色区分，
+///   红绿色觉障碍的人看"做过"和"新增"就是两个同色点。所以三种点给三种形状：
+///   做过 = 实心圆、菜单 = 空心环、新增 = 方块。
 class _MiniDot extends StatelessWidget {
-  const _MiniDot(this.color);
+  const _MiniDot(this.color, {this.hollow = false, this.square = false});
   final Color color;
+  final bool hollow;
+  final bool square;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: 6,
       height: 6,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      decoration: BoxDecoration(
+        color: hollow ? Colors.transparent : color,
+        border: hollow ? Border.all(color: color, width: 1.4) : null,
+        shape: square ? BoxShape.rectangle : BoxShape.circle,
+        borderRadius: square ? BorderRadius.circular(1) : null,
+      ),
     );
   }
 }

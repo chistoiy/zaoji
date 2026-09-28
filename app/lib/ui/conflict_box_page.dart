@@ -87,10 +87,10 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         title: const Text('冲突箱'),
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
       ),
       body: ListenableBuilder(
         // 同步落库（冲突卡是业务行，拉回来/归档都靠 reload）后自动重画。
@@ -100,10 +100,10 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
           builder: (context, snap) {
             final groups = snap.data ?? const <ConflictGroup>[];
             if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(
+              return Center(
                 child: CircularProgressIndicator(
                   strokeWidth: 2.5,
-                  color: ZaojiColors.accent,
+                  color: context.zj.accent,
                 ),
               );
             }
@@ -114,9 +114,9 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
               children: [
                 Text(
                   '$total 处待裁决 · 逐字段选保留哪版',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: ZaojiColors.muted,
+                    color: context.zj.muted,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -134,15 +134,15 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
       padding: const EdgeInsets.all(32),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.check_circle_outline, size: 40, color: Color(0xFF2F5B40)),
+        children: [
+          Icon(Icons.check_circle_outline, size: 40, color: context.zj.ok),
           SizedBox(height: 12),
           Text('没有待裁决的冲突', style: TextStyle(fontSize: 15)),
           SizedBox(height: 6),
           Text(
             '两端改了同一个字段时才会出现在这里，字段不重叠的改动会自动合并',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: ZaojiColors.muted),
+            style: TextStyle(fontSize: 12, color: context.zj.muted),
           ),
         ],
       ),
@@ -165,7 +165,7 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
             Expanded(
               child: Text(
                 g.title,
-                style: ZaojiText.display(
+                style: ZaojiText.displayOf(context, 
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
@@ -173,9 +173,9 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
             ),
             Text(
               '$decided/${g.fields.length}',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11.5,
-                color: ZaojiColors.muted,
+                color: context.zj.muted,
               ),
             ),
           ],
@@ -187,7 +187,7 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
         onPressed: _applying || decided == 0
             ? null
             : () => _applyGroup(g),
-        style: FilledButton.styleFrom(backgroundColor: ZaojiColors.accent),
+        style: FilledButton.styleFrom(backgroundColor: context.zj.accent),
         child: Text(_applying ? '提交中…' : '应用这一组的裁决'),
       ),
       const SizedBox(height: 20),
@@ -201,9 +201,9 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -211,10 +211,10 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
           Text(
             fieldLabel(_tblOf(f), f.field),
             key: ValueKey('field-${f.id}'),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
-              color: ZaojiColors.ink2,
+              color: context.zj.ink2,
             ),
           ),
           const SizedBox(height: 8),
@@ -255,10 +255,10 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
         duration: const Duration(milliseconds: 120),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         decoration: BoxDecoration(
-          color: on ? const Color(0x1437634A) : ZaojiColors.paper,
+          color: on ? context.zj.okBg : context.zj.paper,
           borderRadius: BorderRadius.circular(ZaojiRadius.md),
           border: Border.all(
-            color: on ? const Color(0xFF2F5B40) : ZaojiColors.line,
+            color: on ? context.zj.ok : context.zj.line,
             width: on ? 1.4 : 1,
           ),
         ),
@@ -267,7 +267,7 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
             Icon(
               on ? Icons.check_circle : Icons.radio_button_unchecked,
               size: 17,
-              color: on ? const Color(0xFF2F5B40) : ZaojiColors.muted,
+              color: on ? context.zj.ok : context.zj.muted,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -276,9 +276,9 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
                 children: [
                   Text(
                     valueText(value),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13.5,
-                      color: ZaojiColors.ink,
+                      color: context.zj.ink,
                     ),
                   ),
                   Text(
@@ -287,9 +287,9 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
                       if (by.isNotEmpty) deviceTail(by),
                       if (hlcClock(hlc).isNotEmpty) hlcClock(hlc),
                     ].join(' · '),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
-                      color: ZaojiColors.muted,
+                      color: context.zj.muted,
                     ),
                   ),
                 ],
@@ -319,10 +319,10 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
             duration: const Duration(milliseconds: 120),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             decoration: BoxDecoration(
-              color: on ? const Color(0x1437634A) : ZaojiColors.paper,
+              color: on ? context.zj.okBg : context.zj.paper,
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
               border: Border.all(
-                color: on ? const Color(0xFF2F5B40) : ZaojiColors.line,
+                color: on ? context.zj.ok : context.zj.line,
                 width: on ? 1.4 : 1,
               ),
             ),
@@ -331,12 +331,12 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
                 Icon(
                   on ? Icons.check_circle : Icons.radio_button_unchecked,
                   size: 17,
-                  color: on ? const Color(0xFF2F5B40) : ZaojiColors.muted,
+                  color: on ? context.zj.ok : context.zj.muted,
                 ),
                 const SizedBox(width: 8),
-                const Text(
+                Text(
                   '都不是，自己填',
-                  style: TextStyle(fontSize: 13.5, color: ZaojiColors.ink),
+                  style: TextStyle(fontSize: 13.5, color: context.zj.ink),
                 ),
               ],
             ),
@@ -348,11 +348,11 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
             child: TextField(
               controller: ctrl,
               style: const TextStyle(fontSize: 13.5),
-              cursorColor: ZaojiColors.accent,
-              decoration: const InputDecoration(
+              cursorColor: context.zj.accent,
+              decoration: InputDecoration(
                 isDense: true,
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: context.zj.surface,
                 hintText: '填最终要留下的值',
                 contentPadding: EdgeInsets.symmetric(
                   horizontal: 12,
@@ -360,11 +360,11 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.all(Radius.circular(10)),
-                  borderSide: BorderSide(color: ZaojiColors.line),
+                  borderSide: BorderSide(color: context.zj.line),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.all(Radius.circular(10)),
-                  borderSide: BorderSide(color: ZaojiColors.accent, width: 1.4),
+                  borderSide: BorderSide(color: context.zj.accent, width: 1.4),
                 ),
               ),
             ),

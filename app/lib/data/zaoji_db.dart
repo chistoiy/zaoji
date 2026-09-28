@@ -99,6 +99,19 @@ class ZaojiDb extends GeneratedDatabase {
           }
         }
       }
+      // v6 → v7（R39）改列：recipe.created_at + pantry_item 三态四列。
+      // 与服务端**共用同一份 kSchemaV7AlterSql**，判据同样是列在不在。
+      // 注意 created_at 不回填：老行没有"入册时刻"这个事实，猜一个就是往日历上画假日子。
+      if (from < 7) {
+        final hasStatus =
+            (await customSelect('PRAGMA table_info(pantry_item)').get())
+            .any((r) => r.read<String>('name') == 'stock_status');
+        if (!hasStatus) {
+          for (final stmt in kSchemaV7AlterSql) {
+            await customStatement(stmt);
+          }
+        }
+      }
     },
     beforeOpen: (details) async {
       // 外键与服务端同一立场：schema 里 ingredient/step 都挂着

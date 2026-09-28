@@ -46,7 +46,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       body: IndexedStack(
         index: _index,
         children: [
@@ -79,9 +79,9 @@ class _TabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        color: ZaojiColors.paper,
-        border: Border(top: BorderSide(color: ZaojiColors.lineSoft)),
+      decoration: BoxDecoration(
+        color: context.zj.paper,
+        border: Border(top: BorderSide(color: context.zj.lineSoft)),
       ),
       child: SafeArea(
         top: false,
@@ -118,7 +118,7 @@ class _TabItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? ZaojiColors.accent : ZaojiColors.muted;
+    final color = selected ? context.zj.accent : context.zj.muted;
     return Semantics(
       button: true,
       selected: selected,
@@ -138,7 +138,7 @@ class _TabItem extends StatelessWidget {
                 curve: ZaojiMotion.ease,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: ZaojiColors.accent,
+                    color: context.zj.accent,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),

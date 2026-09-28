@@ -105,9 +105,9 @@ class CoverPickerBox extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 6),
-        const Text(
+        Text(
           '照片只存在自己家的服务端上，保存前会压缩到 1600px',
-          style: TextStyle(fontSize: 11.5, color: ZaojiColors.muted),
+          style: TextStyle(fontSize: 11.5, color: context.zj.muted),
         ),
       ],
     );
@@ -122,7 +122,7 @@ class _DashedPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: ZaojiColors.paper,
+      color: context.zj.paper,
       borderRadius: BorderRadius.circular(ZaojiRadius.md),
       child: InkWell(
         onTap: onTap,
@@ -130,21 +130,21 @@ class _DashedPlaceholder extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(ZaojiRadius.md),
-            border: Border.all(color: ZaojiColors.line),
+            border: Border.all(color: context.zj.line),
           ),
           alignment: Alignment.center,
-          child: const Row(
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
                 Icons.add_a_photo_outlined,
                 size: 20,
-                color: ZaojiColors.muted,
+                color: context.zj.muted,
               ),
               SizedBox(width: 8),
               Text(
                 '选一张照片当封面',
-                style: TextStyle(fontSize: 13, color: ZaojiColors.muted),
+                style: TextStyle(fontSize: 13, color: context.zj.muted),
               ),
             ],
           ),
@@ -171,7 +171,7 @@ class _RoundIconBtn extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 20, color: ZaojiColors.ink),
+          child: Icon(icon, size: 20, color: context.zj.ink),
         ),
       ),
     );

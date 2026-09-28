@@ -1,11 +1,11 @@
 {
-    "name": "zaoji",
-    "short_name": "zaoji",
+    "name": "灶记 ZAOJI",
+    "short_name": "灶记",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F2F5F8",
+    "theme_color": "#2B5D8C",
+    "description": "灶记 ZAOJI —— 家庭菜谱手账，自家局域网里的菜谱与同步服务。",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

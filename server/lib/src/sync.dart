@@ -612,14 +612,21 @@ class SyncService {
     var missing = allowed.where((c) => !incoming.containsKey(c)).toList();
 
     // ★ R29 新增列的滚动豁免（v5：recipe.photos / step.images）。
+    // ★ R39 追加 v7 的五个新列（recipe.created_at + pantry_item 的三态四列）。
     // 旧客户端的"完整行"里没有这些新列，两条路都致命：
     // ① 缺列当 null 写 → 旧端每次编辑都把照片墙**洗成空**（R6 坑 1 的加重版）；
-    // ② 缺列直接拒 → apk 没来得及更新的那台从此同步不了。
+    // ② 缺列直接拒 → apk 没来得及更新的那台从此同步不了（v7 加列后
+    //    resolve/rolling 两组测试就是这么红的）。
     // 唯一安全语义：这些列**没提到 = 保持库里现值**（new row 时即 null，
     // 老数据本来就没有照片墙，语义自然）。其余列的完整行纪律一字不动。
+    //
+    // 诚实的尾巴：`stock_status` 走这条豁免意味着**旧客户端改 have 时不会带动
+    // 三态**——那台设备上"没有"了的东西，新端可能还显示"充足"。
+    // 这就是 v7 把 apk 列为发版硬约束的原因：豁免只管过渡，不当长期状态。
     const rolling = {
-      'recipe': {'photos'},
+      'recipe': {'photos', 'created_at'},
       'step': {'images'},
+      'pantry_item': {'storage', 'bought_at', 'note', 'stock_status'},
     };
     final exempt = (rolling[tbl] ?? const <String>{})
         .where(missing.contains)

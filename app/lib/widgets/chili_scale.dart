@@ -34,7 +34,7 @@ class ChiliScale extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final filled = level.clamp(0, total);
-    final off = offColor ?? ZaojiColors.line;
+    final off = offColor ?? context.zj.line;
     return Semantics(
       // 读屏用户看不到辣椒，必须把量表直接说出来
       label: '难度 $filled 级，共 $total 级',
@@ -49,7 +49,7 @@ class ChiliScale extends StatelessWidget {
                 size: Size(size, size),
                 painter: _ChiliPainter(
                   filled: i < filled,
-                  fillColor: ZaojiColors.chili,
+                  fillColor: context.zj.chili,
                   offColor: off,
                 ),
               ),

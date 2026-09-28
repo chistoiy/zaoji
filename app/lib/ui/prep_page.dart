@@ -44,10 +44,10 @@ class _PrepPageState extends State<PrepPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         title: const Text('备菜清单'),
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
         actions: [
           // FR-PLAN-10 第一步：这份清单能一键变购物清单（同名去重在 store 里）。
           // 货架排序/导出图片等尾巴记在交接文档——先让"买菜带着手机"成立。
@@ -145,10 +145,10 @@ class _PrepPageState extends State<PrepPage> {
     final store = StoreScope.of(context);
     final menu = store.menuById(widget.menuId);
     if (menu == null) {
-      return const Center(
+      return Center(
           child: Text('这个菜单已经不存在了',
               style:
-                  TextStyle(fontSize: 13, color: ZaojiColors.muted)));
+                  TextStyle(fontSize: 13, color: context.zj.muted)));
     }
     final board = store.prepBoardOf(widget.menuId);
     final lines = store.mergeForPrep(menu.recipeIds);
@@ -163,7 +163,7 @@ class _PrepPageState extends State<PrepPage> {
       children: [
         Text(
           '${dayLabel(menu.day)} · ${menu.meal}',
-          style: const TextStyle(fontSize: 12, color: ZaojiColors.muted),
+          style: TextStyle(fontSize: 12, color: context.zj.muted),
         ),
         const SizedBox(height: 12),
         for (final l in open) _line(l.key, l.name, l.qtyText,
@@ -172,29 +172,29 @@ class _PrepPageState extends State<PrepPage> {
           _line('x:${e.key}', e.key, e.value,
               extra: true, removable: true),
         if (open.isEmpty && extraEntries.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(vertical: 18),
             child: Text('要买要备的都勾完了',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13, color: ZaojiColors.muted)),
+                style: TextStyle(fontSize: 13, color: context.zj.muted)),
           ),
         if (done.isNotEmpty) ...[
           const SizedBox(height: 10),
-          const Text('已备齐',
+          Text('已备齐',
               style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: ZaojiColors.muted)),
+                  color: context.zj.muted)),
           const SizedBox(height: 6),
           for (final l in done) _line(l.key, l.name, l.qtyText, dimmed: true),
         ],
         if (excluded.isNotEmpty) ...[
           const SizedBox(height: 14),
           Text('已排除 ${excluded.length} 项',
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: ZaojiColors.muted)),
+                  color: context.zj.muted)),
           const SizedBox(height: 6),
           for (final l in excluded)
             _line(l.key, l.name, l.qtyText,
@@ -208,21 +208,21 @@ class _PrepPageState extends State<PrepPage> {
                 key: const ValueKey('prep-extra-name'),
                 controller: _extraName,
                 style: const TextStyle(fontSize: 13),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
                   hintText: '补一项，如 嫩豆腐',
                   filled: true,
-                  fillColor: Colors.white,
+                  fillColor: context.zj.surface,
                   contentPadding:
                       EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(10)),
-                    borderSide: BorderSide(color: ZaojiColors.line),
+                    borderSide: BorderSide(color: context.zj.line),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(10)),
                     borderSide:
-                        BorderSide(color: ZaojiColors.accent, width: 1.4),
+                        BorderSide(color: context.zj.accent, width: 1.4),
                   ),
                 ),
               ),
@@ -234,21 +234,21 @@ class _PrepPageState extends State<PrepPage> {
                 key: const ValueKey('prep-extra-qty'),
                 controller: _extraQty,
                 style: const TextStyle(fontSize: 13),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
                   hintText: '分量',
                   filled: true,
-                  fillColor: Colors.white,
+                  fillColor: context.zj.surface,
                   contentPadding:
                       EdgeInsets.symmetric(horizontal: 12, vertical: 11),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(10)),
-                    borderSide: BorderSide(color: ZaojiColors.line),
+                    borderSide: BorderSide(color: context.zj.line),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.all(Radius.circular(10)),
                     borderSide:
-                        BorderSide(color: ZaojiColors.accent, width: 1.4),
+                        BorderSide(color: context.zj.accent, width: 1.4),
                   ),
                 ),
               ),
@@ -258,7 +258,7 @@ class _PrepPageState extends State<PrepPage> {
               key: const ValueKey('prep-add-extra'),
               onPressed: _addExtra,
               icon: const Icon(Icons.add_circle_outline),
-              color: ZaojiColors.accent,
+              color: context.zj.accent,
               tooltip: '加上',
             ),
           ],
@@ -287,9 +287,9 @@ class _PrepPageState extends State<PrepPage> {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(6, 4, 10, 4),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: Row(
         children: [
@@ -297,7 +297,7 @@ class _PrepPageState extends State<PrepPage> {
             key: ValueKey('prep-check-$key'),
             value: checked,
             visualDensity: VisualDensity.compact,
-            activeColor: const Color(0xFF2F5B40),
+            activeColor: context.zj.ok,
             onChanged: excludedRow
                 ? null
                 : (on) => store.setPrepDone(widget.menuId, plainKey, on ?? false),
@@ -311,7 +311,7 @@ class _PrepPageState extends State<PrepPage> {
                   style: TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w600,
-                    color: dimmed ? ZaojiColors.muted : ZaojiColors.ink,
+                    color: dimmed ? context.zj.muted : context.zj.ink,
                     decoration:
                         dimmed ? TextDecoration.lineThrough : null,
                   ),
@@ -326,8 +326,8 @@ class _PrepPageState extends State<PrepPage> {
                           ? '来自：${from.join('、')}'
                           : '${from.length} 道菜合并 · 点开看来源',
                       key: ValueKey('prep-sources-$key'),
-                      style: const TextStyle(
-                          fontSize: 11, color: ZaojiColors.muted),
+                      style: TextStyle(
+                          fontSize: 11, color: context.zj.muted),
                     ),
                   ),
               ],
@@ -337,21 +337,21 @@ class _PrepPageState extends State<PrepPage> {
             qty,
             style: TextStyle(
               fontSize: 13,
-              color: dimmed ? ZaojiColors.muted : ZaojiColors.ink2,
+              color: dimmed ? context.zj.muted : context.zj.ink2,
             ),
           ),
           if (removable)
             IconButton(
               key: ValueKey('prep-remove-$key'),
               icon: const Icon(Icons.close, size: 18),
-              color: ZaojiColors.muted,
+              color: context.zj.muted,
               onPressed: () => store.removePrepExtra(widget.menuId, name),
             )
           else if (!excludedRow)
             IconButton(
               key: ValueKey('prep-exclude-$key'),
               icon: const Icon(Icons.do_not_disturb_on_outlined, size: 18),
-              color: ZaojiColors.muted,
+              color: context.zj.muted,
               tooltip: '这餐不用了',
               onPressed: () =>
                   store.setPrepExcluded(widget.menuId, plainKey, true),

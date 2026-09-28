@@ -103,6 +103,7 @@ class ZaojiDb {
       }
       _migrateV3toV4();
       _migrateV4toV5();
+      _migrateV6toV7();
       _migrateConflictNullValues();
       db.execute(
         "INSERT INTO meta (k, v) VALUES ('schema_version', ?) "
@@ -144,6 +145,23 @@ class ZaojiDb {
         .any((r) => r['name'] == 'photos');
     if (!hasPhotos) {
       for (final stmt in kSchemaV5AlterSql) {
+        db.execute(stmt);
+      }
+    }
+  }
+
+  /// v6 → v7（R39）：`recipe.created_at` + `pantry_item` 的三态与存储位置四列。
+  ///
+  /// 判据仍是"列在不在"（这里挑 `stock_status` 当哨兵——它是本轮唯一
+  /// 带 NOT NULL DEFAULT 的列，半迁移重进时最容易被漏掉）。
+  /// ALTER 与洗数据的语句来自 shared 的 `kSchemaV7AlterSql`，
+  /// App 端 onUpgrade 共用同一份。
+  void _migrateV6toV7() {
+    final hasStatus = db
+        .select('PRAGMA table_info(pantry_item)')
+        .any((r) => r['name'] == 'stock_status');
+    if (!hasStatus) {
+      for (final stmt in kSchemaV7AlterSql) {
         db.execute(stmt);
       }
     }

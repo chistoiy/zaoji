@@ -182,6 +182,9 @@ const List<TableSpec> kTables = [
       ColumnSpec('cover_sha256', 'TEXT', comment: '成品图（封面），按 sha256 按需拉取'),
       ColumnSpec('photos', 'TEXT',
           comment: 'v5：照片墙的 sha256 JSON 数组（多张成品照）；封面单列在 cover_sha256'),
+      ColumnSpec('created_at', 'TEXT',
+          comment: 'v7（FR-LOG-01）：入册时刻 ISO8601。★ 升级前建的老行**留 NULL**——'
+              '用 updated_at 猜一个创建时间，日历上就会多出一个假日子'),
     ],
   ),
   TableSpec(
@@ -294,10 +297,19 @@ const List<TableSpec> kTables = [
       ColumnSpec('qty_value', 'REAL', comment: '可为空——允许只记"有"'),
       ColumnSpec('qty_unit', 'TEXT'),
       ColumnSpec('have', 'INTEGER',
-          notNull: true, defaultSql: '1', comment: '0 / 1'),
+          notNull: true, defaultSql: '1',
+          comment: '★ v7 起为**留档列**（同 step.image_sha256 的先例）：三态看 stock_status。'
+              '新写入仍同步维护它（have = stock_status != none），旧客户端不至于看到空白状态'),
       ColumnSpec('expire_at', 'TEXT', comment: 'YYYY-MM-DD，过期提醒用'),
       ColumnSpec('is_staple', 'INTEGER',
           notNull: true, defaultSql: '0', comment: '常备调料：不计入推荐算法的缺失'),
+      // ── v7（FR-PAN-01）：库存从"有/没有"补成厨房现场真正在用的那几维 ──
+      ColumnSpec('storage', 'TEXT', comment: '冷藏 / 冷冻 / 常温；NULL = 没填'),
+      ColumnSpec('bought_at', 'TEXT', comment: '购入日期 YYYY-MM-DD，"在家躺了几天"'),
+      ColumnSpec('note', 'TEXT', comment: '备注，如"给宝的那份少盐"'),
+      ColumnSpec('stock_status', 'TEXT',
+          notNull: true, defaultSql: "'have'",
+          comment: 'have(充足) / low(快没了) / none(没有)。三态是推荐与提醒的输入，不是装饰'),
     ],
   ),
 
@@ -522,7 +534,10 @@ const List<TableSpec> kTables = [
 /// v5 → v6：纯增表 `shopping_item`（R30 购物清单）——回到 v3 那类安全路径，
 /// 两端 createSql 幂等补建，无需改列脚本；旧客户端拉不到这张表的行也不报错
 /// （未知表按自己的表清单自然跳过），**apk 不再是发版硬约束**。
-const int kSchemaVersion = 6;
+/// v6 → v7：`recipe.created_at` + `pantry_item` 的 storage/bought_at/note/stock_status
+/// ——**第三例改列**，而且是"同一轮里两处改列"（原计划分开做，但每改一次列就要
+/// 重发一次 apk，合轮只承担一次硬账）。迁移脚本两端逐字共用 [kSchemaV7AlterSql]。
+const int kSchemaVersion = 7;
 
 /// v4 → v5 的列迁移语句（服务端与 App 的 onUpgrade **逐字共用**）。
 /// UPDATE 里的值都是 64 位小写十六进制（MediaStore 入库前已验格式），
@@ -536,6 +551,26 @@ const List<String> kSchemaV5AlterSql = [
   'UPDATE step SET images = \'["\' || image_sha256 || \'"]\' '
   'WHERE image_sha256 IS NOT NULL AND image_sha256 <> \'\' '
   'AND (images IS NULL OR images = \'\')',
+];
+
+/// v6 → v7（R39）的列迁移语句（服务端与 App 的 onUpgrade **逐字共用**）。
+///
+/// 两处改列合在一轮：`recipe.created_at`（FR-LOG-01 日历第三种点）与
+/// `pantry_item` 的四列（FR-PAN-01 库存三态）。分开做要付两次"重编 apk + 重编 exe"
+/// 的硬账，合轮只付一次——这是本轮把两件事捆在一起的唯一理由，不是顺手。
+///
+/// 两条刻意的"不猜"：
+///   · `created_at` 不回填。老行没有创建时刻这个事实，用 updated_at 或
+///     id（ULID 前缀）倒推都会往日历上画一个没发生过的日子；
+///   · `stock_status` 只把 `have=0` 洗成 `none`。`have=1` 走 DEFAULT 'have'，
+///     绝不猜成 'low'——"快没了"是需要人看一眼的判断，不是旧值的推论。
+const List<String> kSchemaV7AlterSql = [
+  'ALTER TABLE recipe ADD COLUMN created_at TEXT',
+  'ALTER TABLE pantry_item ADD COLUMN storage TEXT',
+  'ALTER TABLE pantry_item ADD COLUMN bought_at TEXT',
+  'ALTER TABLE pantry_item ADD COLUMN note TEXT',
+  "ALTER TABLE pantry_item ADD COLUMN stock_status TEXT NOT NULL DEFAULT 'have'",
+  "UPDATE pantry_item SET stock_status = 'none' WHERE have = 0",
 ];
 
 /// 同步协议的版本。客户端与服务端必须一致，否则拒绝同步而不是猜。

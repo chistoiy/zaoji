@@ -93,21 +93,21 @@ class _StatsPageState extends State<StatsPage> {
         (b.$2 - b.$1.selfTime).abs().compareTo((a.$2 - a.$1.selfTime).abs()));
 
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         title: Text('烹饪统计 · $_monthLabel'),
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
         children: [
           if (_sessions.isEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.symmetric(vertical: 40),
               child: Center(
                 child: Text('这个月还没有开火记录',
                     key: ValueKey('stats-empty'),
-                    style: TextStyle(fontSize: 13, color: ZaojiColors.muted)),
+                    style: TextStyle(fontSize: 13, color: context.zj.muted)),
               ),
             )
           else
@@ -172,18 +172,18 @@ class _StatsPageState extends State<StatsPage> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  color: ZaojiColors.muted)),
+                  color: context.zj.muted)),
           const SizedBox(height: 10),
           child,
         ],
@@ -197,12 +197,12 @@ class _StatsPageState extends State<StatsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(value,
-              style: ZaojiText.display(
+              style: ZaojiText.displayOf(context, 
                   fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
           Text(label,
               style:
-                  const TextStyle(fontSize: 11.5, color: ZaojiColors.muted)),
+                  TextStyle(fontSize: 11.5, color: context.zj.muted)),
         ],
       ),
     );
@@ -223,10 +223,10 @@ class _StatsPageState extends State<StatsPage> {
             SizedBox(
               width: 22,
               child: Text('$rank',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: ZaojiColors.accent)),
+                      color: context.zj.accent)),
             ),
             Expanded(
               child: Text(r.name,
@@ -237,14 +237,14 @@ class _StatsPageState extends State<StatsPage> {
             ),
             if (last.isNotEmpty)
               Text(last,
-                  style: const TextStyle(
-                      fontSize: 11.5, color: ZaojiColors.muted)),
+                  style: TextStyle(
+                      fontSize: 11.5, color: context.zj.muted)),
             const SizedBox(width: 8),
             Text('${r.cookedCount} 次',
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
-                    color: ZaojiColors.ink)),
+                    color: context.zj.ink)),
           ],
         ),
       ),
@@ -267,16 +267,16 @@ class _StatsPageState extends State<StatsPage> {
                     fontSize: 13, fontWeight: FontWeight.w600)),
           ),
           Text('自报 ${r.selfTime} 分 · 实际 ${avg.round()} 分',
-              style: const TextStyle(
-                  fontSize: 12, color: ZaojiColors.muted)),
+              style: TextStyle(
+                  fontSize: 12, color: context.zj.muted)),
           const SizedBox(width: 8),
           Text(diff > 0 ? '慢 ${abs.round()} 分' : '快 ${abs.round()} 分',
               style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                   color: diff > 0
-                      ? const Color(0xFFB2491C)
-                      : const Color(0xFF2A5F6B))),
+                      ? context.zj.accent
+                      : context.zj.tagMethod)),
         ],
       ),
     );

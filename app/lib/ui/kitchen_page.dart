@@ -29,17 +29,17 @@ class _KitchenPageState extends State<KitchenPage> {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         titleSpacing: 16,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text('厨房'),
             SizedBox(height: 1),
             Text('家里有什么、能做什么',
                 style:
-                    TextStyle(fontSize: 11, color: ZaojiColors.muted)),
+                    TextStyle(fontSize: 11, color: context.zj.muted)),
           ],
         ),
       ),
@@ -57,8 +57,8 @@ class _KitchenPageState extends State<KitchenPage> {
               onSelectionChanged: (s) =>
                   setState(() => _segment = s.first),
               style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: ZaojiColors.accent,
-                selectedForegroundColor: Colors.white,
+                selectedBackgroundColor: context.zj.accent,
+                selectedForegroundColor: context.zj.onAccent,
               ),
             ),
           ),
@@ -79,14 +79,14 @@ class _KitchenPageState extends State<KitchenPage> {
       floatingActionButton: _segment == 0
           ? FloatingActionButton(
               key: const ValueKey('pantry-add-fab'),
-              backgroundColor: ZaojiColors.accent,
+              backgroundColor: context.zj.accent,
               onPressed: () => _PantrySheet.show(context, null),
               child: const Icon(Icons.add),
             )
           : _segment == 2
               ? FloatingActionButton(
                   key: const ValueKey('shopping-add-fab'),
-                  backgroundColor: ZaojiColors.accent,
+                  backgroundColor: context.zj.accent,
                   onPressed: () => _addShoppingItem(context),
                   child: const Icon(Icons.add),
                 )
@@ -177,8 +177,11 @@ class _PantryTabState extends State<_PantryTab> {
     final soon = items
         .where((p) => p.have && p.expState(now) == 'soon')
         .length;
-    final low = items.where((p) => p.have && (p.qtyValue ?? 1) <= 1).length;
-    final out = items.where((p) => !p.have).length;
+    // v7：「快没了」从**猜**变成**记**。
+    // 之前是 `qtyValue <= 1` 的启发式，一瓶 500ml 的油和一把剩两根的粉丝
+    // 会被同一行代码判成同一种东西；现在三态是用户在库存表上自己标的。
+    final low = items.where((p) => p.status == PantryStock.low).length;
+    final out = items.where((p) => p.status == PantryStock.none).length;
 
     var shown = items.where((p) {
       if (_cat != 'all' && (p.category ?? '') != _cat) return false;
@@ -204,9 +207,9 @@ class _PantryTabState extends State<_PantryTab> {
         Container(
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: context.zj.surface,
             borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-            border: Border.all(color: ZaojiColors.line),
+            border: Border.all(color: context.zj.line),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -220,15 +223,15 @@ class _PantryTabState extends State<_PantryTab> {
                           fontSize: 30,
                           fontWeight: FontWeight.w700,
                           height: 1)),
-                  const Text('样食材在家里',
+                  Text('样食材在家里',
                       style:
-                          TextStyle(fontSize: 12.5, color: ZaojiColors.muted)),
+                          TextStyle(fontSize: 12.5, color: context.zj.muted)),
                   if (bad > 0)
-                    _statBadge('$bad 今天到期', ZaojiColors.accent),
+                    _statBadge('$bad 今天到期', context.zj.accent),
                   if (soon > 0)
-                    _statBadge('$soon 快到期', ZaojiColors.amber),
-                  if (low > 0) _statBadge('$low 快没了', ZaojiColors.muted),
-                  if (out > 0) _statBadge('$out 没有', ZaojiColors.muted),
+                    _statBadge('$soon 快到期', context.zj.amber),
+                  if (low > 0) _statBadge('$low 快没了', context.zj.muted),
+                  if (out > 0) _statBadge('$out 没有', context.zj.muted),
                 ],
               ),
               const SizedBox(height: 12),
@@ -240,7 +243,7 @@ class _PantryTabState extends State<_PantryTab> {
                   hintText: '搜食材…',
                   prefixIcon: const Icon(Icons.search, size: 18),
                   filled: true,
-                  fillColor: ZaojiColors.paper,
+                  fillColor: context.zj.paper,
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   border: OutlineInputBorder(
@@ -268,7 +271,7 @@ class _PantryTabState extends State<_PantryTab> {
         ),
         const SizedBox(height: 16),
         if (items.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.only(top: 60),
             child: Center(
               child: Text(
@@ -277,7 +280,7 @@ class _PantryTabState extends State<_PantryTab> {
                 style: TextStyle(
                     fontSize: 13,
                     height: 1.8,
-                    color: ZaojiColors.muted),
+                    color: context.zj.muted),
               ),
             ),
           ),
@@ -287,14 +290,14 @@ class _PantryTabState extends State<_PantryTab> {
             child: Row(
               children: [
                 Text(entry.key,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
-                        color: ZaojiColors.ink2)),
+                        color: context.zj.ink2)),
                 const SizedBox(width: 6),
                 Text('${entry.value.length}',
-                    style: const TextStyle(
-                        fontSize: 11.5, color: ZaojiColors.muted)),
+                    style: TextStyle(
+                        fontSize: 11.5, color: context.zj.muted)),
               ],
             ),
           ),
@@ -317,6 +320,12 @@ class _PantryTabState extends State<_PantryTab> {
       );
 }
 
+/// 库存行下面那行小字里的一段（状态 / 保质期 / 存储 / 购入 / 备注）。
+Widget _meta(String text, Color color, BuildContext context) => Text(
+      text,
+      style: TextStyle(fontSize: 11, color: color),
+    );
+
 class _PantryRow extends StatelessWidget {
   const _PantryRow({required this.item, required this.store});
 
@@ -327,20 +336,25 @@ class _PantryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final exp = item.expState(now);
-    final dotColor = !item.have
-        ? ZaojiColors.muted
-        : exp == 'bad'
-            ? ZaojiColors.accent
-            : exp == 'soon'
-                ? ZaojiColors.amber
-                : const Color(0xFF37634A);
+    // 状态点 = 三态（原型 `.lvl`）；保质期是另一件事，走下面那行文字徽标。
+    // 之前这里把"今天到期"画成红点、把三态画成一个开关，两件事挤在一个点上，
+    // 结果哪个都读不准。
+    final dotColor = switch (item.status) {
+      PantryStock.have => exp == 'bad'
+          ? context.zj.accent
+          : exp == 'soon'
+              ? context.zj.amber
+              : context.zj.tagIngredient,
+      PantryStock.low => context.zj.amber2,
+      PantryStock.none => context.zj.line,
+    };
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: ZaojiColors.line),
+        border: Border.all(color: context.zj.line),
       ),
       child: Row(
         children: [
@@ -367,30 +381,55 @@ class _PantryRow extends StatelessWidget {
                                 fontSize: 14, fontWeight: FontWeight.w600)),
                       ),
                       if (item.isStaple)
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.only(left: 6),
                           child: Text('常备',
                               style: TextStyle(
-                                  fontSize: 10, color: ZaojiColors.muted)),
+                                  fontSize: 10, color: context.zj.muted)),
                         ),
                     ],
                   ),
-                  if (exp.isNotEmpty || !item.have)
-                    Padding(
+                  Builder(builder: (context) {
+                    // 元信息一行：状态 → 保质期 → 存储位置 → 购入 → 备注。
+                    // 缺哪项就不显示哪项（不写"未填"占位——列表是扫读的，
+                    // 一排"未填"只会把真正有用的那条挤下去）。
+                    final bits = <Widget>[];
+                    if (item.status != PantryStock.have) {
+                      bits.add(_meta(
+                          item.status == PantryStock.none ? '没有' : '快没了',
+                          item.status == PantryStock.none
+                              ? context.zj.muted
+                              : context.zj.amber,
+                          context));
+                    } else if (exp == 'bad') {
+                      bits.add(_meta('今天到期', context.zj.accent, context));
+                    } else if (exp == 'soon') {
+                      bits.add(_meta(
+                          '${item.expireAt!.substring(5).replaceFirst('-', '/')} 到期',
+                          context.zj.amber,
+                          context));
+                    }
+                    final st = item.storage;
+                    if (st != null && st.isNotEmpty) {
+                      bits.add(_meta(st, context.zj.muted, context));
+                    }
+                    final b = item.boughtAt;
+                    if (b != null && b.length >= 10) {
+                      bits.add(_meta(
+                          '购于 ${b.substring(5).replaceFirst('-', '/')}',
+                          context.zj.muted,
+                          context));
+                    }
+                    final note = item.note;
+                    if (note != null && note.isNotEmpty) {
+                      bits.add(_meta(note, context.zj.accentDeep, context));
+                    }
+                    if (bits.isEmpty) return const SizedBox.shrink();
+                    return Padding(
                       padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        !item.have
-                            ? '记为「没有」'
-                            : exp == 'bad'
-                                ? '今天到期'
-                                : '${item.expireAt!.substring(5).replaceFirst('-', '/')} 到期',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: exp == 'bad'
-                                ? ZaojiColors.accent
-                                : ZaojiColors.amber),
-                      ),
-                    ),
+                      child: Wrap(spacing: 8, runSpacing: 2, children: bits),
+                    );
+                  }),
                 ],
               ),
             ),
@@ -398,13 +437,13 @@ class _PantryRow extends StatelessWidget {
           const SizedBox(width: 8),
           if (item.isStaple || item.qtyValue == null)
             Text(item.qtyLabel,
-                style: const TextStyle(
-                    fontSize: 12.5, color: ZaojiColors.muted))
+                style: TextStyle(
+                    fontSize: 12.5, color: context.zj.muted))
           else
             // 步进器：±1 不超过两次点击（FR-PAN-03）
             Row(
               children: [
-                _stepBtn(Icons.remove,
+                _stepBtn(context, Icons.remove,
                     '减少 ${item.name}', () => store.adjustPantry(item.id, -1)),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -412,7 +451,7 @@ class _PantryRow extends StatelessWidget {
                       style: const TextStyle(
                           fontSize: 13, fontWeight: FontWeight.w600)),
                 ),
-                _stepBtn(Icons.add, '增加 ${item.name}',
+                _stepBtn(context, Icons.add, '增加 ${item.name}',
                     () => store.adjustPantry(item.id, 1)),
               ],
             ),
@@ -421,13 +460,14 @@ class _PantryRow extends StatelessWidget {
     );
   }
 
-  Widget _stepBtn(IconData icon, String label, VoidCallback onTap) =>
+  Widget _stepBtn(BuildContext context, IconData icon, String label,
+          VoidCallback onTap) =>
       IconButton(
         icon: Icon(icon, size: 16),
         tooltip: label,
         onPressed: onTap,
         visualDensity: VisualDensity.compact,
-        color: ZaojiColors.ink2,
+        color: context.zj.ink2,
       );
 }
 
@@ -441,7 +481,7 @@ class _PantrySheet extends StatefulWidget {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       shape: const RoundedRectangleBorder(
           borderRadius:
               BorderRadius.vertical(top: Radius.circular(ZaojiRadius.xl))),
@@ -465,17 +505,24 @@ class _PantrySheetState extends State<_PantrySheet> {
           : '${widget.item!.qtyValue!.round()}');
   late final _unitCtrl = TextEditingController(text: widget.item?.qtyUnit ?? '');
   late String _cat = widget.item?.category ?? '冷藏';
-  late bool _have = widget.item?.have ?? true;
+  late PantryStock _status = widget.item?.status ?? PantryStock.have;
   late bool _staple = widget.item?.isStaple ?? false;
   late String? _expire = widget.item?.expireAt;
+  // v7（FR-PAN-01）：存储位置 / 购入日期 / 备注。三者都可空——
+  // 库存是辅助决策不是账本，空着就空着，不替用户填一个看起来完整的值。
+  late String? _storage = widget.item?.storage;
+  late String? _bought = widget.item?.boughtAt;
+  late final _noteCtrl = TextEditingController(text: widget.item?.note ?? '');
 
   static const _cats = ['冷藏', '冷冻', '常温', '干货'];
+  static const _storages = ['冷藏', '冷冻', '常温'];
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _qtyCtrl.dispose();
     _unitCtrl.dispose();
+    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -489,9 +536,12 @@ class _PantrySheetState extends State<_PantrySheet> {
       category: _cat,
       qtyValue: double.tryParse(_qtyCtrl.text.trim()),
       qtyUnit: _unitCtrl.text.trim().isEmpty ? null : _unitCtrl.text.trim(),
-      have: _have,
+      status: _status,
       expireAt: _expire,
       isStaple: _staple,
+      storage: _storage,
+      boughtAt: _bought,
+      note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
     );
     if (mounted) Navigator.of(context).pop();
   }
@@ -521,11 +571,11 @@ class _PantrySheetState extends State<_PantrySheet> {
             key: const ValueKey('pantry-name'),
             controller: _nameCtrl,
             style: const TextStyle(fontSize: 14),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: '名称',
               isDense: true,
               filled: true,
-              fillColor: Colors.white,
+              fillColor: context.zj.surface,
             ),
           ),
           const SizedBox(height: 10),
@@ -537,8 +587,8 @@ class _PantrySheetState extends State<_PantrySheet> {
                   controller: _qtyCtrl,
                   keyboardType: TextInputType.number,
                   style: const TextStyle(fontSize: 14),
-                  decoration: const InputDecoration(
-                      labelText: '数量（可空=只记有）', isDense: true, filled: true, fillColor: Colors.white),
+                  decoration: InputDecoration(
+                      labelText: '数量（可空=只记有）', isDense: true, filled: true, fillColor: context.zj.surface),
                 ),
               ),
               const SizedBox(width: 10),
@@ -548,8 +598,8 @@ class _PantrySheetState extends State<_PantrySheet> {
                   key: const ValueKey('pantry-unit'),
                   controller: _unitCtrl,
                   style: const TextStyle(fontSize: 14),
-                  decoration: const InputDecoration(
-                      labelText: '单位', isDense: true, filled: true, fillColor: Colors.white),
+                  decoration: InputDecoration(
+                      labelText: '单位', isDense: true, filled: true, fillColor: context.zj.surface),
                 ),
               ),
             ],
@@ -567,14 +617,50 @@ class _PantrySheetState extends State<_PantrySheet> {
             ],
           ),
           const SizedBox(height: 6),
-          SwitchListTile(
-            key: const ValueKey('pantry-have'),
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: const Text('家里有', style: TextStyle(fontSize: 13.5)),
-            value: _have,
-            onChanged: (v) => setState(() => _have = v),
+          // 三态（FR-PAN-01）：替代原来那个「家里有」开关。
+          // 用 chips 不用循环点击——点一下就切一档，看一眼就知道现在在哪档。
+          Wrap(
+            key: const ValueKey('pantry-status'),
+            spacing: 8,
+            children: [
+              for (final s in PantryStock.values)
+                ChoiceChip(
+                  label: Text(s.label),
+                  selected: _status == s,
+                  onSelected: (_) => setState(() => _status = s),
+                ),
+            ],
           ),
+          const SizedBox(height: 4),
+          Text('存储位置',
+              style: TextStyle(fontSize: 12, color: context.zj.muted)),
+          Wrap(
+            key: const ValueKey('pantry-storage'),
+            spacing: 8,
+            children: [
+              for (final s in _storages)
+                ChoiceChip(
+                  label: Text(s),
+                  // 再点一次取消：没填就是没填，库存不该有"默认冷藏"
+                  selected: _storage == s,
+                  onSelected: (_) =>
+                      setState(() => _storage = _storage == s ? null : s),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const ValueKey('pantry-note'),
+            controller: _noteCtrl,
+            style: const TextStyle(fontSize: 14),
+            decoration: InputDecoration(
+              labelText: '备注（可空）',
+              isDense: true,
+              filled: true,
+              fillColor: context.zj.surface,
+            ),
+          ),
+          const SizedBox(height: 4),
           SwitchListTile(
             key: const ValueKey('pantry-staple'),
             contentPadding: EdgeInsets.zero,
@@ -588,8 +674,8 @@ class _PantrySheetState extends State<_PantrySheet> {
             children: [
               Expanded(
                 child: Text(_expire == null ? '保质期：未填' : '保质期：$_expire',
-                    style: const TextStyle(
-                        fontSize: 13, color: ZaojiColors.ink2)),
+                    style: TextStyle(
+                        fontSize: 13, color: context.zj.ink2)),
               ),
               TextButton(
                 onPressed: () async {
@@ -607,6 +693,30 @@ class _PantrySheetState extends State<_PantrySheet> {
               ),
             ],
           ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(_bought == null ? '购入日期：未填' : '购入日期：$_bought',
+                    style: TextStyle(
+                        fontSize: 13, color: context.zj.ink2)),
+              ),
+              TextButton(
+                key: const ValueKey('pantry-bought'),
+                onPressed: () async {
+                  final d = await showDatePicker(
+                      context: context,
+                      initialDate: DateTime.now(),
+                      firstDate: DateTime.now().subtract(const Duration(days: 3650)),
+                      lastDate: DateTime.now().add(const Duration(days: 1)));
+                  if (d != null && mounted) {
+                    setState(() => _bought =
+                        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}');
+                  }
+                },
+                child: const Text('选择'),
+              ),
+            ],
+          ),
           const SizedBox(height: 10),
           Row(
             children: [
@@ -614,15 +724,15 @@ class _PantrySheetState extends State<_PantrySheet> {
                 TextButton(
                   key: const ValueKey('pantry-delete'),
                   onPressed: _delete,
-                  child: const Text('删除',
-                      style: TextStyle(color: ZaojiColors.muted)),
+                  child: Text('删除',
+                      style: TextStyle(color: context.zj.muted)),
                 ),
               const Spacer(),
               FilledButton(
                 key: const ValueKey('pantry-save'),
                 onPressed: _save,
                 style: FilledButton.styleFrom(
-                    backgroundColor: ZaojiColors.accent),
+                    backgroundColor: context.zj.accent),
                 child: const Text('保存'),
               ),
             ],
@@ -652,7 +762,7 @@ class _ShoppingTab extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
       children: [
         if (items.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.only(top: 60),
             child: Center(
               child: Text(
@@ -661,7 +771,7 @@ class _ShoppingTab extends StatelessWidget {
                 style: TextStyle(
                     fontSize: 13,
                     height: 1.8,
-                    color: ZaojiColors.muted),
+                    color: context.zj.muted),
               ),
             ),
           ),
@@ -672,8 +782,8 @@ class _ShoppingTab extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text('已买 $boughtCount 样，买齐了入库变库存',
-                      style: const TextStyle(
-                          fontSize: 12, color: ZaojiColors.muted)),
+                      style: TextStyle(
+                          fontSize: 12, color: context.zj.muted)),
                 ),
                 FilledButton.icon(
                   key: const ValueKey('shopping-stockin'),
@@ -687,7 +797,7 @@ class _ShoppingTab extends StatelessWidget {
                   icon: const Icon(Icons.download, size: 16),
                   label: Text('购物入库（$boughtCount）'),
                   style: FilledButton.styleFrom(
-                      backgroundColor: ZaojiColors.accent),
+                      backgroundColor: context.zj.accent),
                 ),
               ],
             ),
@@ -698,15 +808,15 @@ class _ShoppingTab extends StatelessWidget {
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: context.zj.surface,
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
-              border: Border.all(color: ZaojiColors.line),
+              border: Border.all(color: context.zj.line),
             ),
             child: Row(
               children: [
                 Checkbox(
                   value: x.bought,
-                  activeColor: ZaojiColors.accent,
+                  activeColor: context.zj.accent,
                   onChanged: (v) =>
                       store.toggleShoppingBought(x.id, v ?? false),
                 ),
@@ -726,18 +836,18 @@ class _ShoppingTab extends StatelessWidget {
                                 ? TextDecoration.lineThrough
                                 : null,
                             color: x.bought
-                                ? ZaojiColors.muted
-                                : ZaojiColors.ink),
+                                ? context.zj.muted
+                                : context.zj.ink),
                       ),
                       Text('来源：${x.sourceLabel}',
-                          style: const TextStyle(
-                              fontSize: 10.5, color: ZaojiColors.muted)),
+                          style: TextStyle(
+                              fontSize: 10.5, color: context.zj.muted)),
                     ],
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close,
-                      size: 16, color: ZaojiColors.muted),
+                  icon: Icon(Icons.close,
+                      size: 16, color: context.zj.muted),
                   tooltip: '移除 ${x.name}',
                   onPressed: () => store.removeShopping(x.id),
                 ),
@@ -762,12 +872,12 @@ class _RecommendTab extends StatelessWidget {
     final need = (r['needShopping'] as List).cast<Map<String, Object?>>();
 
     if (store.pantryItems.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           '先在「库存」里记几样家里有的\n就能算出今天能做什么',
           textAlign: TextAlign.center,
           style:
-              TextStyle(fontSize: 13, height: 1.8, color: ZaojiColors.muted),
+              TextStyle(fontSize: 13, height: 1.8, color: context.zj.muted),
         ),
       );
     }
@@ -776,11 +886,11 @@ class _RecommendTab extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
       children: [
         _AiRecoSection(store: store),
-        _group('能做', canCook.length, const Color(0xFF37634A), canCook, context,
+        _group('能做', canCook.length, context.zj.tagIngredient, canCook, context,
             empty: '都不齐——先看「要买不少」那组挑一样补？'),
-        _group('差一点', almost.length, ZaojiColors.amber, almost, context,
+        _group('差一点', almost.length, context.zj.amber, almost, context,
             empty: '没有只差一两样的菜'),
-        _group('要买不少', need.length, ZaojiColors.muted, need, context,
+        _group('要买不少', need.length, context.zj.muted, need, context,
             empty: '库存把菜谱全罩住了，好极了'),
       ],
     );
@@ -809,16 +919,16 @@ class _RecommendTab extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(2, 0, 0, 6),
             child: Text(empty,
                 style:
-                    const TextStyle(fontSize: 12, color: ZaojiColors.muted)),
+                    TextStyle(fontSize: 12, color: context.zj.muted)),
           ),
         for (final e in list)
           Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: context.zj.surface,
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
-              border: Border.all(color: ZaojiColors.line),
+              border: Border.all(color: context.zj.line),
             ),
             child: InkWell(
               onTap: () {
@@ -846,8 +956,8 @@ class _RecommendTab extends StatelessWidget {
                                 horizontal: 7, vertical: 2),
                             decoration: BoxDecoration(
                               color: m['isMain'] == true
-                                  ? ZaojiColors.accent.withValues(alpha: .1)
-                                  : ZaojiColors.amberBg,
+                                  ? context.zj.accent.withValues(alpha: .1)
+                                  : context.zj.amberBg,
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
@@ -855,8 +965,8 @@ class _RecommendTab extends StatelessWidget {
                               style: TextStyle(
                                   fontSize: 10.5,
                                   color: m['isMain'] == true
-                                      ? ZaojiColors.accent
-                                      : ZaojiColors.amber),
+                                      ? context.zj.accent
+                                      : context.zj.amber),
                             ),
                           ),
                       ],
@@ -891,10 +1001,10 @@ class _RecommendTab extends StatelessWidget {
                                 duration: const Duration(seconds: 2)),
                           );
                         },
-                        child: const Text('把缺的加进清单',
+                        child: Text('把缺的加进清单',
                             style: TextStyle(
                                 fontSize: 12,
-                                color: ZaojiColors.accent)),
+                                color: context.zj.accent)),
                       ),
                     ),
                   ],
@@ -988,7 +1098,7 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
         (d['ingredients'] as List? ?? const []).whereType<Map>().toList();
     final ok = await showModalBottomSheet<bool>(
       context: context,
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       shape: const RoundedRectangleBorder(
           borderRadius:
               BorderRadius.vertical(top: Radius.circular(ZaojiRadius.xl))),
@@ -1007,8 +1117,8 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
               '食材 ${ings.length} 样 · 步骤 ${steps.length} 步 · '
               '难度 ${d['difficulty'] ?? 1} · 约 ${d['self_time'] ?? 0} 分钟\n'
               '加入后来源会标记为 AI，可以照常逐项修改。',
-              style: const TextStyle(
-                  fontSize: 12.5, height: 1.8, color: ZaojiColors.ink2),
+              style: TextStyle(
+                  fontSize: 12.5, height: 1.8, color: context.zj.ink2),
             ),
             const SizedBox(height: 16),
             Row(
@@ -1021,7 +1131,7 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
                   key: const ValueKey('ai-adopt-yes'),
                   onPressed: () => Navigator.pop(ctx, true),
                   style: FilledButton.styleFrom(
-                      backgroundColor: ZaojiColors.accent),
+                      backgroundColor: context.zj.accent),
                   child: const Text('加入我的菜谱'),
                 ),
               ],
@@ -1075,36 +1185,36 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: ZaojiColors.aiBg,
+              color: context.zj.aiBg,
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
-              border: Border.all(color: const Color(0x336E4468)),
+              border: Border.all(color: context.zj.aiBg),
             ),
             child: Row(
               children: [
-                const Icon(Icons.auto_awesome,
-                    size: 18, color: ZaojiColors.ai),
+                Icon(Icons.auto_awesome,
+                    size: 18, color: context.zj.ai),
                 const SizedBox(width: 10),
-                const Expanded(
+                Expanded(
                   child: Text(
                       '让 AI 按库存再推几道？\n能推出你还没记录过、但现在做得成的菜',
                       style: TextStyle(
                           fontSize: 12.5,
                           height: 1.6,
-                          color: ZaojiColors.ai)),
+                          color: context.zj.ai)),
                 ),
                 if (_busy)
-                  const SizedBox(
+                  SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: ZaojiColors.ai))
+                          strokeWidth: 2, color: context.zj.ai))
                 else
                   TextButton(
                     key: const ValueKey('ai-reco-ask'),
                     onPressed: notConfigured ? _gotoSettings : _ask,
                     child: Text(notConfigured ? '去配置' : '推荐',
-                        style: const TextStyle(
-                            fontSize: 13, color: ZaojiColors.ai)),
+                        style: TextStyle(
+                            fontSize: 13, color: context.zj.ai)),
                   ),
               ],
             ),
@@ -1113,17 +1223,17 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(_error!,
-                  style: const TextStyle(
-                      fontSize: 11.5, color: ZaojiColors.accent)),
+                  style: TextStyle(
+                      fontSize: 11.5, color: context.zj.accent)),
             ),
           for (final dish in shown)
             Container(
               margin: const EdgeInsets.only(top: 10),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.zj.surface,
                 borderRadius: BorderRadius.circular(ZaojiRadius.md),
-                border: Border.all(color: const Color(0x336E4468)),
+                border: Border.all(color: context.zj.aiBg),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1140,29 +1250,29 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 7, vertical: 2),
                         decoration: BoxDecoration(
-                          color: ZaojiColors.aiBg,
+                          color: context.zj.aiBg,
                           borderRadius: BorderRadius.circular(999),
                         ),
-                        child: const Text('AI 推荐 · 不在你的菜谱中',
+                        child: Text('AI 推荐 · 不在你的菜谱中',
                             style: TextStyle(
-                                fontSize: 9.5, color: ZaojiColors.ai)),
+                                fontSize: 9.5, color: context.zj.ai)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 4),
                   Text('${dish['reason'] ?? ''}',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 12,
                           height: 1.6,
-                          color: ZaojiColors.ink2)),
+                          color: context.zj.ink2)),
                   if ((dish['extra_needed'] as List? ?? const [])
                       .isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
                           '还要买：${(dish['extra_needed'] as List).join('、')}',
-                          style: const TextStyle(
-                              fontSize: 11.5, color: ZaojiColors.amber)),
+                          style: TextStyle(
+                              fontSize: 11.5, color: context.zj.amber)),
                     ),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -1171,16 +1281,16 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
                         key: ValueKey('ai-ignore-${dish['name']}'),
                         onPressed: () => setState(
                             () => _ignored.add('${dish['name']}')),
-                        child: const Text('忽略',
+                        child: Text('忽略',
                             style: TextStyle(
                                 fontSize: 12,
-                                color: ZaojiColors.muted)),
+                                color: context.zj.muted)),
                       ),
                       FilledButton(
                         key: ValueKey('ai-adopt-${dish['name']}'),
                         onPressed: () => _adopt(dish),
                         style: FilledButton.styleFrom(
-                            backgroundColor: ZaojiColors.accent,
+                            backgroundColor: context.zj.accent,
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 14, vertical: 8)),
                         child: const Text('加入我的菜谱',

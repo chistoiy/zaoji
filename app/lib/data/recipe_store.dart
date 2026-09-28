@@ -9,6 +9,7 @@ import 'seed.dart';
 import 'sync/conflict_box.dart';
 import 'zaoji_db.dart';
 import '../models.dart';
+import '../theme.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
 /// 客户端数据仓库：本地库的读写 + 内存态（收藏这类本机偏好）。
@@ -98,6 +99,7 @@ class RecipeStore extends ChangeNotifier {
     });
     recipes = await _loadAll(db);
     await _loadFavs(db);
+    await _loadTheme(db); // R39：主题只在启动时读一次（同步重载不该改这台设备的皮肤）
     await _loadMenus(db);
     await _loadPrepBoards(db);
     _reindex();
@@ -261,6 +263,7 @@ class RecipeStore extends ChangeNotifier {
       sourceModel: row['source_model'] as String?,
       cookedCount: (row['cooked_count'] as int?) ?? 0,
       lastCooked: '${row['last_cooked_at'] ?? ''}',
+      createdAt: '${row['created_at'] ?? ''}', // v7：老行是 NULL → 空串 = 不知道
       isFav: false, // 库里没有这列；收藏是本机偏好，见 [favs]
       art: dishArtOfCode(row['art'] as int?),
       palette: paletteOfCode(row['pal'] as int?),
@@ -415,15 +418,23 @@ class RecipeStore extends ChangeNotifier {
 
   /// 新增/更新一条库存（同名不重复建：**按 name 精确复用现有行**，
   /// 「添加牛奶」点了两次不该变两条——库存是清单不是流水）。
+  ///
+  /// v7 起带三态与存储位置。[have] 这个入参**故意留着**：调用点一片
+  /// `have: true/false` 语义清楚，改成传枚举会让"加减到 0"这类调用读起来更绕。
+  /// 两者都给时以 [status] 为准。
   Future<void> upsertPantry({
     String? id,
     required String name,
     String? category,
     double? qtyValue,
     String? qtyUnit,
-    bool have = true,
+    bool? have,
+    PantryStock? status,
     String? expireAt,
     bool isStaple = false,
+    Object? storage = _keep,
+    Object? boughtAt = _keep,
+    Object? note = _keep,
   }) async {
     final db = _db!;
     final nodeId = await _resolveNodeId();
@@ -435,15 +446,34 @@ class RecipeStore extends ChangeNotifier {
         ? pantryItems.where((p) => p.id == id).firstOrNull
         : pantryItems.where((p) => p.name == name).firstOrNull;
 
+    final nextStatus = status ??
+        (have != null
+            ? (have ? PantryStock.have : PantryStock.none)
+            : (existing?.status ?? PantryStock.have));
+    // 「没提到」和「要清空」是两件事：默认值用 [_keep] 哨兵区分开，
+    // 否则购物入库那条老调用路径会把用户填过的存储位置/备注顺手抹掉。
+    String? keep(Object? v, String? Function() cur) =>
+        identical(v, _keep) ? cur() : v as String?;
+    final nextStorage =
+        keep(storage, () => existing?.storage);
+    final nextBought = keep(boughtAt, () => existing?.boughtAt);
+    final nextNote = keep(note, () => existing?.note);
+
     final values = <String, Object?>{
       'name': name,
       'alias_key': PantryMatch.aliasKeyOf(name),
       'category': category,
       'qty_value': qtyValue,
       'qty_unit': qtyUnit,
-      'have': have ? 1 : 0,
+      // ★ have 与 stock_status **成对写**：旧 apk 只认 have，
+      //   不带着它走，那台设备上这条库存会永远停在旧值上。
+      'have': nextStatus == PantryStock.none ? 0 : 1,
+      'stock_status': nextStatus.code,
       'expire_at': expireAt,
       'is_staple': isStaple ? 1 : 0,
+      'storage': nextStorage,
+      'bought_at': nextBought,
+      'note': nextNote,
     };
     late PantryItem stored;
     await db.transaction(() async {
@@ -464,20 +494,25 @@ class RecipeStore extends ChangeNotifier {
             category: category,
             qtyValue: qtyValue,
             qtyUnit: qtyUnit,
-            have: have,
+            status: nextStatus,
             expireAt: expireAt,
-            isStaple: isStaple);
+            isStaple: isStaple,
+            storage: nextStorage,
+            boughtAt: nextBought,
+            note: nextNote);
       } else {
         await db.customUpdate(
           'UPDATE pantry_item SET updated_at = ?, updated_by = ?, rev = rev + 1, '
           'name = ?, alias_key = ?, category = ?, qty_value = ?, qty_unit = ?, '
-          'have = ?, expire_at = ?, is_staple = ? WHERE id = ?',
+          'have = ?, stock_status = ?, expire_at = ?, is_staple = ?, '
+          'storage = ?, bought_at = ?, note = ? WHERE id = ?',
           variables: [
             Variable(next()),
             Variable(nodeId),
             for (final k in [
               'name', 'alias_key', 'category', 'qty_value', 'qty_unit',
-              'have', 'expire_at', 'is_staple'
+              'have', 'stock_status', 'expire_at', 'is_staple',
+              'storage', 'bought_at', 'note'
             ])
               Variable(values[k]),
             Variable(existing.id),
@@ -490,9 +525,12 @@ class RecipeStore extends ChangeNotifier {
             category: category,
             qtyValue: qtyValue,
             qtyUnit: qtyUnit,
-            have: have,
+            status: nextStatus,
             expireAt: expireAt,
-            isStaple: isStaple);
+            isStaple: isStaple,
+            storage: nextStorage,
+            boughtAt: nextBought,
+            note: nextNote);
       }
     });
     pantryItems = [
@@ -504,21 +542,28 @@ class RecipeStore extends ChangeNotifier {
     _fireLocalWrite();
   }
 
-  /// 步进器：±1（无数值的模糊库存加一次变成 1，减到 0 翻成 have=0——
+  /// 步进器：±1（无数值的模糊库存加一次变成 1，减到 0 翻成「没有」——
   /// 「没有」是库存状态不是删除，回收站那套语义不在这用）。
+  ///
+  /// 步进器**只碰 have/none 两端，不碰 low**：低是人的判断（看一眼瓶子），
+  /// 不是数量算出来的结果——把 low 交给 ± 号会让用户没法解释自己为什么
+  /// 昨天标的"快没了"今天又变回"充足"了。
   Future<void> adjustPantry(String id, int delta) async {
     final p = pantryItems.where((x) => x.id == id).firstOrNull;
     if (p == null) return;
     final v = (p.qtyValue ?? 0) + delta;
-    if (v <= 0) {
-      await upsertPantry(id: id, name: p.name, category: p.category,
-          qtyValue: 0, qtyUnit: p.qtyUnit, have: false,
-          expireAt: p.expireAt, isStaple: p.isStaple);
-    } else {
-      await upsertPantry(id: id, name: p.name, category: p.category,
-          qtyValue: v.toDouble(), qtyUnit: p.qtyUnit, have: true,
-          expireAt: p.expireAt, isStaple: p.isStaple);
-    }
+    await upsertPantry(
+        id: id,
+        name: p.name,
+        category: p.category,
+        qtyValue: v <= 0 ? 0 : v.toDouble(),
+        qtyUnit: p.qtyUnit,
+        status: v <= 0 ? PantryStock.none : PantryStock.have,
+        expireAt: p.expireAt,
+        isStaple: p.isStaple,
+        storage: p.storage,
+        boughtAt: p.boughtAt,
+        note: p.note);
   }
 
   /// 删除库存行（软删：这条数据参与同步，别的端要看到它消失）。
@@ -837,6 +882,75 @@ class RecipeStore extends ChangeNotifier {
   /// 收藏在本机偏好表里的键。值是 JSON 字符串数组。
   static const _favKey = 'fav_recipe_ids';
 
+  /// 「这个参数调用方没提」的哨兵——null 是有意义的值（清空），不能拿它当默认。
+  static const Object _keep = Object();
+
+  /// ── R39 · 主题 ──────────────────────────────────────────────
+  ///
+  /// 主题 id 存在 local_pref，**不进同步流**：客厅的平板想亮一点、灶台边的
+  /// 手机夜里想暗一点，是两台设备各自的采光问题，互相覆盖只会打架
+  /// （同 R23 备菜板、R37 同步策略的立场）。
+  static const _themeKey = 'theme';
+
+  /// 当前主题 id。默认那套 = [ZaojiTokens.fallback]，读库前也能安全取。
+  String themeId = ZaojiTokens.fallback.id;
+
+  /// 页面取色一律走这个（`StoreScope.of(context).tokens` / `context.zj`）。
+  ///
+  /// 认不出来的 id 落回默认那套而不是崩：这一列是用户可写的偏好，
+  /// 手改过、或来自更新版本的旧包，都不该让 App 打不开。
+  ZaojiTokens get tokens => ZaojiTokens.all
+      .firstWhere((t) => t.id == themeId, orElse: () => ZaojiTokens.fallback);
+
+  Future<void> _loadTheme(ZaojiDb db) async {
+    final cols = kLocalPrefTable.columnNames;
+    final rows = await db
+        .customSelect(
+          'SELECT ${cols[1]} FROM ${kLocalPrefTable.name} WHERE ${cols[0]} = ?',
+          variables: [Variable(_themeKey)],
+        )
+        .get();
+    if (rows.isEmpty) return;
+    themeId = _decodePrefString(rows.first.data[cols[1]]) ?? themeId;
+  }
+
+  /// local_pref 的值按约定是 JSON，但历史上也有直接塞裸串的地方——
+  /// 两种都认，解不出来返回 null 让调用方保持原值（不猜）。
+  static String? _decodePrefString(Object? raw) {
+    final s = raw == null ? null : (raw as String).trim();
+    if (s == null || s.isEmpty) return null;
+    try {
+      final d = jsonDecode(s);
+      return d is String ? d : null;
+    } catch (_) {
+      return s;
+    }
+  }
+
+  /// 换主题：内存态立即生效并通知（UI 一帧内翻新），落库异步。
+  ///
+  /// 与收藏同款处理：偏好写失败不打断操作——最坏结果是下次启动回到旧值，
+  /// 而"点了没反应"是用户当场就能感觉到的。
+  void setTheme(String id) {
+    if (!ZaojiTokens.all.any((t) => t.id == id)) return;
+    if (themeId == id) return;
+    themeId = id;
+    notifyListeners();
+    final db = _db;
+    if (db == null) return;
+    unawaited(_persistTheme(db).then((_) {},
+        onError: (Object e) => debugPrint('主题偏好写库失败：$e')));
+  }
+
+  Future<void> _persistTheme(ZaojiDb db) {
+    final cols = kLocalPrefTable.columnNames;
+    return db.customInsert(
+      'INSERT INTO ${kLocalPrefTable.name} (${cols.join(', ')}) '
+      'VALUES (?, ?) ON CONFLICT(${cols[0]}) DO UPDATE SET ${cols[1]} = excluded.${cols[1]}',
+      variables: [Variable(_themeKey), Variable(jsonEncode(themeId))],
+    );
+  }
+
   /// 单调 ULID 工厂：同毫秒创建的行**字典序必须递增**——
   /// 「取自己最新一条」这类 `ORDER BY ... , id DESC` 的定序全靠它。
   /// 之前用 `_ulids.next()`（纯随机后缀），同毫秒谁新谁旧是掷硬币，
@@ -941,6 +1055,10 @@ class RecipeStore extends ChangeNotifier {
         // R29：照片墙（sha256 JSON 数组）。空列表存 null 不存 '[]'——
         // 与 cover 的「没有就是 NULL」口径一致，回收/查询少一种要特判的形状
         'photos': draft.photos.isEmpty ? null : jsonEncode(draft.photos),
+        // v7（FR-LOG-01）：入册时刻。业务时间戳用 ISO8601（与 cook_session 同口径，
+        // R20 定样：HLC 只当同步元数据），日历直接截前 10 位当日期。
+        // ★ 只在**新建**时写；updateRecipe 的列清单里没有它，改一万次也不会动。
+        'created_at': now.toIso8601String(),
       });
 
       for (var i = 0; i < draft.ingredients.length; i++) {
@@ -1006,6 +1124,8 @@ class RecipeStore extends ChangeNotifier {
         palette: draft.palette,
         tags: draft.tags,
         coverSha256: draft.coverSha256,
+        // 与刚落库那一列同源：同一个 `now`，不是"再取一次当前时间"
+        createdAt: now.toIso8601String(),
       );
 
       // 内存态追加 + 索引 + 通知，**放到事务外**（见下方 createRecipe 尾注）
@@ -1736,7 +1856,7 @@ class RecipeStore extends ChangeNotifier {
   // （R20 定样——HLC 只当同步元数据用），所以日历折算日期直接截串，
   // 不需要也不应该去解 HLC。跨设备的记录都算：日历是全家的账本。
 
-  /// 某一月的点标记：哪几天做过菜 / 排了菜单，以及本月开火总场次。
+  /// 某一月的点标记：哪几天做过菜 / 排了菜单 / 入了新菜，以及本月开火总场次。
   Future<MonthMarks> monthMarks(int year, int month) async {
     final db = _db;
     if (db == null) return const MonthMarks.empty();
@@ -1751,11 +1871,41 @@ class RecipeStore extends ChangeNotifier {
       'SELECT day FROM menu WHERE day LIKE ? AND deleted_at IS NULL',
       variables: [Variable<String>('$prefix%')],
     ).get();
+    // v7（FR-LOG-01）：第三种点。created_at 为 NULL 的老行**天然不进来**——
+    // 那不是"那天没做菜"，是"不知道哪天入的册"，两者在 UI 上必须同一种表现。
+    final addedRows = await db.customSelect(
+      'SELECT created_at FROM recipe WHERE created_at LIKE ? AND deleted_at IS NULL',
+      variables: [Variable<String>('$prefix%')],
+    ).get();
     return MonthMarks(
       cookDays: {for (final r in cookRows) '${r.data['finished_at']}'.substring(0, 10)},
       menuDays: {for (final r in menuRows) '${r.data['day']}'},
+      addedDays: {
+        for (final r in addedRows) '${r.data['created_at']}'.substring(0, 10),
+      },
       cookCount: cookRows.length,
     );
+  }
+
+  /// 某一天入册的菜谱（v7 · FR-LOG-01 的第三种点）。按入册时刻升序。
+  Future<List<AddedRecipe>> addedRecipesOn(String day) async {
+    final db = _db;
+    if (db == null) return const [];
+    final rows = await db.customSelect(
+      'SELECT id, name, created_at FROM recipe '
+      'WHERE created_at LIKE ? AND deleted_at IS NULL ORDER BY created_at',
+      variables: [Variable<String>('$day%')],
+    ).get();
+    return [
+      for (final r in rows)
+        AddedRecipe(
+          recipeId: '${r.data['id']}',
+          recipeName: '${r.data['name']}',
+          time: '${r.data['created_at']}'.length >= 16
+              ? '${r.data['created_at']}'.substring(11, 16)
+              : '',
+        ),
+    ];
   }
 
   /// 某一天的做菜记录（按完成时刻升序还原那天的顺序）。
@@ -2100,19 +2250,45 @@ class MonthMarks {
   /// 有菜单安排的日期集合。
   final Set<String> menuDays;
 
+  /// v7（FR-LOG-01）：有菜谱入册的日期集合。
+  ///
+  /// 只包含 `created_at` 非空的行——v6 及更早建的菜**没有这个事实**，
+  /// 那天不画点，而不是画一个猜出来的点。
+  final Set<String> addedDays;
+
   /// 本月开火场次（按会话计数，一天做两道算两次）。
   final int cookCount;
 
   const MonthMarks({
     required this.cookDays,
     required this.menuDays,
+    this.addedDays = const {},
     required this.cookCount,
   });
 
   const MonthMarks.empty()
       : cookDays = const {},
         menuDays = const {},
+        addedDays = const {},
         cookCount = 0;
+}
+
+/// 日历里的一条「新增菜品」记录（v7 · FR-LOG-01）。
+///
+/// 与 [CookEvent] 分开放：两者字段不同（做菜记录有耗时，入册记录没有），
+/// 硬塞进一个类会让"耗时"这一栏在入册那行显示成 0 分钟——那是假数据。
+class AddedRecipe {
+  final String recipeId;
+  final String recipeName;
+
+  /// HH:MM，入册时刻。
+  final String time;
+
+  const AddedRecipe({
+    required this.recipeId,
+    required this.recipeName,
+    required this.time,
+  });
 }
 
 /// 日历里的一条做菜记录（R24）。

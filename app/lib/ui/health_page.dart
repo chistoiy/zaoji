@@ -95,10 +95,10 @@ class _HealthPageState extends State<HealthPage> {
   Widget build(BuildContext context) {
     final store = _store;
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         title: const Text('数据体检'),
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
       ),
       body: ListenableBuilder(
         listenable: store,
@@ -110,10 +110,10 @@ class _HealthPageState extends State<HealthPage> {
             );
           }
           if (issues.isEmpty) {
-            return const Center(
+            return Center(
               child: Text('账本没有要紧的事',
                   key: ValueKey('health-allclear'),
-                  style: TextStyle(fontSize: 13, color: ZaojiColors.muted)),
+                  style: TextStyle(fontSize: 13, color: context.zj.muted)),
             );
           }
           return ListView(
@@ -129,7 +129,7 @@ class _HealthPageState extends State<HealthPage> {
 
   Widget _issueCard(HealthIssue it) {
     return Material(
-      color: Colors.white,
+      color: context.zj.surface,
       borderRadius: BorderRadius.circular(ZaojiRadius.md),
       child: InkWell(
         key: ValueKey('health-${it.key}'),
@@ -146,7 +146,7 @@ class _HealthPageState extends State<HealthPage> {
           padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(ZaojiRadius.md),
-            border: Border.all(color: ZaojiColors.lineSoft),
+            border: Border.all(color: context.zj.lineSoft),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -162,17 +162,17 @@ class _HealthPageState extends State<HealthPage> {
                     Text(it.detail,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, color: ZaojiColors.muted)),
+                        style: TextStyle(
+                            fontSize: 12, color: context.zj.muted)),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
               Text('${it.count}',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
-                      color: ZaojiColors.accent)),
+                      color: context.zj.accent)),
             ],
           ),
         ),

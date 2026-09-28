@@ -95,19 +95,19 @@ class TimeCapsule extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.fromLTRB(6, 1.5, 8, 1.5),
             decoration: BoxDecoration(
-              color: ZaojiColors.amberBg,
+              color: context.zj.amberBg,
               borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: ZaojiColors.amber.withValues(alpha: 0.35)),
+              border: Border.all(color: context.zj.amber.withValues(alpha: 0.35)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.timer_outlined, size: 13, color: ZaojiColors.amber),
+                Icon(Icons.timer_outlined, size: 13, color: context.zj.amber),
                 const SizedBox(width: 3),
                 Text(
                   text,
-                  style: const TextStyle(
-                    color: ZaojiColors.amber,
+                  style: TextStyle(
+                    color: context.zj.amber,
                     fontWeight: FontWeight.w600,
                     // tabular figures：数字等宽，几颗胶囊排在一起时不会参差不齐
                     fontFeatures: [FontFeature.tabularFigures()],

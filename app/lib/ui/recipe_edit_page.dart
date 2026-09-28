@@ -333,7 +333,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
             child: const Text('继续编辑'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: ZaojiColors.accent),
+            style: FilledButton.styleFrom(backgroundColor: context.zj.accent),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('放弃'),
           ),
@@ -351,7 +351,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         if (!didPop) _confirmPop();
       },
       child: Scaffold(
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
         appBar: AppBar(
           title: Text(widget.isNew ? '新建菜品' : '编辑菜品'),
           actions: [
@@ -421,16 +421,16 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                   flex: 2,
                   child: FilledButton(
                     style: FilledButton.styleFrom(
-                      backgroundColor: ZaojiColors.accent,
+                      backgroundColor: context.zj.accent,
                     ),
                     onPressed: _saving ? null : _save,
                     child: _saving
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: context.zj.onAccent,
                             ),
                           )
                         : const Text('保存菜品'),
@@ -457,13 +457,13 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
       key: const ValueKey('ai-fill-bar'),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: ZaojiColors.aiBg,
+        color: context.zj.aiBg,
         borderRadius: BorderRadius.circular(ZaojiRadius.md),
-        border: Border.all(color: const Color(0x336E4468)),
+        border: Border.all(color: context.zj.aiBg),
       ),
       child: Row(
         children: [
-          const Icon(Icons.auto_awesome, size: 18, color: ZaojiColors.ai),
+          Icon(Icons.auto_awesome, size: 18, color: context.zj.ai),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -472,22 +472,22 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                   : notConfigured
                       ? '用 AI 自动补全（未配置）'
                       : '用 AI 自动补全',
-              style: const TextStyle(
-                  fontSize: 12.5, height: 1.5, color: ZaojiColors.ai),
+              style: TextStyle(
+                  fontSize: 12.5, height: 1.5, color: context.zj.ai),
             ),
           ),
           const SizedBox(width: 8),
           _aiBusy
-              ? const SizedBox(
+              ? SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: ZaojiColors.ai))
+                      strokeWidth: 2, color: context.zj.ai))
               : TextButton(
                   onPressed: notConfigured ? _gotoAiSettings : _aiFill,
                   child: Text(notConfigured ? '去配置' : '补全',
-                      style: const TextStyle(
-                          fontSize: 13, color: ZaojiColors.ai)),
+                      style: TextStyle(
+                          fontSize: 13, color: context.zj.ai)),
                 ),
         ],
       ),
@@ -671,16 +671,16 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         key: const ValueKey('photo-wall'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Text('成品照片',
                   style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: ZaojiColors.ink2)),
+                      color: context.zj.ink2)),
               SizedBox(width: 8),
               Text('长按可设为封面',
-                  style: TextStyle(fontSize: 10.5, color: ZaojiColors.muted)),
+                  style: TextStyle(fontSize: 10.5, color: context.zj.muted)),
             ],
           ),
           const SizedBox(height: 2),
@@ -702,19 +702,19 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                       width: 56,
                       height: 56,
                       decoration: BoxDecoration(
-                        border: Border.all(color: ZaojiColors.line),
+                        border: Border.all(color: context.zj.line),
                         borderRadius: BorderRadius.circular(ZaojiRadius.xs),
-                        color: ZaojiColors.paper2,
+                        color: context.zj.paper2,
                       ),
                       child: _wallBusy
-                          ? const Center(
+                          ? Center(
                               child: SizedBox(
                                   width: 14,
                                   height: 14,
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2)))
-                          : const Icon(Icons.add_photo_alternate_outlined,
-                              size: 20, color: ZaojiColors.muted),
+                          : Icon(Icons.add_photo_alternate_outlined,
+                              size: 20, color: context.zj.muted),
                     ),
                   ),
                 ),
@@ -737,7 +737,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
             onTap: () => Navigator.pop(ctx, 'cover'),
           ),
           ListTile(
-            leading: const Icon(Icons.delete_outline, color: ZaojiColors.muted),
+            leading: Icon(Icons.delete_outline, color: context.zj.muted),
             title: const Text('移出照片墙'),
             onTap: () => Navigator.pop(ctx, 'remove'),
           ),
@@ -800,12 +800,12 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  border: Border.all(color: ZaojiColors.line),
+                  border: Border.all(color: context.zj.line),
                   borderRadius: BorderRadius.circular(ZaojiRadius.xs),
-                  color: ZaojiColors.paper2,
+                  color: context.zj.paper2,
                 ),
-                child: const Icon(Icons.add_a_photo_outlined,
-                    size: 18, color: ZaojiColors.muted),
+                child: Icon(Icons.add_a_photo_outlined,
+                    size: 18, color: context.zj.muted),
               ),
             ),
           ),
@@ -868,15 +868,15 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                   icon: Icon(
                     Icons.local_fire_department,
                     color: d <= _difficulty
-                        ? ZaojiColors.accent
-                        : ZaojiColors.muted,
+                        ? context.zj.accent
+                        : context.zj.muted,
                     size: 26,
                   ),
                 ),
               ),
             Text(
               ['简单', '中等', '较难'][_difficulty - 1],
-              style: const TextStyle(fontSize: 13, color: ZaojiColors.ink2),
+              style: TextStyle(fontSize: 13, color: context.zj.ink2),
             ),
           ],
         ),
@@ -974,9 +974,9 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                 iconSize: 18,
                 tooltip: '删除这行',
                 onPressed: () => setState(() => _ingredients.removeAt(i)),
-                icon: const Icon(
+                icon: Icon(
                   Icons.remove_circle_outline,
-                  color: ZaojiColors.muted,
+                  color: context.zj.muted,
                 ),
               ),
             ],
@@ -1006,9 +1006,9 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
             margin: const EdgeInsets.only(bottom: 10),
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             decoration: BoxDecoration(
-              border: Border.all(color: ZaojiColors.lineSoft),
+              border: Border.all(color: context.zj.lineSoft),
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
-              color: Colors.white,
+            color: context.zj.surface,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1020,31 +1020,31 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                       height: 22,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: ZaojiColors.accent.withValues(alpha: 0.1),
+                        color: context.zj.accent.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         '${i + 1}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: ZaojiColors.accent,
+                          color: context.zj.accent,
                         ),
                       ),
                     ),
                     const SizedBox(width: 8),
-                    const Text(
+                    Text(
                       '步骤',
-                      style: TextStyle(fontSize: 12, color: ZaojiColors.muted),
+                      style: TextStyle(fontSize: 12, color: context.zj.muted),
                     ),
                     const Spacer(),
                     IconButton(
                       iconSize: 16,
                       tooltip: '删除',
                       onPressed: () => setState(() => _stepCtrls.removeAt(i)),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.delete_outline,
-                        color: ZaojiColors.muted,
+                        color: context.zj.muted,
                       ),
                     ),
                   ],
@@ -1086,19 +1086,19 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
       isCollapsed: true,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(ZaojiRadius.sm),
-        borderSide: const BorderSide(color: ZaojiColors.line),
+        borderSide: BorderSide(color: context.zj.line),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(ZaojiRadius.sm),
-        borderSide: const BorderSide(color: ZaojiColors.line),
+        borderSide: BorderSide(color: context.zj.line),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(ZaojiRadius.sm),
-        borderSide: const BorderSide(color: ZaojiColors.accent),
+        borderSide: BorderSide(color: context.zj.accent),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       hintText: hint,
-      hintStyle: const TextStyle(fontSize: 13, color: ZaojiColors.muted),
+      hintStyle: TextStyle(fontSize: 13, color: context.zj.muted),
     );
   }
 
@@ -1109,17 +1109,17 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         children: [
           Text(
             text,
-            style: ZaojiText.body(
+            style: ZaojiText.bodyOf(context, 
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
-              color: ZaojiColors.ink2,
+              color: context.zj.ink2,
             ),
           ),
           if (required)
-            const Text(
+            Text(
               ' *',
               style: TextStyle(
-                color: ZaojiColors.accent,
+                color: context.zj.accent,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
@@ -1145,17 +1145,17 @@ class _SectionHead extends StatelessWidget {
         children: [
           Text(
             num,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: ZaojiColors.accent,
+              color: context.zj.accent,
               letterSpacing: 0.5,
             ),
           ),
           const SizedBox(width: 8),
           Text(
             title,
-            style: ZaojiText.display(fontSize: 17, fontWeight: FontWeight.w500),
+            style: ZaojiText.displayOf(context, fontSize: 17, fontWeight: FontWeight.w500),
           ),
         ],
       ),
@@ -1181,14 +1181,14 @@ class _MiniThumbPending extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
+    return Padding(
       padding: EdgeInsets.only(right: 6, top: 6),
       child: SizedBox(
         width: 56,
         height: 56,
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: ZaojiColors.paper2,
+            color: context.zj.paper2,
             borderRadius: BorderRadius.all(Radius.circular(ZaojiRadius.xs)),
           ),
           child: Center(

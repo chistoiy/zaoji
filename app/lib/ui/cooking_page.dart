@@ -126,7 +126,7 @@ class _CookingPageState extends State<CookingPage> {
           LinearProgressIndicator(
             value: (_step + 1) / _total,
             minHeight: 4,
-            backgroundColor: ZaojiColors.lineSoft,
+            backgroundColor: context.zj.lineSoft,
           ),
           Expanded(
             child: ListView(
@@ -136,18 +136,18 @@ class _CookingPageState extends State<CookingPage> {
                 // 时间胶囊照旧可点起计时（FR-COOK-02），原文一字不改。
                 RichText(
                   text: TextSpan(
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 21,
                       height: 1.75,
-                      color: ZaojiColors.ink,
+                      color: context.zj.ink,
                       fontWeight: FontWeight.w500,
                     ),
                     children: buildTimeCapsuleSpans(
                       stepText,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 21,
                         height: 1.75,
-                        color: ZaojiColors.ink,
+                        color: context.zj.ink,
                         fontWeight: FontWeight.w500,
                       ),
                       onTap: (hit) => showTimerSheet(
@@ -198,7 +198,7 @@ class _CookingPageState extends State<CookingPage> {
                   child: OutlinedButton(
                     onPressed: _step > 0 ? () => _goto(_step - 1) : null,
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: ZaojiColors.line),
+                      side: BorderSide(color: context.zj.line),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(ZaojiRadius.md),
                       ),
@@ -216,8 +216,8 @@ class _CookingPageState extends State<CookingPage> {
                           child: FilledButton(
                             onPressed: () => _goto(_step + 1),
                             style: FilledButton.styleFrom(
-                              backgroundColor: ZaojiColors.accent,
-                              foregroundColor: Colors.white,
+                              backgroundColor: context.zj.accent,
+                              foregroundColor: context.zj.onAccent,
                               shape: RoundedRectangleBorder(
                                 borderRadius:
                                     BorderRadius.circular(ZaojiRadius.md),
@@ -265,19 +265,19 @@ class _HoldToFinishButton extends StatelessWidget {
           child: Container(
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: ZaojiColors.amber,
+              color: context.zj.amber,
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.check_circle_outline, color: Colors.white),
+                Icon(Icons.check_circle_outline, color: context.zj.onAccent),
                 SizedBox(width: 8),
                 Text('完成这道菜',
                     style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
-                        color: Colors.white)),
+                        color: context.zj.onAccent)),
               ],
             ),
           ),
@@ -307,8 +307,8 @@ class _IngredientChecklist extends StatelessWidget {
         initiallyExpanded: false,
         title: Text(
           '食材速查（已备 ${checked.length}/${ingredients.length}）',
-          style: const TextStyle(
-              fontSize: 14, fontWeight: FontWeight.w600, color: ZaojiColors.ink2),
+          style: TextStyle(
+              fontSize: 14, fontWeight: FontWeight.w600, color: context.zj.ink2),
         ),
         children: [
           for (var i = 0; i < ingredients.length; i++)

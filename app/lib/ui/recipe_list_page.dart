@@ -119,7 +119,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
   void _openSortSheet() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: context.zj.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
           top: Radius.circular(ZaojiRadius.lg),
@@ -143,7 +143,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
                       height: 4,
                       margin: const EdgeInsets.only(bottom: 14),
                       decoration: BoxDecoration(
-                        color: ZaojiColors.line,
+                        color: context.zj.line,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -152,7 +152,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
                     children: [
                       Text(
                         '排序',
-                        style: ZaojiText.display(
+                        style: ZaojiText.displayOf(context, 
                           fontSize: 17,
                           fontWeight: FontWeight.w500,
                         ),
@@ -186,8 +186,8 @@ class _RecipeListPageState extends State<RecipeListPage> {
                                 style: TextStyle(
                                   fontSize: 14.5,
                                   color: s == sort
-                                      ? ZaojiColors.accent
-                                      : ZaojiColors.ink,
+                                      ? context.zj.accent
+                                      : context.zj.ink,
                                   fontWeight: s == sort
                                       ? FontWeight.w600
                                       : FontWeight.w400,
@@ -195,22 +195,22 @@ class _RecipeListPageState extends State<RecipeListPage> {
                               ),
                             ),
                             if (s == sort)
-                              const Icon(
+                              Icon(
                                 Icons.check,
                                 size: 17,
-                                color: ZaojiColors.accent,
+                                color: context.zj.accent,
                               ),
                           ],
                         ),
                       ),
                     ),
-                  const Divider(height: 22, color: ZaojiColors.lineSoft),
+                  Divider(height: 22, color: context.zj.lineSoft),
                   Text(
                     '难度',
-                    style: ZaojiText.body(
+                    style: ZaojiText.bodyOf(context, 
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: ZaojiColors.ink2,
+                      color: context.zj.ink2,
                     ),
                   ),
                   const SizedBox(height: 9),
@@ -258,7 +258,7 @@ class _RecipeListPageState extends State<RecipeListPage> {
         final favCount = store.favs.length;
 
         return Scaffold(
-          backgroundColor: ZaojiColors.paper,
+          backgroundColor: context.zj.paper,
           body: SafeArea(
             bottom: false,
             child: Stack(
@@ -396,7 +396,7 @@ class _HomeHeader extends StatelessWidget {
               children: [
                 Text(
                   '菜谱',
-                  style: ZaojiText.display(
+                  style: ZaojiText.displayOf(context, 
                     fontSize: 22,
                     fontWeight: FontWeight.w600,
                   ),
@@ -404,9 +404,9 @@ class _HomeHeader extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '共 $total 道 · 收藏 $favCount 道',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: ZaojiColors.muted,
+                    color: context.zj.muted,
                     letterSpacing: .2,
                   ),
                 ),
@@ -458,12 +458,12 @@ class _IconSolidButton extends StatelessWidget {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: context.zj.surface,
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: ZaojiColors.line),
-            boxShadow: const [
+            border: Border.all(color: context.zj.line),
+            boxShadow: [
               BoxShadow(
-                color: Color(0x123A2816), // rgba(58,40,22,.07)
+                color: context.zj.lineSoft, // rgba(58,40,22,.07)
                 blurRadius: 3,
                 offset: Offset(0, 1),
               ),
@@ -473,7 +473,7 @@ class _IconSolidButton extends StatelessWidget {
             alignment: Alignment.center,
             children: [
               IconTheme(
-                data: const IconThemeData(size: 20, color: ZaojiColors.ink2),
+                data: IconThemeData(size: 20, color: context.zj.ink2),
                 child: icon,
               ),
               if (badge != null)
@@ -486,15 +486,15 @@ class _IconSolidButton extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: ZaojiColors.accent,
+                      color: context.zj.accent,
                       borderRadius: BorderRadius.circular(9),
                     ),
                     child: Text(
                       '$badge',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                      color: context.zj.onAccent,
                       ),
                     ),
                   ),
@@ -528,26 +528,26 @@ class _SearchBar extends StatelessWidget {
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: ZaojiColors.line),
+        border: Border.all(color: context.zj.line),
       ),
       child: Row(
         children: [
-          const Icon(Icons.search, size: 18, color: ZaojiColors.muted),
+          Icon(Icons.search, size: 18, color: context.zj.muted),
           const SizedBox(width: 9),
           Expanded(
             child: TextField(
               focusNode: focus,
               controller: controller,
               onChanged: onChanged,
-              style: const TextStyle(fontSize: 14, color: ZaojiColors.ink),
-              cursorColor: ZaojiColors.accent,
-              decoration: const InputDecoration(
+              style: TextStyle(fontSize: 14, color: context.zj.ink),
+              cursorColor: context.zj.accent,
+              decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
                 hintText: '搜菜名、食材，如「番茄」「虾」',
-                hintStyle: TextStyle(fontSize: 14, color: ZaojiColors.muted),
+                hintStyle: TextStyle(fontSize: 14, color: context.zj.muted),
               ),
             ),
           ),
@@ -557,9 +557,9 @@ class _SearchBar extends StatelessWidget {
                 controller.clear();
                 onChanged('');
               },
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.all(4),
-                child: Icon(Icons.close, size: 15, color: ZaojiColors.muted),
+                child: Icon(Icons.close, size: 15, color: context.zj.muted),
               ),
             ),
         ],
@@ -605,7 +605,7 @@ class _Rail extends StatelessWidget {
           for (final m in _quickMethods) ...[
             _FilterChip(
               label: m,
-              color: ZaojiColors.tagMethod,
+              color: context.zj.tagMethod,
               selected: selectedMethods.contains(m),
               onTap: () => onMethod(m),
             ),
@@ -638,8 +638,8 @@ class _FilterChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // is-plain 的选中态是 accent（原型 .chip[aria-pressed="true"].is-plain）
-    final c = plain ? ZaojiColors.ink2 : (color ?? ZaojiColors.ink2);
-    final active = plain ? ZaojiColors.accent : c;
+    final c = plain ? context.zj.ink2 : (color ?? context.zj.ink2);
+    final active = plain ? context.zj.accent : c;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
@@ -650,14 +650,14 @@ class _FilterChip extends StatelessWidget {
           color: selected
               ? active
               : plain
-              ? const Color(0x09231C15) // rgba(35,28,21,.035)
+              ? context.zj.lineSoft // rgba(35,28,21,.035)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
             color: selected
                 ? active
                 : plain
-                ? ZaojiColors.line
+                ? context.zj.line
                 : c,
           ),
         ),
@@ -673,7 +673,7 @@ class _FilterChip extends StatelessWidget {
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
-                color: selected ? const Color(0xFFFFF7EE) : c,
+                color: selected ? context.zj.onAccent : c,
               ),
             ),
           ],
@@ -706,20 +706,20 @@ class _SectionHead extends StatelessWidget {
         children: [
           Text(
             count.toString().padLeft(2, '0'),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: ZaojiColors.accent,
+              color: context.zj.accent,
               letterSpacing: .4,
             ),
           ),
           const SizedBox(width: 10),
           Text(
             title,
-            style: ZaojiText.display(fontSize: 19, fontWeight: FontWeight.w600),
+            style: ZaojiText.displayOf(context, fontSize: 19, fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 12),
-          const Expanded(child: Divider(height: 1, color: ZaojiColors.line)),
+          Expanded(child: Divider(height: 1, color: context.zj.line)),
           const SizedBox(width: 12),
           InkWell(
             onTap: onSort,
@@ -731,15 +731,15 @@ class _SectionHead extends StatelessWidget {
                 children: [
                   Text(
                     sortLabel,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color: ZaojiColors.muted,
+                      color: context.zj.muted,
                     ),
                   ),
-                  const Icon(
+                  Icon(
                     Icons.expand_more,
                     size: 13,
-                    color: ZaojiColors.muted,
+                    color: context.zj.muted,
                   ),
                 ],
               ),
@@ -779,7 +779,7 @@ class _RecipeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: context.zj.surface,
       borderRadius: BorderRadius.circular(ZaojiRadius.lg),
       child: InkWell(
         onTap: onTap,
@@ -787,7 +787,7 @@ class _RecipeCard extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-            border: Border.all(color: ZaojiColors.lineSoft),
+            border: Border.all(color: context.zj.lineSoft),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(ZaojiRadius.lg - 0.5),
@@ -868,10 +868,10 @@ class _RecipeCard extends StatelessWidget {
                                 const SizedBox(width: 4),
                                 Text(
                                   ChiliScale.diffLabel(recipe.difficulty),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w600,
-                                    color: Color(0xFFFFF4E9),
+                                    color: context.zj.onAccent,
                                     shadows: _chipShadow,
                                   ),
                                 ),
@@ -880,18 +880,18 @@ class _RecipeCard extends StatelessWidget {
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(
+                                Icon(
                                   Icons.schedule,
                                   size: 11,
-                                  color: Color(0xFFFFF4E9),
+                                  color: context.zj.onAccent,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
                                   '${recipe.selfTime} 分',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w600,
-                                    color: Color(0xFFFFF4E9),
+                                    color: context.zj.onAccent,
                                     shadows: _chipShadow,
                                   ),
                                 ),
@@ -913,7 +913,7 @@ class _RecipeCard extends StatelessWidget {
                         recipe.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: ZaojiText.display(
+                        style: ZaojiText.displayOf(context, 
                           fontSize: 15.5,
                           fontWeight: FontWeight.w600,
                           height: 1.32,
@@ -922,10 +922,10 @@ class _RecipeCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.local_fire_department,
                             size: 11,
-                            color: ZaojiColors.muted,
+                            color: context.zj.muted,
                           ),
                           const SizedBox(width: 4),
                           // Flexible + ellipsis：320px 宽时两列卡片只有 138px，
@@ -935,9 +935,9 @@ class _RecipeCard extends StatelessWidget {
                               '做过 ${recipe.cookedCount} 次',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 10.5,
-                                color: ZaojiColors.muted,
+                                color: context.zj.muted,
                               ),
                             ),
                           ),
@@ -946,16 +946,16 @@ class _RecipeCard extends StatelessWidget {
                             width: 2.5,
                             height: 2.5,
                             decoration: BoxDecoration(
-                              color: ZaojiColors.muted.withValues(alpha: .5),
+                              color: context.zj.muted.withValues(alpha: .5),
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 7),
                           Text(
                             recipe.lastCookedShort,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 10.5,
-                              color: ZaojiColors.muted,
+                              color: context.zj.muted,
                             ),
                           ),
                         ],
@@ -987,20 +987,20 @@ class _PillBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
       decoration: BoxDecoration(
-        color: ZaojiColors.ai.withValues(alpha: .86),
+        color: context.zj.ai.withValues(alpha: .86),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 10, color: const Color(0xFFF5EBF4)),
+          Icon(icon, size: 10, color: context.zj.onAccent),
           const SizedBox(width: 4),
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
-              color: Color(0xFFF5EBF4),
+              color: context.zj.onAccent,
             ),
           ),
         ],
@@ -1029,13 +1029,13 @@ class _FavButton extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: isFav
-                ? ZaojiColors.accent.withValues(alpha: .82)
+                ? context.zj.accent.withValues(alpha: .82)
                 : const Color(0x4D18110B), // rgba(24,17,11,.30)
           ),
           child: Icon(
             isFav ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
             size: 17,
-            color: isFav ? const Color(0xFFFFD9C4) : const Color(0xFFFFF1E4),
+            color: isFav ? context.zj.onAccent : context.zj.onAccent,
           ),
         ),
       ),
@@ -1060,24 +1060,24 @@ class _EmptyState extends StatelessWidget {
             width: 64,
             height: 64,
             decoration: BoxDecoration(
-              color: ZaojiColors.paper2,
+              color: context.zj.paper2,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.search, size: 30, color: ZaojiColors.muted),
+            child: Icon(Icons.search, size: 30, color: context.zj.muted),
           ),
           const SizedBox(height: 14),
           Text(
             '没有找到菜品',
-            style: ZaojiText.display(fontSize: 17, fontWeight: FontWeight.w600),
+            style: ZaojiText.displayOf(context, fontSize: 17, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '试试换个关键词，或清掉筛选条件。也可以直接点右下角的按钮新建一道菜——配方记得越细，越值钱。',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12.5,
               height: 1.72,
-              color: ZaojiColors.muted,
+              color: context.zj.muted,
             ),
           ),
           if (onReset != null) ...[
@@ -1229,20 +1229,20 @@ class _AddFabState extends State<_AddFab> {
                     height: _size,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: const LinearGradient(
+                      gradient: LinearGradient(
                         begin: Alignment(-0.6, -1),
                         end: Alignment(0.6, 1),
-                        colors: [Color(0xFFE2571F), Color(0xFFC33F14)],
+                        colors: [context.zj.accent, context.zj.accentDeep],
                       ),
                       boxShadow: _dragging
-                          ? const [
+                          ? [
                               BoxShadow(
                                 color: Color(0x80C33F14),
                                 blurRadius: 44,
                                 offset: Offset(0, 20),
                               ),
                               BoxShadow(
-                                color: Color(0x212E491C),
+                                color: context.zj.accentSoft,
                                 blurRadius: 12,
                               ),
                             ]
@@ -1262,10 +1262,10 @@ class _AddFabState extends State<_AddFab> {
                     child: AnimatedRotation(
                       turns: _dragging ? 0.125 : 0,
                       duration: const Duration(milliseconds: 340),
-                      child: const Icon(
+                      child: Icon(
                         Icons.add,
                         size: 26,
-                        color: Color(0xFFFFF3E8),
+                        color: context.zj.tint2,
                       ),
                     ),
                   ),
@@ -1295,9 +1295,9 @@ class _AddFabState extends State<_AddFab> {
                   color: const Color(0xDD18110B), // rgba(24,17,11,.86)
                   borderRadius: BorderRadius.circular(999),
                 ),
-                child: const Text(
+                child: Text(
                   '松开前拖到我顺手的位置',
-                  style: TextStyle(fontSize: 10.5, color: Color(0xFFFFF3E8)),
+                  style: TextStyle(fontSize: 10.5, color: context.zj.tint2),
                 ),
               ),
             ),

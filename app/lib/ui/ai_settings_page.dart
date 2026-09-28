@@ -173,12 +173,12 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(title: const Text('大模型能力')),
       body: _loading
-          ? const Center(
+          ? Center(
               child: CircularProgressIndicator(
-                  strokeWidth: 2.5, color: ZaojiColors.accent))
+                  strokeWidth: 2.5, color: context.zj.accent))
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
@@ -203,14 +203,14 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: _testResult == null
-                          ? const SizedBox.shrink()
+                          ? SizedBox.shrink()
                           : Text(
                               _testResult!,
                               style: TextStyle(
                                 fontSize: 12,
                                 color: _testResult!.startsWith('✓')
-                                    ? const Color(0xFF37634A)
-                                    : ZaojiColors.accent,
+                                    ? context.zj.tagIngredient
+                                    : context.zj.accent,
                               ),
                             ),
                     ),
@@ -219,8 +219,8 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                 if (_error != null) ...[
                   const SizedBox(height: 10),
                   Text(_error!,
-                      style: const TextStyle(
-                          fontSize: 11.5, color: ZaojiColors.accent)),
+                      style: TextStyle(
+                          fontSize: 11.5, color: context.zj.accent)),
                 ],
                 const SizedBox(height: 22),
                 _sectionTitle('03', '用哪些能力', '可单独关'),
@@ -236,24 +236,24 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                 Text(
                   '调用 ${_usage['calls'] ?? 0} 次 · '
                   'token ${_usage['inTok'] ?? 0} / ${_usage['outTok'] ?? 0}',
-                  style: const TextStyle(
-                      fontSize: 12.5, color: ZaojiColors.ink2),
+                  style: TextStyle(
+                      fontSize: 12.5, color: context.zj.ink2),
                 ),
                 const SizedBox(height: 26),
                 FilledButton(
                   onPressed: _busy ? null : _save,
                   style: FilledButton.styleFrom(
-                      backgroundColor: ZaojiColors.accent),
+                      backgroundColor: context.zj.accent),
                   child: const Text('保存配置'),
                 ),
                 const SizedBox(height: 16),
-                const Text(
+                Text(
                   'Key 与开关存在自家服务端、不参与同步；估算结果和 AI 生成的菜谱'
                   '照常跨端同步。',
                   style: TextStyle(
                       fontSize: 11.5,
                       height: 1.7,
-                      color: ZaojiColors.muted),
+                      color: context.zj.muted),
                 ),
               ],
             ),
@@ -264,12 +264,12 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.lg),
         border: Border.all(
             color: _enabled
-                ? const Color(0x3C6E4468)
-                : const Color(0xFFE6DCC9)),
+                ? context.zj.aiBg
+                : context.zj.line),
       ),
       child: Row(
         children: [
@@ -278,11 +278,11 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
             height: 46,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(15),
-              color: _enabled ? const Color(0xFF6E4468) : ZaojiColors.paper2,
+              color: _enabled ? context.zj.ai : context.zj.paper2,
             ),
             child: Icon(Icons.auto_awesome,
                 size: 22,
-                color: _enabled ? const Color(0xFFF3E7F2) : ZaojiColors.muted),
+                color: _enabled ? context.zj.onAccent : context.zj.muted),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -297,8 +297,8 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                   _configured
                       ? _modelCtrl.text
                       : '不配置也完全能用，只是没有 AI',
-                  style: const TextStyle(
-                      fontSize: 11.5, color: ZaojiColors.muted),
+                  style: TextStyle(
+                      fontSize: 11.5, color: context.zj.muted),
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
@@ -306,7 +306,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
           ),
           Switch(
             value: _enabled,
-            activeThumbColor: ZaojiColors.accent,
+            activeThumbColor: context.zj.accent,
             onChanged: (v) => setState(() => _enabled = v),
           ),
         ],
@@ -320,22 +320,22 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
       child: Row(
         children: [
           Text(num,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  color: ZaojiColors.accent)),
+                  color: context.zj.accent)),
           const SizedBox(width: 8),
           Text(title,
               style: const TextStyle(
                   fontSize: 13.5, fontWeight: FontWeight.w700)),
           const SizedBox(width: 10),
-          const Expanded(
+          Expanded(
               child: Divider(
-                  color: Color(0xFFE6DCC9), thickness: 1)),
+                  color: context.zj.line, thickness: 1)),
           const SizedBox(width: 10),
           Text(more,
-              style: const TextStyle(
-                  fontSize: 11, color: ZaojiColors.muted)),
+              style: TextStyle(
+                  fontSize: 11, color: context.zj.muted)),
         ],
       ),
     );
@@ -351,7 +351,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
             label: Text('${p['n']}'),
             selected: _provider == '${p['k']}',
             onSelected: (_) => _pickProvider(p),
-            selectedColor: const Color(0x1A6E4468),
+            selectedColor: context.zj.aiBg,
           ),
       ],
     );
@@ -364,30 +364,30 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: ZaojiColors.ink2)),
+                  color: context.zj.ink2)),
           const SizedBox(height: 6),
           TextField(
             controller: c,
             style: const TextStyle(fontSize: 13.5),
             decoration: InputDecoration(
               hintText: hint,
-              hintStyle: const TextStyle(
-                  fontSize: 12.5, color: ZaojiColors.muted),
+              hintStyle: TextStyle(
+                  fontSize: 12.5, color: context.zj.muted),
               isDense: true,
               filled: true,
-              fillColor: Colors.white,
+              fillColor: context.zj.surface,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(ZaojiRadius.md),
-                borderSide: const BorderSide(color: Color(0xFFE6DCC9)),
+                borderSide: BorderSide(color: context.zj.line),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(ZaojiRadius.md),
-                borderSide: const BorderSide(color: Color(0xFFE6DCC9)),
+                borderSide: BorderSide(color: context.zj.line),
               ),
             ),
           ),
@@ -400,18 +400,18 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('API Key',
+        Text('API Key',
             style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: ZaojiColors.ink2)),
+                color: context.zj.ink2)),
         const SizedBox(height: 6),
         if (_configured)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Text('已保存 $_keyMasked（重填即替换）',
                 style: TextStyle(
-                    fontSize: 11.5, color: const Color(0xFF37634A))),
+                    fontSize: 11.5, color: context.zj.tagIngredient)),
           ),
         TextField(
           key: const ValueKey('ai-key-field'),
@@ -421,19 +421,19 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
           decoration: InputDecoration(
             hintText: _configured ? '留空 = 保持已存的 Key' : '必填',
             hintStyle:
-                const TextStyle(fontSize: 12.5, color: ZaojiColors.muted),
+                TextStyle(fontSize: 12.5, color: context.zj.muted),
             isDense: true,
             filled: true,
-            fillColor: Colors.white,
+            fillColor: context.zj.surface,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
-              borderSide: const BorderSide(color: Color(0xFFE6DCC9)),
+              borderSide: BorderSide(color: context.zj.line),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(ZaojiRadius.md),
-              borderSide: const BorderSide(color: Color(0xFFE6DCC9)),
+              borderSide: BorderSide(color: context.zj.line),
             ),
           ),
         ),
@@ -446,7 +446,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     return SwitchListTile(
       contentPadding: EdgeInsets.zero,
       dense: true,
-      activeThumbColor: ZaojiColors.accent,
+      activeThumbColor: context.zj.accent,
       value: value,
       onChanged: onChanged,
       title: Text(title, style: const TextStyle(fontSize: 13.5)),

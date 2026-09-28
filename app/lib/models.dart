@@ -81,6 +81,13 @@ class Recipe {
   /// 封面是**单独选出来的那一张**（coverSha256），两者互不隐含。
   final List<String> photos;
 
+  /// v7（FR-LOG-01）：入册时刻的 ISO8601 原文；**空串 = 不知道**。
+  ///
+  /// 空串不是偷懒：schema v6 及更早的 recipe 行没有这一列，升级时**故意不回填**
+  /// ——用 updated_at 或 ULID 前缀倒推一个时间，日历上就会多出一个没发生过的日子。
+  /// 日历遇到空串就不画「新增菜品」那个点。
+  final String createdAt;
+
   const Recipe({
     required this.id,
     required this.name,
@@ -101,6 +108,7 @@ class Recipe {
     this.tags = const {},
     this.coverSha256,
     this.photos = const [],
+    this.createdAt = '',
   });
 
   bool get isAi => source == RecipeSource.ai;
@@ -220,16 +228,57 @@ class Nutrition {
 ///
 /// **「辅助决策，不是账本」**（schema 注释原话）——允许只记「有/没有」：
 /// `qtyValue=null` 就是模糊库存，步进器只在有数值分量时出现。
+/// 库存三态（schema v7 `stock_status`，FR-PAN-01）。
+///
+/// 为什么不是布尔：推荐和提醒要区分"还有"和"快见底"——`low` 是"今天不买明天就没"，
+/// 这一档旧模型里根本没有位置。迁移时 `have=1` 一律落成 [have]，
+/// **不猜 low**（见 shared 的 kSchemaV7AlterSql 注释）。
+enum PantryStock {
+  have('have', '充足'),
+  low('low', '快没了'),
+  none('none', '没有');
+
+  const PantryStock(this.code, this.label);
+
+  /// 落库值（也是同步流里的字符串），与 schema 注释一一对应。
+  final String code;
+
+  /// 界面用语。
+  final String label;
+
+  /// 认不出来的值按 [have] 处理：这一列 NOT NULL DEFAULT 'have'，
+  /// 库里不可能有别的形状；真出现说明是别的端写的脏值，按"有"最保守
+  /// （不会把用户手里的东西判成没有，也不会误报快没了）。
+  static PantryStock ofCode(Object? raw) {
+    final s = '$raw';
+    return PantryStock.values.firstWhere((e) => e.code == s,
+        orElse: () => PantryStock.have);
+  }
+}
+
 class PantryItem {
   final String id;
   final String name;
   final String? aliasKey;
-  final String? category; // 冷藏/冷冻/常温/干货…（自由文本，UI 归组用）
+  final String? category; // 蔬菜/调料/肉类…（自由文本，UI 归组用）
   final double? qtyValue;
   final String? qtyUnit;
-  final bool have; // false = 没有（提醒用），不是删除
+
+  /// v7：三态。[have] 是它的便捷读法（旧调用点一片 `p.have`，
+  /// 留个 getter 比把它们全改成 `status != none` 更不容易漏）。
+  final PantryStock status;
+
   final String? expireAt; // YYYY-MM-DD
   final bool isStaple; // 常备调料：不参与缺失判定（FR-PAN-05）
+
+  /// v7：冷藏 / 冷冻 / 常温；null = 没填（不替用户猜）。
+  final String? storage;
+
+  /// v7：购入日期 YYYY-MM-DD。"在家躺了几天"是消耗判断的另一半。
+  final String? boughtAt;
+
+  /// v7：备注，如"给宝的那份少盐"。
+  final String? note;
 
   const PantryItem({
     required this.id,
@@ -238,10 +287,16 @@ class PantryItem {
     this.category,
     this.qtyValue,
     this.qtyUnit,
-    this.have = true,
+    this.status = PantryStock.have,
     this.expireAt,
     this.isStaple = false,
+    this.storage,
+    this.boughtAt,
+    this.note,
   });
+
+  /// 「还有没有」——三态里除了 none 都算有（推荐算法吃的就是这个值）。
+  bool get have => status != PantryStock.none;
 
   factory PantryItem.fromRow(Map<String, Object?> row) => PantryItem(
         id: '${row['id']}',
@@ -250,9 +305,17 @@ class PantryItem {
         category: row['category'] as String?,
         qtyValue: (row['qty_value'] as num?)?.toDouble(),
         qtyUnit: row['qty_unit'] as String?,
-        have: (row['have'] as int? ?? 1) == 1,
+        // 有 stock_status 就读它；没有（旧库/旧行）退回 have 的 0/1 语义
+        status: row['stock_status'] == null
+            ? ((row['have'] as int? ?? 1) == 1
+                ? PantryStock.have
+                : PantryStock.none)
+            : PantryStock.ofCode(row['stock_status']),
         expireAt: row['expire_at'] as String?,
         isStaple: (row['is_staple'] as int? ?? 0) == 1,
+        storage: row['storage'] as String?,
+        boughtAt: row['bought_at'] as String?,
+        note: row['note'] as String?,
       );
 
   /// 分量展示文案：`250 g` / `约` / 空。

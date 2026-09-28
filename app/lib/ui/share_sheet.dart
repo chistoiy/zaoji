@@ -34,7 +34,7 @@ Future<void> showShareSheet(
 }) {
   return showModalBottomSheet(
     context: context,
-    backgroundColor: Colors.white,
+    backgroundColor: context.zj.surface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
@@ -85,7 +85,7 @@ class _ShareSheetState extends State<_ShareSheet> {
           children: [
             Text(widget.title,
                 key: const ValueKey('share-title'),
-                style: ZaojiText.display(
+                style: ZaojiText.displayOf(context, 
                     fontSize: 15, fontWeight: FontWeight.w700)),
             const SizedBox(height: 10),
             if (widget.toggles.isNotEmpty)
@@ -116,9 +116,9 @@ class _ShareSheetState extends State<_ShareSheet> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: ZaojiColors.paper,
+                  color: context.zj.paper,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: ZaojiColors.lineSoft),
+                  border: Border.all(color: context.zj.lineSoft),
                 ),
                 child: SingleChildScrollView(
                   child: SelectableText(
@@ -157,11 +157,11 @@ class _ShareSheetState extends State<_ShareSheet> {
               ],
             ),
             if (_copied)
-              const Padding(
+              Padding(
                 padding: EdgeInsets.only(top: 8),
                 child: Text('粘贴进微信 / 短信 / 备忘录就能发',
                     key: ValueKey('share-hint'),
-                    style: TextStyle(fontSize: 11.5, color: ZaojiColors.muted)),
+                    style: TextStyle(fontSize: 11.5, color: context.zj.muted)),
               ),
           ],
         ),

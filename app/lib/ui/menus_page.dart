@@ -40,15 +40,15 @@ class MenusPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         title: const Text('菜单'),
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
         actions: [
           IconButton(
             key: const ValueKey('menu-add'),
             icon: const Icon(Icons.add),
-            color: ZaojiColors.accent,
+            color: context.zj.accent,
             tooltip: '新建餐次',
             onPressed: () => showMealForm(context),
           ),
@@ -69,20 +69,20 @@ class MenusPage extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.receipt_long_outlined,
-                  size: 40, color: ZaojiColors.muted),
+              Icon(Icons.receipt_long_outlined,
+                  size: 40, color: context.zj.muted),
               const SizedBox(height: 12),
               Text('还没排过菜单',
-                  style: ZaojiText.display(
+                  style: ZaojiText.displayOf(context, 
                       fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
-              const Text('先定「哪天哪一餐」，再往里加菜',
-                  style: TextStyle(fontSize: 12, color: ZaojiColors.muted)),
+              Text('先定「哪天哪一餐」，再往里加菜',
+                  style: TextStyle(fontSize: 12, color: context.zj.muted)),
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: () => showMealForm(context),
                 style: FilledButton.styleFrom(
-                    backgroundColor: ZaojiColors.accent),
+                    backgroundColor: context.zj.accent),
                 child: const Text('排第一餐'),
               ),
             ],
@@ -116,7 +116,7 @@ class _MenuCard extends StatelessWidget {
         store.recipeById(id)?.name ?? '（已删除的菜）',
     ];
     return Material(
-      color: Colors.white,
+      color: context.zj.surface,
       borderRadius: BorderRadius.circular(ZaojiRadius.lg),
       child: InkWell(
         borderRadius: BorderRadius.circular(ZaojiRadius.lg),
@@ -127,7 +127,7 @@ class _MenuCard extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-            border: Border.all(color: ZaojiColors.lineSoft),
+            border: Border.all(color: context.zj.lineSoft),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -143,24 +143,24 @@ class _MenuCard extends StatelessWidget {
                         Text(
                           '${dayLabel(menu.day)} · ${menu.meal}',
                           key: ValueKey('menu-title-${menu.id}'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.w600,
-                            color: ZaojiColors.ink,
+                            color: context.zj.ink,
                           ),
                         ),
                         Text(
                           menu.serveAt.isEmpty
                               ? '${names.length} 道菜'
                               : '${menu.serveAt} 开饭 · ${names.length} 道菜',
-                          style: const TextStyle(
-                              fontSize: 11.5, color: ZaojiColors.muted),
+                          style: TextStyle(
+                              fontSize: 11.5, color: context.zj.muted),
                         ),
                       ],
                     ),
                   ),
-                  const Icon(Icons.chevron_right,
-                      size: 20, color: ZaojiColors.muted),
+                  Icon(Icons.chevron_right,
+                      size: 20, color: context.zj.muted),
                 ],
               ),
               if (names.isNotEmpty) ...[
@@ -169,7 +169,7 @@ class _MenuCard extends StatelessWidget {
                   names.take(3).join(' · ') + (names.length > 3 ? ' 等${names.length}道' : ''),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5, color: ZaojiColors.ink2),
+                  style: TextStyle(fontSize: 12.5, color: context.zj.ink2),
                 ),
               ],
               if (menu.note.isNotEmpty) ...[
@@ -177,8 +177,8 @@ class _MenuCard extends StatelessWidget {
                 Text(menu.note,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 11.5, color: ZaojiColors.muted)),
+                    style: TextStyle(
+                        fontSize: 11.5, color: context.zj.muted)),
               ],
             ],
           ),
@@ -207,14 +207,14 @@ class _MealStamp extends StatelessWidget {
       height: 34,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: const Color(0x1437634A),
+        color: context.zj.okBg,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(short,
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 13.5,
               fontWeight: FontWeight.w700,
-              color: Color(0xFF2F5B40))),
+              color: context.zj.ok)),
     );
   }
 }
@@ -226,7 +226,7 @@ Future<void> showMealForm(BuildContext context, {MenuPlan? editing}) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: ZaojiColors.paper,
+    backgroundColor: context.zj.paper,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
     ),
@@ -321,15 +321,15 @@ class _MealFormSheetState extends State<_MealFormSheet> {
         onSelected: (_) => onTap(),
         labelStyle: TextStyle(
           fontSize: 13,
-          color: on ? Colors.white : ZaojiColors.ink2,
+          color: on ? Colors.white : context.zj.ink2,
         ),
-        selectedColor: ZaojiColors.accent,
-        backgroundColor: Colors.white,
+        selectedColor: context.zj.accent,
+        backgroundColor: context.zj.surface,
         showCheckmark: false,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
           side: BorderSide(
-              color: on ? ZaojiColors.accent : ZaojiColors.line),
+              color: on ? context.zj.accent : context.zj.line),
         ),
       ),
     );
@@ -339,16 +339,16 @@ class _MealFormSheetState extends State<_MealFormSheet> {
         isDense: true,
         hintText: hint,
         filled: true,
-        fillColor: Colors.white,
+        fillColor: context.zj.surface,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        enabledBorder: const OutlineInputBorder(
+        enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.all(Radius.circular(10)),
-          borderSide: BorderSide(color: ZaojiColors.line),
+          borderSide: BorderSide(color: context.zj.line),
         ),
-        focusedBorder: const OutlineInputBorder(
+        focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.all(Radius.circular(10)),
-          borderSide: BorderSide(color: ZaojiColors.accent, width: 1.4),
+          borderSide: BorderSide(color: context.zj.accent, width: 1.4),
         ),
       );
 
@@ -367,14 +367,14 @@ class _MealFormSheetState extends State<_MealFormSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.editing == null ? '新建餐次' : '编辑餐次',
-                style: ZaojiText.display(
+                style: ZaojiText.displayOf(context, 
                     fontSize: 16, fontWeight: FontWeight.w700)),
             const SizedBox(height: 14),
-          const Text('哪一天',
+          Text('哪一天',
               style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: ZaojiColors.ink2)),
+                  color: context.zj.ink2)),
           const SizedBox(height: 6),
           Row(
             children: [
@@ -401,11 +401,11 @@ class _MealFormSheetState extends State<_MealFormSheet> {
               ),
             ),
           const SizedBox(height: 14),
-          const Text('餐次',
+          Text('餐次',
               style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: ZaojiColors.ink2)),
+                  color: context.zj.ink2)),
           const SizedBox(height: 6),
           Row(
             children: [
@@ -448,8 +448,8 @@ class _MealFormSheetState extends State<_MealFormSheet> {
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(_error!,
-                style: const TextStyle(
-                    fontSize: 12, color: Color(0xFFA3320D))),
+                style: TextStyle(
+                    fontSize: 12, color: context.zj.warn)),
           ],
           const SizedBox(height: 16),
           SizedBox(
@@ -458,7 +458,7 @@ class _MealFormSheetState extends State<_MealFormSheet> {
               key: const ValueKey('meal-save'),
               onPressed: _save,
               style:
-                  FilledButton.styleFrom(backgroundColor: ZaojiColors.accent),
+                  FilledButton.styleFrom(backgroundColor: context.zj.accent),
               child: Text(widget.editing == null ? '就这么安排' : '保存修改'),
             ),
           ),

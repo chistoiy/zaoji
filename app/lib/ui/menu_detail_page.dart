@@ -18,10 +18,10 @@ class MenuDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       appBar: AppBar(
         title: const Text('这一餐'),
-        backgroundColor: ZaojiColors.paper,
+        backgroundColor: context.zj.paper,
         actions: [
           // R34 · 文字分享（FR-SHARE-01 第二类）：这一餐的搭配发出去，不带任何链接。
           IconButton(
@@ -87,7 +87,7 @@ class MenuDetailPage extends StatelessWidget {
           FilledButton(
             key: const ValueKey('menu-delete-confirm'),
             onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: ZaojiColors.accent),
+            style: FilledButton.styleFrom(backgroundColor: context.zj.accent),
             child: const Text('删除'),
           ),
         ],
@@ -104,9 +104,9 @@ class MenuDetailPage extends StatelessWidget {
     final menu = store.menuById(menuId);
     if (menu == null) {
       // 在别的设备上被删了——这屏原地给自己一个体面的收场。
-      return const Center(
+      return Center(
         child: Text('这个菜单已经不存在了',
-            style: TextStyle(fontSize: 13, color: ZaojiColors.muted)),
+            style: TextStyle(fontSize: 13, color: context.zj.muted)),
       );
     }
     return Column(
@@ -118,7 +118,7 @@ class MenuDetailPage extends StatelessWidget {
               Text(
                 '${dayLabel(menu.day)} · ${menu.meal}',
                 key: const ValueKey('detail-title'),
-                style: ZaojiText.display(
+                style: ZaojiText.displayOf(context, 
                     fontSize: 17, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 4),
@@ -127,14 +127,14 @@ class MenuDetailPage extends StatelessWidget {
                   if (menu.serveAt.isNotEmpty) '${menu.serveAt} 开饭',
                   '${menu.recipeIds.length} 道菜',
                 ].join(' · '),
-                style: const TextStyle(
-                    fontSize: 12, color: ZaojiColors.muted),
+                style: TextStyle(
+                    fontSize: 12, color: context.zj.muted),
               ),
               if (menu.note.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(menu.note,
-                    style: const TextStyle(
-                        fontSize: 12.5, color: ZaojiColors.ink2)),
+                    style: TextStyle(
+                        fontSize: 12.5, color: context.zj.ink2)),
               ],
               const SizedBox(height: 16),
               for (final id in menu.recipeIds) _dishRow(context, store, id),
@@ -144,9 +144,9 @@ class MenuDetailPage extends StatelessWidget {
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('添加菜品到这一餐'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: ZaojiColors.accent,
+                  foregroundColor: context.zj.accent,
                   alignment: Alignment.centerLeft,
-                  side: const BorderSide(color: ZaojiColors.line),
+                  side: BorderSide(color: context.zj.line),
                 ),
               ),
             ],
@@ -169,7 +169,7 @@ class MenuDetailPage extends StatelessWidget {
                 icon: const Icon(Icons.shopping_basket_outlined, size: 19),
                 label: const Text('一键备菜'),
                 style: FilledButton.styleFrom(
-                  backgroundColor: ZaojiColors.accent,
+                  backgroundColor: context.zj.accent,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
@@ -185,9 +185,9 @@ class MenuDetailPage extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-        border: Border.all(color: ZaojiColors.lineSoft),
+        border: Border.all(color: context.zj.lineSoft),
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.only(left: 14, right: 6),
@@ -198,7 +198,7 @@ class MenuDetailPage extends StatelessWidget {
             ? null
             : Text('${r.selfTime} 分钟 · 做过 ${r.cookedCount} 次',
                 style:
-                    const TextStyle(fontSize: 11.5, color: ZaojiColors.muted)),
+                    TextStyle(fontSize: 11.5, color: context.zj.muted)),
         onTap: r == null
             ? null
             : () => Navigator.of(context).push(
@@ -208,7 +208,7 @@ class MenuDetailPage extends StatelessWidget {
         trailing: IconButton(
           key: ValueKey('dish-remove-$recipeId'),
           icon: const Icon(Icons.close, size: 19),
-          color: ZaojiColors.muted,
+          color: context.zj.muted,
           tooltip: '从这一餐移除',
           onPressed: () => store.removeDish(menuId, recipeId),
         ),
@@ -224,7 +224,7 @@ class MenuDetailPage extends StatelessWidget {
     ];
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: ZaojiColors.paper,
+      backgroundColor: context.zj.paper,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -244,12 +244,12 @@ class MenuDetailPage extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
                 children: [
                   if (candidates.isEmpty)
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.all(24),
                       child: Text('菜谱库里的菜都在这餐里了',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                              fontSize: 12.5, color: ZaojiColors.muted)),
+                              fontSize: 12.5, color: context.zj.muted)),
                     ),
                   // 最新创建的菜排最前——刚做完的菜最可能马上进菜单。
                   for (final r in candidates.reversed)
@@ -260,8 +260,8 @@ class MenuDetailPage extends StatelessWidget {
                           style: const TextStyle(fontSize: 14)),
                       subtitle: Text(
                           '${r.ingredients.length} 样食材 · ${r.selfTime} 分钟',
-                          style: const TextStyle(
-                              fontSize: 11.5, color: ZaojiColors.muted)),
+                          style: TextStyle(
+                              fontSize: 11.5, color: context.zj.muted)),
                       onTap: () {
                         Navigator.pop(ctx);
                         store.addDish(menu.id, r.id);

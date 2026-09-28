@@ -180,6 +180,13 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
           return _BootError(error: '${snap.error}');
         }
         final sync = _ensureSync();
+        // 验收用的 URL 覆盖：`?theme=night` 直接以某套主题启动。
+        // 与 `?a11y=1` 同一类工装——逐屏走查五套主题时不必每次手点三下。
+        // 它走 setTheme，所以会像用户手选一样落库（这是有意的：验的就是真状态）。
+        final urlTheme = Uri.base.queryParameters['theme'];
+        if (urlTheme != null && _store.themeId != urlTheme) {
+          _store.setTheme(urlTheme);
+        }
         // 首帧后自动同步一次（未配对时是安静 no-op）。
         // 放 postFrame：不在 build 流程里发网络请求。**只排一次**——
         // build 可能因各种原因重跑，每次都排就变成「每次重建都全量同步」。
@@ -193,10 +200,14 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
           engine: sync,
           child: StoreScope(
             store: _store,
-            child: MaterialApp(
+            // R39：主题是本机偏好，换它要重建整棵 MaterialApp 才能传到每一页。
+            // 监听 store 而不是另起一个 ValueNotifier——偏好只有一个事实源。
+            child: ListenableBuilder(
+              listenable: _store,
+              builder: (context, _) => MaterialApp(
               title: '灶记',
               debugShowCheckedModeBanner: false,
-              theme: buildZaojiTheme(),
+              theme: buildZaojiTheme(_store.tokens),
               initialRoute: initialRouteFromUrl(),
               routes: {
                 // 主页 = 带底部标签栏的外壳，菜谱库是它的第一页
@@ -205,6 +216,7 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
                 '/calendar': (_) => const HomeShell(initialTab: 3),
               },
               onGenerateRoute: _generateRoute,
+            ),
             ),
           ),
         );
@@ -273,18 +285,18 @@ class _NotFound extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.search_off, size: 40, color: ZaojiColors.muted),
+              Icon(Icons.search_off, size: 40, color: context.zj.muted),
               const SizedBox(height: 14),
               Text(
                 '菜谱 $id 不在手边',
-                style: const TextStyle(fontSize: 15, color: ZaojiColors.ink),
+                style: TextStyle(fontSize: 15, color: context.zj.ink),
               ),
               const SizedBox(height: 6),
               // 链接可能来自另一端同步过来的、你还没拉到的菜谱——
               // 所以这句话要给下一步动作，而不是只说"不存在"
-              const Text(
+              Text(
                 '可能是还没从服务端同步下来',
-                style: TextStyle(fontSize: 12.5, color: ZaojiColors.muted),
+                style: TextStyle(fontSize: 12.5, color: context.zj.muted),
               ),
               const SizedBox(height: 18),
               FilledButton(
@@ -292,7 +304,7 @@ class _NotFound extends StatelessWidget {
                   context,
                 ).pushNamedAndRemoveUntil('/', (route) => false),
                 style: FilledButton.styleFrom(
-                  backgroundColor: ZaojiColors.accent,
+                  backgroundColor: context.zj.accent,
                 ),
                 child: const Text('回到菜谱库'),
               ),
@@ -305,6 +317,8 @@ class _NotFound extends StatelessWidget {
 }
 
 /// 启动画面：本地库打开 + 建表 + 灌种子通常毫秒级，
+/// ★ 这两屏渲染在 MaterialApp 之外，没有 Theme 祖先，所以取色一律走
+///   [ZaojiTokens.fallback]（`context.zj` 在这儿会直接抛断言）。
 /// 但 Web 首次要拉 sqlite3.wasm（731 KB），给一个同风格的过渡。
 class _Booting extends StatelessWidget {
   const _Booting();
@@ -314,14 +328,14 @@ class _Booting extends StatelessWidget {
     return Directionality(
       textDirection: TextDirection.ltr,
       child: ColoredBox(
-        color: ZaojiColors.paper,
-        child: const Center(
+        color: ZaojiTokens.fallback.paper,
+        child: Center(
           child: SizedBox(
             width: 26,
             height: 26,
             child: CircularProgressIndicator(
               strokeWidth: 2.5,
-              color: ZaojiColors.accent,
+              color: ZaojiTokens.fallback.accent,
             ),
           ),
         ),
@@ -340,17 +354,17 @@ class _BootError extends StatelessWidget {
     return Directionality(
       textDirection: TextDirection.ltr,
       child: ColoredBox(
-        color: ZaojiColors.paper,
+        color: ZaojiTokens.fallback.paper,
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   Icons.error_outline,
                   size: 36,
-                  color: ZaojiColors.warn,
+                  color: ZaojiTokens.fallback.warn,
                 ),
                 const SizedBox(height: 12),
                 const Text(
@@ -361,9 +375,9 @@ class _BootError extends StatelessWidget {
                 Text(
                   error,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: ZaojiColors.muted,
+                    color: ZaojiTokens.fallback.muted,
                   ),
                 ),
               ],

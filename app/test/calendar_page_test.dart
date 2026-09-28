@@ -104,7 +104,10 @@ void main() {
     await store.addDish(m.id, r.id);
 
     await pump(tester);
-    expect(find.textContaining('今天 · 2 条记录'), findsOneWidget);
+    // R39 起这条记录里多了一项：这道菜本身是**今天新建**的（created_at），
+    // 所以 2 条变 3 条。不是回归，是日历终于把"入册"也算进账本。
+    expect(find.textContaining('今天 · 3 条记录'), findsOneWidget);
+    expect(find.byKey(ValueKey('cal-added-${r.id}')), findsOneWidget);
     expect(find.byKey(ValueKey('cal-cook-18:19-${r.id}')), findsOneWidget);
     expect(find.text('18:19'), findsOneWidget);
     expect(find.text('14 分钟'), findsOneWidget);

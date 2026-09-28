@@ -21,7 +21,7 @@ Future<void> showTimerSheet(
 }) {
   return showModalBottomSheet<void>(
     context: context,
-    backgroundColor: ZaojiColors.paper,
+    backgroundColor: context.zj.paper,
     showDragHandle: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(ZaojiRadius.xl)),
@@ -105,15 +105,15 @@ class _TimerSheetState extends State<_TimerSheet> {
         children: [
           Text(
             _done ? '时间到' : '计时中',
-            style: ZaojiText.display(
+            style: ZaojiText.displayOf(context, 
               fontSize: 16,
-              color: ZaojiColors.ink2,
+              color: context.zj.ink2,
             ),
           ),
           const SizedBox(height: 6),
           Text(
             widget.sourceText,
-            style: const TextStyle(fontSize: 13, color: ZaojiColors.muted),
+            style: TextStyle(fontSize: 13, color: context.zj.muted),
           ),
           const SizedBox(height: 20),
           SizedBox(
@@ -126,18 +126,18 @@ class _TimerSheetState extends State<_TimerSheet> {
                   child: CircularProgressIndicator(
                     value: progress.clamp(0, 1),
                     strokeWidth: 6,
-                    backgroundColor: ZaojiColors.lineSoft,
+                    backgroundColor: context.zj.lineSoft,
                     valueColor: AlwaysStoppedAnimation(
-                      _done ? ZaojiColors.accent : ZaojiColors.amber,
+                      _done ? context.zj.accent : context.zj.amber,
                     ),
                   ),
                 ),
                 Text(
                   _display,
-                  style: ZaojiText.display(
+                  style: ZaojiText.displayOf(context, 
                     fontSize: 52,
                     fontWeight: FontWeight.w500,
-                    color: _done ? ZaojiColors.accent : ZaojiColors.ink,
+                    color: _done ? context.zj.accent : context.zj.ink,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
@@ -151,8 +151,8 @@ class _TimerSheetState extends State<_TimerSheet> {
             child: FilledButton(
               onPressed: _toggle,
               style: FilledButton.styleFrom(
-                backgroundColor: ZaojiColors.accent,
-                foregroundColor: Colors.white,
+                backgroundColor: context.zj.accent,
+                foregroundColor: context.zj.onAccent,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(ZaojiRadius.md),
                 ),
