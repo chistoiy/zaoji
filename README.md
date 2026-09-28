@@ -63,7 +63,7 @@ dart compile exe bin/zaoji_server.dart -o zaoji_server.exe
 dart test                      # 全量（当前 261 个）
 
 # 客户端（Android 调试直跑；Web 见上文）
-cd app; flutter pub get; flutter test    # 当前 200 个
+cd app; flutter pub get; flutter test    # 当前 202 个
 
 # 共享库
 cd shared; dart test           # 当前 132 个

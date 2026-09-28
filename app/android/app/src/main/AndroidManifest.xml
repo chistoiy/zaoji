@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ★ 联网权限必须写在 **main** 清单里，不能只靠 debug/profile 那份。
+         Flutter 模板只把 INTERNET 放进 debug 与 profile 清单，于是桌面 `flutter run`
+         一切正常，而 **release 包装上真机后所有网络调用直接 DNS 失败**
+         （SocketException: Failed host lookup ... errno = 7），看着像地址写错或断网。
+         本 App 的同步/媒体/AI 全走网络，这条是发布硬门槛——
+         由 test/manifest_guard_test.dart 钉住，发版前再用 aapt dump badging 复核。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="zaoji"
         android:name="${applicationName}"

@@ -7,6 +7,9 @@
 # ── 构建产物 ──
 app/build/
 server/build/
+dist/
+# 构建时的日志重定向文件（build_web.ps1 / flutter build apk 的输出留档）
+**/build_*.log
 app/**/.dart_tool/
 shared/.dart_tool/
 server/.dart_tool/
