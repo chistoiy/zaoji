@@ -412,6 +412,7 @@ class SyncEngine extends ChangeNotifier {
 
     _phase = SyncPhase.syncing;
     _lastError = null;
+    _setProgress(const SyncProgress(SyncStage.connecting));
     notifyListeners();
 
     try {
@@ -450,6 +451,10 @@ class SyncEngine extends ChangeNotifier {
       if (pushed > 0 || applied > 0) {
         await _onDataApplied?.call();
       }
+      // 差异刷新**不在这里做**：算待拉数要真的发一次 `/api/changes`，
+      // 每轮同步后自动补一发会把服务端的拉取计数与幂等日志都搅浑
+      // （测试与真服务端都是同一套账）。要新数字请走 [computeDiff]——
+      // 界面上的动作入口（`_act`）与进页面探测（`_probe`）都各自调它。
     } on SyncServerChangedException catch (e) {
       _fail(e.message);
     } on SyncTransportException catch (e) {
@@ -472,6 +477,9 @@ class SyncEngine extends ChangeNotifier {
     } catch (e) {
       _consecutiveFails++;
       _fail('同步出错：$e');
+    } finally {
+      // 成功、失败、被拒——任何出口都不该把进度条留在屏幕上。
+      _progress = null;
     }
   }
 
@@ -535,7 +543,9 @@ class SyncEngine extends ChangeNotifier {
 
     var pushedCount = 0;
     var newWatermark = watermark;
+    final batches = (changes.length / pushBatchSize).ceil();
     for (var i = 0; i < changes.length; i += pushBatchSize) {
+      _setProgress(SyncProgress(SyncStage.pushing, done: i ~/ pushBatchSize + 1, total: batches));
       final batch = changes.sublist(i, min(i + pushBatchSize, changes.length));
       // 重试复用同一个 mutationId（服务端 applied_mutation 靠它幂等）。
       // 拿不到确认就停在这里：水位线与 mutationId 都不动，下轮原样重推。
@@ -591,6 +601,7 @@ class SyncEngine extends ChangeNotifier {
     var appliedTotal = 0;
 
     for (var page = 0; page < maxPullPages; page++) {
+      _setProgress(SyncProgress(SyncStage.pulling, done: page + 1));
       final res = await transport.get(
         '/api/changes?since=$cursor&limit=$pullPageSize',
         token: token,
@@ -807,6 +818,117 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
+  // ───────────────────── R38 · 存活 / 差异 / 进度 ─────────────────────
+  //
+  // 三条都是同一件事的三面：**同步不能是暗箱**。之前手机上点了「上传改动」
+  // 界面毫无反应（引擎在跑，但没人告诉 UI 跑到哪、有没有东西可跑），
+  // 也不知道那台电脑到底活着没有——只能等超时后弹一条错误。
+
+  ServerPing? _serverPing;
+
+  /// 最近一次存活探测的结果；null = 这次启动还没探过。
+  ServerPing? get serverPing => _serverPing;
+
+  SyncDiff? _diff;
+
+  /// 最近一次算出的两端差异；null = 还没算过。
+  SyncDiff? get diff => _diff;
+
+  SyncProgress? _progress;
+
+  /// 正在跑的那轮同步走到哪了；null = 空闲。
+  SyncProgress? get progress => _progress;
+
+  /// 探活：打 `/api/ping` 并量往返延迟。
+  ///
+  /// **不抛异常**——探不到就是一种结果（[ServerPing.ok] = false + 原话），
+  /// 界面上要能显示「连不上这台电脑」而不是一片转圈。
+  /// [urlOverride] 同 [refreshAccessConfig]：认界面上正在输入的地址。
+  Future<ServerPing> pingServer({String? urlOverride}) async {
+    final url = urlOverride != null && urlOverride.trim().isNotEmpty
+        ? _normalizeUrl(urlOverride)
+        : await _prefs.serverUrl();
+    if (url == null) {
+      return _serverPing = const ServerPing(ok: false, error: '还没填服务端地址');
+    }
+    final sw = Stopwatch()..start();
+    try {
+      final res = await (await _transportOf(url))
+          .get('/api/ping')
+          .timeout(const Duration(seconds: 5));
+      sw.stop();
+      _serverPing = ServerPing(
+        ok: true,
+        serverId: '${res['serverId'] ?? ''}',
+        latencyMs: sw.elapsedMilliseconds,
+      );
+    } on SyncTransportException catch (e) {
+      sw.stop();
+      _serverPing = ServerPing(
+        ok: false,
+        latencyMs: sw.elapsedMilliseconds,
+        error: e.statusCode == 0 ? '连不上（地址不通或服务没起）' : '服务端返回 ${e.statusCode}',
+      );
+    } catch (e) {
+      sw.stop();
+      _serverPing = ServerPing(ok: false, latencyMs: sw.elapsedMilliseconds, error: '$e');
+    }
+    notifyListeners();
+    return _serverPing!;
+  }
+
+  /// 算两端差异：本机还有多少行没推上去、服务端有多少条变更没拉下来。
+  ///
+  /// 口径**跟同步本身同源**，不是另算一套：
+  /// · 待推 = 各同步表里 `updated_at > 推水位线` 的行数（就是 [_pushPending] 会收集的那些）；
+  /// · 待拉 = 服务端 `nowSeq - 本机游标`（change_log 的 seq 差，含被白名单跳过的条目，
+  ///   所以它是"服务端领先多少"而不是"我会应用多少行"——够用来判断要不要点按钮）。
+  /// 探不到服务端时返回 null，界面上「未知」比假数字诚实。
+  Future<SyncDiff?> computeDiff({String? urlOverride}) async {
+    final watermark = await _prefs.pushWatermark();
+    var local = 0;
+    for (final table in ZaojiDb.syncedTables) {
+      final rows = await _db
+          .customSelect(
+            'SELECT COUNT(*) AS c FROM ${table.name} WHERE updated_at > ?',
+            variables: [Variable(watermark)],
+          )
+          .get();
+      local += rows.first.read<int>('c');
+    }
+    // 待推是 0 也可能有一批卡在半路（pendingMutation 没确认）——那也算有差异，
+    // 否则按钮会被禁用，用户没法把那一批重试出去。
+    if (local == 0 && await _prefs.pendingMutationId() != null) local = 1;
+
+    final url = urlOverride != null && urlOverride.trim().isNotEmpty
+        ? _normalizeUrl(urlOverride)
+        : await _prefs.serverUrl();
+    if (url == null) {
+      _diff = null;
+      notifyListeners();
+      return null;
+    }
+    final token = await _prefs.token();
+    final hasToken = token != null && token.isNotEmpty;
+    try {
+      final cursor = await _prefs.pullCursor();
+      final res = await (await _transportOf(url))
+          .get('/api/changes?since=$cursor&limit=1', token: hasToken ? token : null)
+          .timeout(const Duration(seconds: 5));
+      final nowSeq = (res['nowSeq'] as num?)?.toInt() ?? cursor;
+      _diff = SyncDiff(localPending: local, remotePending: (nowSeq - cursor).clamp(0, 1 << 30));
+    } catch (_) {
+      _diff = SyncDiff(localPending: local, remotePending: -1); // -1 = 服务端那边不知道
+    }
+    notifyListeners();
+    return _diff;
+  }
+
+  void _setProgress(SyncProgress? p) {
+    _progress = p;
+    notifyListeners();
+  }
+
   // ───────────────────────── 状态与错误 ─────────────────────────
 
   void _fail(String message) {
@@ -847,6 +969,59 @@ enum SyncMode {
   static SyncMode parse(String? raw) =>
       SyncMode.values.firstWhere((m) => m.wire == raw, orElse: () => bidir);
 }
+
+/// 服务端存活探测的结果（R38）。
+class ServerPing {
+  const ServerPing({
+    required this.ok,
+    this.serverId = '',
+    this.latencyMs = 0,
+    this.error,
+  });
+
+  final bool ok;
+  final String serverId;
+
+  /// 往返毫秒。探不通时是"花多久才断定不通"。
+  final int latencyMs;
+  final String? error;
+
+  String get label => ok ? '连接正常 · $latencyMs ms' : (error ?? '连不上');
+}
+
+/// 两端差异（R38）。`remotePending < 0` = 服务端那边问不到（未知，不是 0）。
+class SyncDiff {
+  const SyncDiff({required this.localPending, required this.remotePending});
+
+  /// 本机还没推上去的行数。
+  final int localPending;
+
+  /// 服务端领先本机游标多少条变更。
+  final int remotePending;
+
+  bool get remoteKnown => remotePending >= 0;
+  bool get nothingToPush => localPending == 0;
+  bool get nothingToPull => remotePending == 0;
+}
+
+/// 一轮同步走到哪了（R38）。`total == 0` 表示总数未知 → 界面走不确定态进度条。
+class SyncProgress {
+  const SyncProgress(this.stage, {this.done = 0, this.total = 0});
+
+  final SyncStage stage;
+  final int done;
+  final int total;
+
+  double? get ratio => total <= 0 ? null : (done / total).clamp(0.0, 1.0);
+
+  String get label => switch (stage) {
+        SyncStage.connecting => '正在连接服务端…',
+        SyncStage.pushing => total <= 0 ? '正在上传…' : '正在上传 $done/$total 批',
+        SyncStage.pulling => total <= 0 ? '正在下载…' : '正在下载 $done/$total 页',
+      };
+}
+
+enum SyncStage { connecting, pushing, pulling }
 
 enum SyncPhase {
   /// 从未配对（设置页引导配对）

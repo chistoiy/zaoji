@@ -327,7 +327,7 @@ void main() {
       expect(engine.syncMode, SyncMode.bidir);
     });
 
-    test('★ 策略是本机偏好：换引擎实例读得回来，且一行 change_log 都不产生', () async {
+    test('★ 策略是本机偏好：换引擎实例读得回来，且不进同步流', () async {
       await engine.setSyncMode(SyncMode.download);
 
       final again = SyncEngine(
@@ -347,7 +347,128 @@ void main() {
       expect(await SyncPrefs(store.dbOrNull!).syncMode(), 'download');
     });
   });
+
+  // ── R38 · 存活探测 / 差异计数 / 进度 ──
+
+  group('存活、差异与进度', () {
+    test('pingServer 打得通给延迟；打不通不抛，给得出原话', () async {
+      final up = await engine.pingServer(urlOverride: server.url);
+      expect(up.ok, isTrue, reason: up.error);
+      expect(up.serverId, isNotEmpty);
+      expect(up.label, startsWith('连接正常'));
+
+      // 探不通要另开一个引擎：注入的 transport 优先于地址（测试缝），
+      // 拿 urlOverride 指到死端口是探不动的——这本身就是要记下来的行为。
+      engine.dispose();
+      engine = SyncEngine(
+        db: store.dbOrNull!,
+        prefs: SyncPrefs(store.dbOrNull!),
+        transport: HttpSyncTransport(Uri.parse('http://127.0.0.1:9')),
+      );
+      final down = await engine.pingServer();
+      expect(down.ok, isFalse);
+      expect(down.error, isNotNull, reason: '「连不上」必须说得出为什么');
+    });
+
+    test('★ 差异计数与引擎同源：待推数就是"下一轮真会 POST 的行数"', () async {
+      await paired();
+      // R13 定下的性质：首轮推完，服务端盖章的回声会让本机那些行的
+      // updated_at 又领先水位线一格，**第二趟是空推**（服务端判 skipped）。
+      // 所以"待推数"必须与引擎同源：它说还有 98 行要发，按钮就不该说"已是最新"。
+      var d = await engine.computeDiff();
+      expect(d!.localPending, greaterThan(0), reason: '回声行仍会被下一轮收集，这是引擎事实');
+
+      await engine.sync();
+      await settle();
+      d = await engine.computeDiff();
+      expect(d!.localPending, 0, reason: '空推过一轮后才真的无事可做（此时才准禁用按钮）');
+
+      await store.createRecipe(RecipeDraft(name: '本机新增'));
+      d = await engine.computeDiff();
+      expect(d!.localPending, greaterThan(0), reason: '新建的菜（含食材步骤）待推');
+
+      await engine.sync();
+      await engine.sync(); // 第二趟吃掉回声
+      await settle();
+      d = await engine.computeDiff();
+      expect(d!.localPending, 0, reason: '两趟之后归零，按钮上的数字不骗人');
+    });
+
+    test('另一端推上去的变更，会被算成待拉', () async {
+      await paired();
+      // 「另一端」必须真的另有一个库：同一个 store 上再造一个 SyncEngine
+      // 会共用 local_pref 里的游标，那样算出来永远是 0 差异（假绿）。
+      final otherStore = RecipeStore(executor: NativeDatabase.memory());
+      await otherStore.ready();
+      final other = SyncEngine(
+        db: otherStore.dbOrNull!,
+        prefs: SyncPrefs(otherStore.dbOrNull!),
+        transport: HttpSyncTransport(
+            Uri.parse(server.url), nodeId: 'other-device'),
+      );
+      await other.pair(serverUrl: server.url, code: 'TEST24');
+      await otherStore.createRecipe(RecipeDraft(name: '平板上新增'));
+      await other.sync();
+      await settle();
+
+      final d = await engine.computeDiff();
+      expect(d!.remotePending, greaterThan(0),
+          reason: '服务端 change_log 领先本机游标，就该提示有东西可拉');
+
+      other.dispose();
+      await otherStore.dbOrNull!.close();
+      otherStore.dispose();
+    });
+
+    test('★ 半路失败：待推数不清零，重试不是重复操作', () async {
+      await paired();
+      await store.createRecipe(RecipeDraft(name: '推不出去的菜'));
+      final before = await engine.computeDiff();
+      expect(before!.localPending, greaterThan(0));
+
+      // 换成连不上的地址：本轮失败，水位线不该动。
+      engine.dispose();
+      engine = SyncEngine(
+        db: store.dbOrNull!,
+        prefs: SyncPrefs(store.dbOrNull!),
+        transport: HttpSyncTransport(Uri.parse('http://127.0.0.1:9')),
+      );
+      await engine.sync();
+      expect(engine.phase, SyncPhase.error, reason: '连不上要报错，不能静默');
+
+      final after = await engine.computeDiff();
+      expect(after!.localPending, greaterThan(0),
+          reason: '失败后差异还在，用户看得见「仍有 N 条待传」');
+    });
+
+    test('进度按阶段推进：连接 → 上传 → 下载，跑完清空', () async {
+      final seen = <SyncStage>[];
+      void listener() {
+        final pr = engine.progress;
+        if (pr != null && (seen.isEmpty || seen.last != pr.stage)) {
+          seen.add(pr.stage);
+        }
+      }
+
+      engine.addListener(listener);
+      await paired();
+      await store.createRecipe(RecipeDraft(name: '带进度的菜'));
+      await engine.sync();
+      await settle();
+      engine.removeListener(listener);
+
+      expect(seen, contains(SyncStage.connecting));
+      expect(seen, contains(SyncStage.pulling));
+      expect(engine.progress, isNull,
+          reason: '跑完（或失败）都不能把进度条留在屏上');
+    });
+  });
 }
+
+/// 等真 HTTP 往返落地：这些测试跑在 FakeAsync 区里，真网络的完成不在虚拟时间上，
+/// 只能按真实时间等一会（同 me_page_access_test 的 settleReal 手法）。
+Future<void> settle({int ms = 1200}) =>
+    Future<void>.delayed(Duration(milliseconds: ms));
 
 // ════════════════════════════════════════════════════════════════════
 

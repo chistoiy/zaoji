@@ -100,18 +100,71 @@ class _MePageState extends State<MePage> {
     // ★ 用**框里的地址**探（已保存的 or 预置的）：只认偏好的话，
     //   未配对的 Android 永远探不到模式，open 服务端也会显示成配对码版式。
     await engine.refreshAccessConfig(urlOverride: _urlCtrl.text);
+    // 进页面就把「那台电脑活着没有」和「两端差多少」都问一遍——
+    // 之前这两件事全靠用户点按钮试出来，点了没反应就只能瞎猜。
+    await engine.pingServer(urlOverride: _urlCtrl.text);
+    await engine.computeDiff(urlOverride: _urlCtrl.text);
     if (!mounted) return;
     setState(() {});
   }
 
-  /// 地址一改就重新探模式（防抖 400 ms）——不然未配对设备上偏好里还没有地址，
-  /// 探不到模式就永远显示配对码版式，而服务端其实开着免配对。
+  /// 地址一改就重新探（防抖 400 ms）：模式 + 存活 + 差异。
+  /// 不然未配对设备上偏好里还没有地址，什么都探不到。
   void _onUrlChanged(SyncEngine engine, String raw) {
     _probeDebounce?.cancel();
     _probeDebounce = Timer(const Duration(milliseconds: 400), () async {
       await engine.refreshAccessConfig(urlOverride: raw);
+      await engine.pingServer(urlOverride: raw);
+      await engine.computeDiff(urlOverride: raw);
       if (mounted) setState(() {});
     });
+  }
+
+  /// 手动「测试连接」：探活 + 重算差异（差异要问服务端，顺带一次）。
+  Future<void> _probe(SyncEngine engine) async {
+    await engine.pingServer(urlOverride: _urlCtrl.text);
+    await engine.computeDiff(urlOverride: _urlCtrl.text);
+    if (mounted) setState(() {});
+  }
+
+  /// 跑一次方向动作，回来把差异刷新——不然按钮上还挂着同步前的旧数字。
+  Future<void> _act(SyncEngine engine, Future<void> op) async {
+    await op;
+    await engine.computeDiff(urlOverride: _urlCtrl.text);
+    if (mounted) setState(() {});
+  }
+
+  /// 按钮文案带差异数：`上传改动 · 12`。数不出来就只留动作名，
+  /// 摆个假的 0 比不摆更糟（会让人以为真没东西可传而不敢点）。
+  String _actLabel(String name, int? n) =>
+      (n == null || n < 0) ? name : '$name · $n';
+
+  /// 存活徽标。三种状态一眼分得清：没探过 / 通 / 不通（附原话）。
+  Widget _connBadge(SyncEngine engine) {
+    final p = engine.serverPing;
+    final color = p == null
+        ? ZaojiColors.muted
+        : p.ok
+            ? const Color(0xFF2E7D32)
+            : const Color(0xFFB2491C);
+    final text = p == null ? '未检测连接' : p.label;
+    return Row(
+      children: [
+        Container(
+          key: const ValueKey('conn-dot'),
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 7),
+        Flexible(
+          child: Text(text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: color)),
+        ),
+      ],
+    );
   }
 
   Future<void> _pair() async {
@@ -308,9 +361,25 @@ class _MePageState extends State<MePage> {
 
   Widget _syncBody(SyncEngine engine) {
     final paired = _joined;
+    // 差异取一次存本地：既是给按钮用，也避开 `?.` 与 `??` 混在一处
+    // （analyzer 3.x 的 use_build_context_synchronously 在这种式子上会崩）。
+    final diff = engine.diff;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 存活状态放在最上面，且**不管模式读到没读到**：
+        // 探不通的时候恰恰最需要这句实话（不然界面只会显示一套凭猜测画出来的配对码）。
+        Row(
+          children: [
+            Expanded(child: _connBadge(engine)),
+            TextButton(
+              key: const ValueKey('conn-test'),
+              onPressed: engine.isBusy ? null : () => _probe(engine),
+              child: const Text('测试连接', style: TextStyle(fontSize: 12.5)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
         if (!paired) ...[
           const Text(
             '服务端地址',
@@ -392,30 +461,54 @@ class _MePageState extends State<MePage> {
         // ── 手动方向 + 常驻策略（FR-DATA-05）──────────────────────────
         // 「配好地址之后就该看见上传/下载的入口」——之前只有双向一条路，
         // 免配对模式下更是只挂一个「自动同步」徽标，用户没有任何可点的东西。
-        // 现在：两个一次性方向动作（按一次走一次）+ 常驻策略（决定自动同步
-        // 与「立即同步」的方向）。能谈上话（已接入 / 免配对）才摆出来，
-        // 未接入时这两排按钮点了也是报错，不该出现在界面上。
+        // 现在：存活探测 + 差异计数 + 两个一次性方向动作 + 常驻策略 + 进度。
+        // 能谈上话（已接入 / 免配对）才摆出来，未接入时点了只会报错。
         if (_joined || engine.accessMode == SyncAccessMode.open) ...[
-          const SizedBox(height: 12),
+          // 进度条：一轮同步走到哪、第几批/第几页。没这个就是"点了没反应"。
+          if (engine.progress != null) ...[
+            const SizedBox(height: 2),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                key: const ValueKey('sync-progress'),
+                value: engine.progress!.ratio,
+                minHeight: 4,
+                backgroundColor: ZaojiColors.paper2,
+                valueColor: const AlwaysStoppedAnimation(ZaojiColors.accent),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(engine.progress!.label,
+                style: const TextStyle(
+                    fontSize: 11.5, color: ZaojiColors.muted)),
+          ],
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
                   key: const ValueKey('sync-push'),
-                  onPressed: engine.isBusy ? null : engine.pushNow,
+                  // 差异为 0 就禁用：空推一遍没有意义，
+                  // 而「点了没反应」最容易被读成按钮坏了。
+                  onPressed: engine.isBusy || (diff != null && diff.nothingToPush)
+                      ? null
+                      : () => _act(engine, engine.pushNow()),
                   icon: const Icon(Icons.cloud_upload_outlined, size: 16),
-                  label: const Text('上传改动',
-                      style: TextStyle(fontSize: 12.5)),
+                  label: Text(_actLabel('上传改动', diff?.localPending),
+                      style: const TextStyle(fontSize: 12.5)),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton.icon(
                   key: const ValueKey('sync-pull'),
-                  onPressed: engine.isBusy ? null : engine.pullNow,
+                  onPressed: engine.isBusy ||
+                          (diff != null && diff.remoteKnown && diff.nothingToPull)
+                      ? null
+                      : () => _act(engine, engine.pullNow()),
                   icon: const Icon(Icons.cloud_download_outlined, size: 16),
-                  label: const Text('拉取更新',
-                      style: TextStyle(fontSize: 12.5)),
+                  label: Text(_actLabel('拉取更新', diff?.remotePending),
+                      style: const TextStyle(fontSize: 12.5)),
                 ),
               ),
             ],

@@ -123,6 +123,33 @@ void main() {
     engine.dispose();
   });
 
+  testWidgets('★ 进页面就自己探活并算差异：按钮上带真实条数（R38）', (tester) async {
+    // 用户报的：手机端没检测服务端是否存活，点了上传/下载也毫无反应。
+    // 现在进页面（含改地址后）自动 ping + computeDiff，界面直接给答案。
+    server.accessMode = 'open';
+    await pumpMe(tester, saveServerUrl: false, presetUrl: server.url);
+
+    expect(find.textContaining('连接正常'), findsOneWidget);
+    expect(find.text('连不上：'), findsNothing);
+    expect(find.byKey(const ValueKey('conn-test')), findsOneWidget);
+    // 首轮同步留下的回声行就是"真会再发一次 POST"的行数——按钮照实报。
+    expect(find.textContaining('上传改动 · '), findsOneWidget);
+    expect(find.textContaining('拉取更新'), findsOneWidget);
+    engine.dispose();
+  });
+
+  testWidgets('探不到服务端时徽标说实话，不假装正常', (tester) async {
+    server.accessMode = 'open';
+    await pumpMe(tester,
+        saveServerUrl: false,
+        presetUrl: server.url,
+        transportUrl: 'http://127.0.0.1:9');
+
+    expect(find.textContaining('连不上'), findsOneWidget);
+    expect(find.textContaining('连接正常'), findsNothing);
+    engine.dispose();
+  });
+
   testWidgets('★ 免配对模式下也有上传/下载入口与同步策略（FR-DATA-05）', (tester) async {
     // 用户报的：配好地址之后界面上只有一个「自动同步」徽标，没有任何可点的方向。
     server.accessMode = 'open';
