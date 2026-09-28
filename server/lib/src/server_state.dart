@@ -260,7 +260,7 @@ class ServerState {
       // R26 备份：只报「配没配、上次什么时候、成没成」——
       // 状态页局域网可见，远端地址与口令都不出现。
       'backup': {
-        'configured': BackupConfig.load(config.dataDir).hasRemote,
+        'configured': BackupConfig.load(config.dataDir).hasAnyRemote,
         'enabled': BackupConfig.load(config.dataDir).enabled,
         'last': backup.last?.toJson(),
       },

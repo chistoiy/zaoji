@@ -167,6 +167,13 @@ Future<String> statusPageHtml(ServerState st, List<String> ips,
       <label>用户 <input id="bk-ru" type="text" value="${esc(bcfg.webdavUser ?? '')}" style="width:180px"></label>
       <label>应用密码 <input id="bk-rp" type="password" value="${bcfg.hasRemote ? BackupConfig.redacted : ''}" style="width:160px"></label>
     </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:13px">
+      <label style="flex:1 1 260px">S3 endpoint <input id="bk-se" type="text" value="${esc(bcfg.s3Endpoint ?? '')}" placeholder="https://s3.bitiful.net" style="width:100%"></label>
+      <label>桶 <input id="bk-sb" type="text" value="${esc(bcfg.s3Bucket ?? '')}" placeholder="qoderwork" style="width:130px"></label>
+      <label>AK <input id="bk-sa" type="text" value="${esc(bcfg.s3Ak ?? '')}" style="width:170px"></label>
+      <label>SK <input id="bk-ss" type="password" value="${bcfg.hasS3 ? BackupConfig.redacted : ''}" style="width:170px"></label>
+      <label>前缀 <input id="bk-sp" type="text" value="${esc(bcfg.s3Prefix ?? '')}" placeholder="zaoji-backups/" style="width:130px"></label>
+    </div>
     <div style="display:flex;gap:10px;margin-top:10px;font-size:13px">
       <button onclick="bkSave()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--paper-2);cursor:pointer">保存配置</button>
       <button onclick="bkTest()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--line);background:var(--paper-2);cursor:pointer">测试远端</button>
@@ -182,7 +189,12 @@ Future<String> statusPageHtml(ServerState st, List<String> ips,
       remoteKeep:+document.getElementById('bk-k').value,
       webdavUrl:document.getElementById('bk-u').value.trim(),
       webdavUser:document.getElementById('bk-ru').value.trim(),
-      webdavPass:document.getElementById('bk-rp').value};}
+      webdavPass:document.getElementById('bk-rp').value,
+      s3Endpoint:document.getElementById('bk-se').value.trim(),
+      s3Bucket:document.getElementById('bk-sb').value.trim(),
+      s3Ak:document.getElementById('bk-sa').value.trim(),
+      s3Sk:document.getElementById('bk-ss').value,
+      s3Prefix:document.getElementById('bk-sp').value.trim()||'zaoji-backups/',};}
     async function bkPost(path,body,btn){
       const s=document.getElementById('bk-r');s.textContent=btn+'…';
       try{

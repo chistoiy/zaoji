@@ -153,7 +153,6 @@ void main() {
     test('photos 与 step.images（含旧单列）里的 sha 都不许被回收判孤儿', () async {
       seed('n0', 1);
       // 给 step 补 images 数组
-      final sh = Hlc.now('n0').encode();
       state.db.db.execute(
         "UPDATE step SET images = ? WHERE id='s1'",
         [jsonEncode(['d' * 64])],

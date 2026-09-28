@@ -70,6 +70,15 @@ class BackupConfig {
   String? webdavUser;
   String? webdavPass;
 
+  // R30 前哨：缤纷云 S3（第二备份通道，密钥刷正后真云往返验过）。
+  // 四个都齐才算配好；region 缺省 auto（Bitiful 的签名域实测值）。
+  String? s3Endpoint;
+  String? s3Bucket;
+  String? s3Region;
+  String? s3Ak;
+  String? s3Sk;
+  String? s3Prefix;
+
   BackupConfig({
     this.enabled = true,
     this.intervalHours = 24,
@@ -79,6 +88,12 @@ class BackupConfig {
     this.webdavUrl,
     this.webdavUser,
     this.webdavPass,
+    this.s3Endpoint,
+    this.s3Bucket,
+    this.s3Region = 'auto',
+    this.s3Ak,
+    this.s3Sk,
+    this.s3Prefix = 'zaoji-backups/',
   });
 
   /// 远端三件套齐了才算「配好了上传目标」。
@@ -86,6 +101,14 @@ class BackupConfig {
       (webdavUrl ?? '').trim().isNotEmpty &&
       (webdavUser ?? '').trim().isNotEmpty &&
       (webdavPass ?? '').trim().isNotEmpty;
+
+  /// S3 四件套（endpoint/bucket/ak/sk）齐了才算配好。
+  bool get hasS3 =>
+      (s3Endpoint ?? '').trim().isNotEmpty &&
+      (s3Bucket ?? '').trim().isNotEmpty &&
+      (s3Ak ?? '').trim().isNotEmpty &&
+      (s3Sk ?? '').trim().isNotEmpty;
+  bool get hasAnyRemote => hasRemote || hasS3;
 
   /// 展示用的占位符：口令**只进不出**（与 R21 准入口令同一条纪律）。
   static const String redacted = '••••••';
@@ -99,6 +122,12 @@ class BackupConfig {
         'webdavUrl': webdavUrl,
         'webdavUser': webdavUser,
         if (withSecrets) 'webdavPass': webdavPass,
+        's3Endpoint': s3Endpoint,
+        's3Bucket': s3Bucket,
+        's3Region': s3Region,
+        's3Ak': s3Ak,
+        's3Prefix': s3Prefix,
+        if (withSecrets) 's3Sk': s3Sk,
       };
 
   /// 校验。返回 null = 通过；否则是人话说明。
@@ -121,6 +150,21 @@ class BackupConfig {
       if ((webdavUser ?? '').trim().isEmpty ||
           (webdavPass ?? '').trim().isEmpty) {
         return '配了地址就必须同时配用户名和应用密码';
+      }
+    }
+    final se = (s3Endpoint ?? '').trim();
+    if (se.isNotEmpty) {
+      final u = Uri.tryParse(se);
+      // http 也放行：与 WebDAV 同一口径——家庭工具要能对着本地假服务测
+      if (u == null ||
+          (u.scheme != 'https' && u.scheme != 'http') ||
+          u.host.isEmpty) {
+        return 'S3 endpoint 应是 http(s) 地址（如 https://s3.bitiful.net），收到 "$se"';
+      }
+      if (!hasS3) return 'S3 四件套（endpoint/bucket/AK/SK）要配齐，缺一个都不算配好';
+      final pfx = (s3Prefix ?? '').trim();
+      if (pfx.isNotEmpty && (!pfx.endsWith('/') || pfx.startsWith('/'))) {
+        return 'S3 前缀应是 a/b/ 形状（两端带 /、不以 / 开头），收到 "$pfx"';
       }
     }
     return null;
@@ -153,6 +197,12 @@ class BackupConfig {
         webdavUrl: j['webdavUrl'] as String?,
         webdavUser: j['webdavUser'] as String?,
         webdavPass: j['webdavPass'] as String?,
+        s3Endpoint: j['s3Endpoint'] as String?,
+        s3Bucket: j['s3Bucket'] as String?,
+        s3Region: (j['s3Region'] as String?)?.isNotEmpty == true ? j['s3Region'] as String : 'auto',
+        s3Ak: j['s3Ak'] as String?,
+        s3Sk: j['s3Sk'] as String?,
+        s3Prefix: (j['s3Prefix'] as String?)?.isNotEmpty == true ? j['s3Prefix'] as String : 'zaoji-backups/',
       );
 
   Future<void> save(Directory dataDir) async {
@@ -196,6 +246,24 @@ class BackupConfig {
                 '${body['webdavPass'] ?? ''}'.isNotEmpty
             ? '${body['webdavPass']}'.trim()
             : old.webdavPass,
+        s3Endpoint: body.containsKey('s3Endpoint')
+            ? '${body['s3Endpoint'] ?? ''}'.trim()
+            : old.s3Endpoint,
+        s3Bucket: body.containsKey('s3Bucket')
+            ? '${body['s3Bucket'] ?? ''}'.trim()
+            : old.s3Bucket,
+        s3Region: body.containsKey('s3Region') && '${body['s3Region'] ?? ''}'.trim().isNotEmpty
+            ? '${body['s3Region']}'.trim()
+            : old.s3Region,
+        s3Ak: body.containsKey('s3Ak') ? '${body['s3Ak'] ?? ''}'.trim() : old.s3Ak,
+        s3Prefix: body.containsKey('s3Prefix') && '${body['s3Prefix'] ?? ''}'.trim().isNotEmpty
+            ? '${body['s3Prefix']}'.trim()
+            : old.s3Prefix,
+        s3Sk: body.containsKey('s3Sk') &&
+                body['s3Sk'] != redacted &&
+                '${body['s3Sk'] ?? ''}'.isNotEmpty
+            ? '${body['s3Sk']}'.trim()
+            : old.s3Sk,
       );
 }
 
@@ -210,6 +278,9 @@ class BackupRunResult {
   final int? bytes;
   final bool uploaded;
 
+  /// R30：S3 第二通道是否成功（webdav / s3 各自独立记账，一个挂不影响另一个）。
+  final bool uploadedS3;
+
   /// 失败原因 / 上传失败原因（ok=true 但 uploaded=false 时放后者）。
   final String? error;
   final int mediaCount;
@@ -220,6 +291,7 @@ class BackupRunResult {
     this.fileName,
     this.bytes,
     this.uploaded = false,
+    this.uploadedS3 = false,
     this.error,
     this.mediaCount = 0,
   });
@@ -230,6 +302,7 @@ class BackupRunResult {
         'fileName': fileName,
         'bytes': bytes,
         'uploaded': uploaded,
+        'uploadedS3': uploadedS3,
         'error': error,
         'mediaCount': mediaCount,
       };
@@ -244,6 +317,7 @@ class BackupRunResult {
       fileName: m['fileName'] as String?,
       bytes: m['bytes'] as int?,
       uploaded: m['uploaded'] == true,
+      uploadedS3: m['uploadedS3'] == true,
       error: m['error'] as String?,
       mediaCount: m['mediaCount'] as int? ?? 0,
     );
@@ -261,10 +335,15 @@ abstract class BackupTarget {
   /// 列出现有备份文件名（升序 = 时间序）。
   Future<List<String>> list();
 
-  /// 上传一个文件。content 用流，不把整包读进内存。
-  Future<void> upload(String name, Stream<List<int>> content, int length);
+  /// 上传一个文件。**整包字节进参**：SigV4 要预知载荷 sha256；家庭规模
+  /// （几十~几百 MB）整包进内存可接受——照片库到 GB 级时改成
+  /// 「先流式算哈希、再 openRead 上传、哈希作参数传入」。
+  Future<void> upload(String name, List<int> bytes);
 
   Future<void> delete(String name);
+
+  /// 释放连接资源（keep-alive 池）。多次调用无害。
+  void close();
 }
 
 /// WebDAV（坚果云实测可用，见《外部服务验证记录》）。
@@ -345,10 +424,10 @@ class WebDavTarget implements BackupTarget {
   }
 
   @override
-  Future<void> upload(String name, Stream<List<int>> content, int length) async {
+  Future<void> upload(String name, List<int> bytes) async {
     final req = await _client.openUrl('PUT', _resolve(name));
-    req.contentLength = length;
-    final code = await _send(req, body: content);
+    req.contentLength = bytes.length;
+    final code = await _send(req, body: Stream.value(bytes));
     if (code != 200 && code != 201 && code != 204) {
       throw StateError('WebDAV 上传失败：HTTP $code（$name）');
     }
@@ -363,6 +442,149 @@ class WebDavTarget implements BackupTarget {
     }
   }
 
+  void close() {
+    if (_ownClient) _client.close(force: true);
+  }
+}
+
+/// 缤纷云 S3（AWS SigV4，path-style）。region=auto 与真云往返实测通过
+/// （PUT 200 / GET 200 / DELETE 204）；`x-amz-content-sha256` 用真实载荷哈希——
+/// 部分 S3 兼容服务不认 UNSIGNED-PAYLOAD，先按最严的标准来。
+///
+/// 与 WebDavTarget 同一件接口：备份只需要 ensure/list/upload/delete 四件事，
+/// 这就是当初把目标抽成接口的原因——第二通道是加法不是手术。
+class S3Target implements BackupTarget {
+  final Uri endpoint; // 如 https://s3.bitiful.net
+  final String bucket;
+  final String region;
+  final String ak;
+  final String sk;
+  final String prefix; // 如 zaoji-backups/
+  final HttpClient _client;
+  final bool _ownClient;
+
+  S3Target({
+    required this.endpoint,
+    required this.bucket,
+    required this.region,
+    required this.ak,
+    required this.sk,
+    this.prefix = 'zaoji-backups/',
+    HttpClient? client,
+  })  : _client = client ?? HttpClient(),
+        _ownClient = client == null;
+
+  factory S3Target.fromConfig(BackupConfig cfg) => S3Target(
+        endpoint: Uri.parse(cfg.s3Endpoint!.trim()),
+        bucket: cfg.s3Bucket!.trim(),
+        region: (cfg.s3Region ?? 'auto').trim(),
+        ak: cfg.s3Ak!.trim(),
+        sk: cfg.s3Sk!.trim(),
+        prefix: (cfg.s3Prefix ?? 'zaoji-backups/').trim(),
+      );
+
+  static const _emptySha =
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+  static String _hex(List<int> b) =>
+      b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+
+  List<int> _hmac(List<int> key, String msg) =>
+      Hmac(sha256, key).convert(utf8.encode(msg)).bytes;
+
+  String _keyOf(String name) =>
+      '$prefix${name.replaceFirst(RegExp('^/+'), '')}';
+
+  /// 签一次请求并执行。query 必须已按 AWS 规则排好序（本文件只用两种固定形状）。
+  Future<String> _call(
+    String method,
+    String path, {
+    String query = '',
+    List<int> payload = const [],
+    Stream<List<int>>? body,
+    int? contentLength,
+  }) async {
+    final now = DateTime.now().toUtc();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final amz = '${now.year}${two(now.month)}${two(now.day)}'
+        'T${two(now.hour)}${two(now.minute)}${two(now.second)}Z';
+    final ds = amz.substring(0, 8);
+    final payloadHash =
+        payload.isEmpty && body == null ? _emptySha : _hex(sha256.convert(payload).bytes);
+    final host =
+        endpoint.hasPort ? '${endpoint.host}:${endpoint.port}' : endpoint.host;
+    final headers = {
+      'host': host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amz,
+    };
+    final signedKeys = headers.keys.toList()..sort();
+    final canonHeaders = signedKeys.map((k) => '$k:${headers[k]}\n').join();
+    final signed = signedKeys.join(';');
+    final canonReq =
+        '$method\n$path\n$query\n$canonHeaders\n$signed\n$payloadHash';
+    final scope = '$ds/$region/s3/aws4_request';
+    final sts = 'AWS4-HMAC-SHA256\n$amz\n$scope\n'
+        '${_hex(sha256.convert(utf8.encode(canonReq)).bytes)}';
+    var k = _hmac(utf8.encode('AWS4$sk'), ds);
+    k = _hmac(k, region);
+    k = _hmac(k, 's3');
+    k = _hmac(k, 'aws4_request');
+    final sig = _hex(Hmac(sha256, k).convert(utf8.encode(sts)).bytes);
+
+    final uri = Uri.parse('${endpoint.scheme}://$host$path'
+        '${query.isEmpty ? '' : '?$query'}');
+    final req = await _client.openUrl(method, uri);
+    req.headers.set(
+        'authorization',
+        'AWS4-HMAC-SHA256 Credential=$ak/$scope, '
+        'SignedHeaders=$signed, Signature=$sig');
+    req.headers.set('x-amz-content-sha256', payloadHash);
+    req.headers.set('x-amz-date', amz);
+    if (contentLength != null) req.contentLength = contentLength;
+    if (body != null) await req.addStream(body);
+    final res = await req.close();
+    final resBody = await res.transform(utf8.decoder).join();
+    if (res.statusCode >= 300) {
+      throw StateError('S3 ${res.statusCode}：'
+          '${resBody.length > 160 ? resBody.substring(0, 160) : resBody}');
+    }
+    return resBody;
+  }
+
+  @override
+  Future<void> ensure() async {} // 桶与对象都是 PUT 即建，没有要预建的目录
+
+  @override
+  Future<List<String>> list() async {
+    // 只有 1000 份的翻页问题——家用保留数远够不到，够到时再补 continuation-token
+    final query = 'list-type=2&prefix=${Uri.encodeQueryComponent(prefix)}';
+    final xml = await _call('GET', '/$bucket', query: query);
+    final out = <String>[];
+    for (final m in RegExp('<Key>([^<]+)</Key>').allMatches(xml)) {
+      final key = m.group(1)!;
+      if (!key.startsWith(prefix) || !key.endsWith('.zip')) continue;
+      final name = key.substring(prefix.length);
+      if (_backupNamePattern.hasMatch(name)) out.add(name);
+    }
+    out.sort();
+    return out;
+  }
+
+  @override
+  Future<void> upload(String name, List<int> bytes) => _call(
+        'PUT',
+        '/$bucket/${_keyOf(name)}',
+        payload: bytes,
+        body: Stream.value(bytes),
+        contentLength: bytes.length,
+      );
+
+  @override
+  Future<void> delete(String name) =>
+      _call('DELETE', '/$bucket/${_keyOf(name)}');
+
+  @override
   void close() {
     if (_ownClient) _client.close(force: true);
   }
@@ -514,21 +736,32 @@ class BackupService {
           .copy('${backupsDir.path}${Platform.pathSeparator}$name');
       final localPruned = _pruneLocal(cfg.localKeep);
 
-      // ⑤ 远端上传 + 保留裁剪
+      // ⑤ 远端上传 + 保留裁剪（双通道各自独立：一个挂了另一个照传）
       String? error;
       var uploaded = false;
+      var uploadedS3 = false;
       var remotePruned = 0;
-      final target = targetOf(cfg);
-      if (target != null) {
-        try {
-          await target.ensure();
-          await target.upload(name, zipFile.openRead(), zipBytes);
-          uploaded = true;
-          remotePruned = await _pruneRemote(target, cfg.remoteKeep);
-        } catch (e) {
-          error = '上传失败：$e';
-        } finally {
-          if (target is WebDavTarget) target.close();
+      final targets = <(String, BackupTarget)>[
+        if (cfg.hasRemote) ('webdav', targetOf(cfg)!),
+        if (cfg.hasS3) ('s3', S3Target.fromConfig(cfg)),
+      ];
+      if (targets.isNotEmpty) {
+        final zipAll = await zipFile.readAsBytes();
+        for (final t in targets) {
+          try {
+            await t.$2.ensure();
+            await t.$2.upload(name, zipAll);
+            if (t.$1 == 's3') {
+              uploadedS3 = true;
+            } else {
+              uploaded = true;
+            }
+            remotePruned += await _pruneRemote(t.$2, cfg.remoteKeep);
+          } catch (e) {
+            error = (error == null ? '' : '$error；') + '${t.$1} 上传失败：$e';
+          } finally {
+            t.$2.close();
+          }
         }
       }
 
@@ -538,11 +771,14 @@ class BackupService {
         fileName: name,
         bytes: zipBytes,
         uploaded: uploaded,
+        uploadedS3: uploadedS3,
         error: error,
         mediaCount: mediaFiles.length,
       );
       await _writeLast(r);
-      await log.write('[backup] ${uploaded ? '已上传' : '本地快照'} $name '
+      final chans = [if (uploaded) 'webdav', if (uploadedS3) 's3'];
+      await log.write('[backup] '
+          '${chans.isNotEmpty ? '已上传(${chans.join('、')})' : '本地快照'} $name '
           '${(zipBytes / 1024 / 1024).toStringAsFixed(1)} MB，'
           '照片 ${mediaFiles.length} 张'
           '${error != null ? '（$error）' : ''}'
@@ -605,20 +841,25 @@ class BackupService {
   /// 远端连通性测试：建目录 → PUT 小文件 → 删掉。
   /// 返回 null = 通；否则是人话错误。**探测留下的东西必须自己清干净。**
   Future<String?> testRemote(BackupConfig cfg) async {
-    final t = targetOf(cfg);
-    if (t == null) return '还没有配置 WebDAV 目标（地址/用户名/密码三件套）';
-    try {
-      final bytes =
-          Uint8List.fromList(utf8.encode('zaoji backup connectivity probe'));
-      await t.ensure();
-      await t.upload('_probe.txt', Stream.value(bytes), bytes.length);
-      await t.delete('_probe.txt');
-      return null;
-    } catch (e) {
-      return '$e';
-    } finally {
-      if (t is WebDavTarget) t.close();
+    final targets = <(String, BackupTarget)>[
+      if (cfg.hasRemote) ('WebDAV', targetOf(cfg)!),
+      if (cfg.hasS3) ('S3', S3Target.fromConfig(cfg)),
+    ];
+    if (targets.isEmpty) return '还没有配置任何远端目标（WebDAV 或 S3）';
+    final problems = <String>[];
+    for (final t in targets) {
+      try {
+        final bytes = utf8.encode('zaoji backup connectivity probe');
+        await t.$2.ensure();
+        await t.$2.upload('_probe.txt', bytes);
+        await t.$2.delete('_probe.txt');
+      } catch (e) {
+        problems.add('${t.$1}：$e');
+      } finally {
+        t.$2.close();
+      }
     }
+    return problems.isEmpty ? null : problems.join('；');
   }
 
   // ───────────────────────────── 恢复 ─────────────────────────────

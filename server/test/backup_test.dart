@@ -308,6 +308,116 @@ void main() {
     });
   });
 
+  group('S3 第二通道（缤纷云形状）', () {
+    // 假 S3：path-style PUT/GET/DELETE + list-type=2 的 XML。
+    // 不验签名正确性（真云已验过），验的是**我们确实按 SigV4 发了头**、
+    // 以及双通道各自记账、互不拖累。
+    final s3store = <String, Uint8List>{};
+    final s3auth = <String>[];
+    HttpServer? s3fake;
+    setUp(() async {
+      s3store.clear();
+      s3auth.clear();
+      s3fake = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      s3fake!.listen((req) async {
+        s3auth.add(req.headers.value('authorization') ?? '');
+        final p = req.uri.path;
+        if (req.method == 'PUT') {
+          final body =
+              await req.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
+          s3store[p] = Uint8List.fromList(body);
+          req.response.statusCode = 200;
+          await req.response.close();
+        } else if (req.method == 'DELETE') {
+          s3store.remove(p);
+          req.response.statusCode = 204;
+          await req.response.close();
+        } else if (req.method == 'GET' &&
+            req.uri.queryParameters['list-type'] == '2') {
+          final prefix = req.uri.queryParameters['prefix'] ?? '';
+          final xml = StringBuffer(
+              '<ListBucketResult><Contents>');
+          for (final k in s3store.keys.where((k) => k.startsWith('/qoderwork/$prefix'))) {
+            xml.write('<Contents><Key>${k.substring('/qoderwork/'.length)}</Key></Contents>');
+          }
+          xml.write('</Contents></ListBucketResult>');
+          req.response.statusCode = 200;
+          req.response.headers.contentType = ContentType('application', 'xml');
+          req.response.write(xml.toString());
+          await req.response.close();
+        } else {
+          req.response.statusCode = 404;
+          await req.response.close();
+        }
+      });
+    });
+    tearDown(() async {
+      await s3fake?.close(force: true);
+    });
+
+    BackupConfig s3cfg() => BackupConfig(
+          webdavUrl: 'http://127.0.0.1:$fakePort/dav/zaoji/',
+          webdavUser: 'u',
+          webdavPass: 'p',
+          s3Endpoint: 'http://127.0.0.1:${s3fake!.port}',
+          s3Bucket: 'qoderwork',
+          s3Region: 'auto',
+          s3Ak: 'AKIAFAKE',
+          s3Sk: 'secret-fake',
+          s3Prefix: 'zaoji-backups/',
+        );
+
+    test('runOnce 双通道各传一份；结果各记各的账', () async {
+      final r = await state.backup.runOnce(config: s3cfg());
+      expect(r.ok, isTrue, reason: r.error);
+      expect(r.uploaded, isTrue, reason: r.error);
+      expect(r.uploadedS3, isTrue, reason: r.error);
+      expect(
+          s3store.keys.any((k) => k.endsWith('.zip') && k.startsWith('/qoderwork/zaoji-backups/')),
+          isTrue);
+      expect(s3auth.first, startsWith('AWS4-HMAC-SHA256 Credential=AKIAFAKE/'));
+      expect(s3auth.first, contains('/auto/s3/aws4_request'));
+    });
+
+    test('一通道挂（S3 端口不通）另一通道照传，error 里点名 s3', () async {
+      final cfg = s3cfg();
+      cfg.s3Endpoint = 'http://127.0.0.1:1'; // 必挂
+      final r = await state.backup.runOnce(config: cfg);
+      expect(r.ok, isTrue);
+      expect(r.uploaded, isTrue, reason: 'webdav 不受 s3 失败牵连');
+      expect(r.uploadedS3, isFalse);
+      expect(r.error, contains('s3 上传失败'));
+    });
+
+    test('s3Sk 只进不出：接口回显掩码、掩码提交不覆盖', () async {
+      final cfg = s3cfg();
+      await cfg.save(state.config.dataDir);
+      final res = await handler(Request(
+          'GET', Uri.parse('http://127.0.0.1:8666/api/admin/backup')));
+      final text = await res.readAsString();
+      expect(text, isNot(contains('secret-fake')));
+      final j = jsonDecode(text) as Map<String, Object?>;
+      expect((j['config'] as Map)['s3Endpoint'], contains('127.0.0.1'));
+
+      final save = await handler(Request(
+          'POST', Uri.parse('http://127.0.0.1:8666/api/admin/backup/config'),
+          body: jsonEncode({'s3Sk': BackupConfig.redacted}),
+          headers: {'content-type': 'application/json'}));
+      expect(save.statusCode, 200);
+      final disk = BackupConfig.load(state.config.dataDir);
+      expect(disk.s3Sk, 'secret-fake', reason: '掩码提交必须被当作「不改」');
+    });
+
+    test('endpoint 配了但四件套不齐 → 400 且人话', () async {
+      final save = await handler(Request(
+          'POST', Uri.parse('http://127.0.0.1:8666/api/admin/backup/config'),
+          body: jsonEncode({'s3Endpoint': 'https://s3.bitiful.net'}),
+          headers: {'content-type': 'application/json'}));
+      expect(save.statusCode, 400);
+      expect(await save.readAsString(), contains('四件套'));
+    });
+  });
+
 }
 
 /// 独立小函数：断言 zip 的 manifest 只含 db.sqlite3（不放主流程里是为了错误信息聚焦）。
