@@ -22,6 +22,10 @@ class FakeSyncServer {
   Map<String, String>? lastPullQuery;
   int? protocolVersionOverride;
 
+  /// 每个请求回包前故意慢这么久。测「进行中」的 UI（进度条、按钮禁用态）时
+  /// 用它把中间态钉住——本机 localhost 往返时快时慢，不设延迟的断言会偶发。
+  Duration latency = Duration.zero;
+
   // ── R21 三态准入（镜像真服务端语义）──
   // 默认 pairCode：既有的引擎测试都从 /api/pair 起步，别拿新默认折腾它们；
   // 三态本身的测试各自显式设定。
@@ -80,6 +84,7 @@ class FakeSyncServer {
     pushCount = 0;
     pullCount = 0;
     lastPullQuery = null;
+    latency = Duration.zero;
     mediaPaths.clear();
     accessMode = 'pairCode';
     passcode = null;
@@ -182,6 +187,7 @@ class FakeSyncServer {
   }
 
   Future<void> _handle(HttpRequest req) async {
+    if (latency > Duration.zero) await Future<void>.delayed(latency);
     try {
       final body = await utf8.decoder.bind(req).join();
       final json = body.isEmpty

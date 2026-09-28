@@ -370,28 +370,23 @@ void main() {
       expect(down.error, isNotNull, reason: '「连不上」必须说得出为什么');
     });
 
-    test('★ 差异计数与引擎同源：待推数就是"下一轮真会 POST 的行数"', () async {
+    test('★ 待推数与引擎逐字同源：它说 N 行，下一轮就真发 N 行', () async {
       await paired();
-      // R13 定下的性质：首轮推完，服务端盖章的回声会让本机那些行的
-      // updated_at 又领先水位线一格，**第二趟是空推**（服务端判 skipped）。
-      // 所以"待推数"必须与引擎同源：它说还有 98 行要发，按钮就不该说"已是最新"。
+      // 回声（服务端盖章后回传的行）会让这个数暂时偏大——那些行下一轮被空推一次，
+      // 服务端判 skipped，然后归零。刻意不做"更聪明"的排除：
+      // 手机停在「仅上传」时收不到回声，排除法会显示 0 并禁用按钮，
+      // 而引擎其实还有活要干——**一个会说谎的 0 比一个偏大的 N 危险得多**。
       var d = await engine.computeDiff();
-      expect(d!.localPending, greaterThan(0), reason: '回声行仍会被下一轮收集，这是引擎事实');
+      expect(d!.localPending, greaterThan(0), reason: '回声行仍会被下一轮收集');
 
       await engine.sync();
       await settle();
       d = await engine.computeDiff();
-      expect(d!.localPending, 0, reason: '空推过一轮后才真的无事可做（此时才准禁用按钮）');
+      expect(d!.localPending, 0, reason: '空推过一轮后归零，此时才准禁用按钮');
 
       await store.createRecipe(RecipeDraft(name: '本机新增'));
       d = await engine.computeDiff();
-      expect(d!.localPending, greaterThan(0), reason: '新建的菜（含食材步骤）待推');
-
-      await engine.sync();
-      await engine.sync(); // 第二趟吃掉回声
-      await settle();
-      d = await engine.computeDiff();
-      expect(d!.localPending, 0, reason: '两趟之后归零，按钮上的数字不骗人');
+      expect(d!.localPending, greaterThan(0), reason: '本机写的行（含食材步骤）待推');
     });
 
     test('另一端推上去的变更，会被算成待拉', () async {

@@ -179,12 +179,23 @@ class SyncEngine extends ChangeNotifier {
         ? _normalizeUrl(urlOverride)
         : await _prefs.serverUrl();
     if (url == null) return;
+    final fromBox = urlOverride != null && urlOverride.trim().isNotEmpty;
     try {
       final res = await (await _transportOf(url))
           .get('/api/sync/config')
           .timeout(const Duration(seconds: 5));
       _accessMode = SyncAccessMode.parse('${res['accessMode']}');
       _visitorManualSync = res['visitorManualSync'] == true;
+      // 谈上了话就把这台服务器记住——但只补空，绝不覆盖已保存的地址。
+      // 不写这一笔的病灶（R38 真机可见）：未配对设备的偏好里没有 serverUrl，
+      // 界面却按框里的地址显示「免配对 + 上传改动」，一点就走进
+      // `_doSync` 的 `serverUrl == null` 分支直接判成 neverPaired，
+      // 用户看到的就是"按钮点了毫无反应"。
+      // 只补空是因为：已配对设备的 token 属于原服务器，探测到另一台就改地址
+      // 等于把这台设备悄悄迁回家。
+      if (fromBox && await _prefs.serverUrl() == null) {
+        await _prefs.setServerUrl(url);
+      }
     } catch (_) {/* 连不上/超时都是"未知"，等下次触发再试 */}
   }
 
@@ -877,13 +888,22 @@ class SyncEngine extends ChangeNotifier {
     return _serverPing!;
   }
 
-  /// 算两端差异：本机还有多少行没推上去、服务端有多少条变更没拉下来。
+  /// 算两端差异：本机下一轮真会发多少行、服务端领先多少条变更。
   ///
-  /// 口径**跟同步本身同源**，不是另算一套：
-  /// · 待推 = 各同步表里 `updated_at > 推水位线` 的行数（就是 [_pushPending] 会收集的那些）；
-  /// · 待拉 = 服务端 `nowSeq - 本机游标`（change_log 的 seq 差，含被白名单跳过的条目，
-  ///   所以它是"服务端领先多少"而不是"我会应用多少行"——够用来判断要不要点按钮）。
-  /// 探不到服务端时返回 null，界面上「未知」比假数字诚实。
+  /// **待推的口径必须与 [_pushPending] 逐字同源**（`updated_at > 推水位线`），
+  /// 不能自作聪明。试过一条"更聪明"的口径：把服务端盖过章的行
+  /// （`updated_at` 的 HLC 节点 == serverId）排除掉，理由是"那些行服务端显然已经有了"。
+  /// 真机上立刻翻车：手机停在「仅上传」模式时永远收不到回声，那 98 行的节点
+  /// 还是 `seed`，于是它显示 0、按钮被禁用，而引擎其实还有东西要发——
+  /// **一个会说谎的 0 比一个偏大的 N 危险得多**。
+  ///
+  /// 所以这里就是"下一轮会发多少行"：拉回别人改动后它可能暂时偏大
+  /// （那些回声行会被下一轮空推一次，服务端判 skipped，然后归零），
+  /// 但它永远不小于真实要发的量，也永远不在还有活计时显示 0。
+  ///
+  /// 待拉 = 服务端 `nowSeq - 本机游标`（change_log 的 seq 差，含被白名单跳过的条目，
+  /// 所以它是"服务端领先多少"而不是"我会应用多少行"——够用来判断要不要点按钮）。
+  /// 探不到服务端时 remotePending = -1（未知），界面上「未知」比假数字诚实。
   Future<SyncDiff?> computeDiff({String? urlOverride}) async {
     final watermark = await _prefs.pushWatermark();
     var local = 0;
@@ -896,8 +916,7 @@ class SyncEngine extends ChangeNotifier {
           .get();
       local += rows.first.read<int>('c');
     }
-    // 待推是 0 也可能有一批卡在半路（pendingMutation 没确认）——那也算有差异，
-    // 否则按钮会被禁用，用户没法把那一批重试出去。
+    // 半路没确认的那一批也算有差异（否则按钮被禁用，用户没法把它重试出去）。
     if (local == 0 && await _prefs.pendingMutationId() != null) local = 1;
 
     final url = urlOverride != null && urlOverride.trim().isNotEmpty

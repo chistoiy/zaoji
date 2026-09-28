@@ -54,6 +54,17 @@ void main() {
     await tester.pumpAndSettle(const Duration(milliseconds: 200));
   }
 
+  /// 同 settleReal，但**不** pumpAndSettle：进度条的中间态是不确定动画，
+  /// pumpAndSettle 会一直等不到"稳定帧"而超时。测进行中就靠它。
+  Future<void> waitReal(WidgetTester tester,
+      {required bool Function() done, int seconds = 25}) async {
+    final until = DateTime.now().add(Duration(seconds: seconds));
+    while (!done() && DateTime.now().isBefore(until)) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+    }
+  }
+
   Future<void> pumpMe(WidgetTester tester,
       {String? transportUrl,
       bool saveServerUrl = true,
@@ -147,6 +158,39 @@ void main() {
 
     expect(find.textContaining('连不上'), findsOneWidget);
     expect(find.textContaining('连接正常'), findsNothing);
+    engine.dispose();
+  });
+
+  testWidgets('★ 点方向按钮立刻出进度条与阶段文案（不再"点了没反应"）', (tester) async {
+    server.accessMode = 'open';
+    // 偏好里故意不存地址：免配对模式下框里预置的地址就该被认成家里那台。
+    await pumpMe(tester, saveServerUrl: false, presetUrl: server.url);
+    expect(find.byKey(const ValueKey('sync-progress')), findsNothing);
+
+    // 把服务端回包放慢：本机 localhost 往返时快时慢，一轮同步可能在一次
+    // pump 里就跑完，中间态就没了（进度条正是这条断言要盯的东西）。
+    server.latency = const Duration(milliseconds: 250);
+    await tester.tap(find.byKey(const ValueKey('sync-push')));
+    await waitReal(tester, done: () => engine.progress != null || !engine.isBusy);
+    await tester.pump();
+
+    expect(engine.isBusy, isTrue);
+    expect(find.byKey(const ValueKey('sync-progress')), findsOneWidget);
+    expect(find.textContaining('正在'), findsWidgets);
+
+    await waitReal(tester, done: () => !engine.isBusy);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('sync-progress')), findsNothing,
+        reason: '跑完必须收起，不能把进度条钉在屏上');
+    server.latency = Duration.zero;
+    // 按钮收尾还挂着一趟「刷新差异」的请求（_act 里那条）。等它回包并让
+    // 假时钟跨过它的 5 秒超时，否则测试结束时树里留着 pending timer。
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 900)));
+    await tester.pump(const Duration(seconds: 6));
+
+    // 探到了就得把这台服务器记住：否则下一次 sync 因为偏好里没有 serverUrl
+    // 直接判成 neverPaired——用户看到的正是"点了没反应"。
+    expect(await prefs.serverUrl(), server.url);
     engine.dispose();
   });
 
