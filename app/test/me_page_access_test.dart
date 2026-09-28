@@ -54,7 +54,10 @@ void main() {
     await tester.pumpAndSettle(const Duration(milliseconds: 200));
   }
 
-  Future<void> pumpMe(WidgetTester tester, {String? transportUrl}) async {
+  Future<void> pumpMe(WidgetTester tester,
+      {String? transportUrl,
+      bool saveServerUrl = true,
+      String? presetUrl}) async {
     // binding 已在这之前初始化完（它把 HttpClient 换成回 400 的 mock），
     // 现在撤掉才拿得到真网络。见 FakeSyncServer.allowRealHttp 的注释。
     FakeSyncServer.allowRealHttp();
@@ -66,7 +69,7 @@ void main() {
       prefs: prefs,
       transport: HttpSyncTransport(Uri.parse(transportUrl ?? server.url)),
     );
-    await prefs.setServerUrl(server.url);
+    if (saveServerUrl) await prefs.setServerUrl(server.url);
     await tester.pumpWidget(
       MaterialApp(
         home: SyncScope(
@@ -74,7 +77,7 @@ void main() {
           // R22：MePage 多了冲突数徽标（读 store），入口版式要两个 scope 都在。
           child: StoreScope(
             store: store,
-            child: const MePage(),
+            child: MePage(defaultServerUrl: presetUrl ?? kDefaultServerUrl),
           ),
         ),
       ),
@@ -83,8 +86,42 @@ void main() {
     await settleReal(
       tester,
       done: () => find.text('服务端地址').evaluate().isNotEmpty,
+      seconds: 25,
     );
   }
+
+  testWidgets('★ 首启（偏好里没地址）：预置地址直接填进框里，并按它的真实模式排版', (tester) async {
+    // 回归用户 2026-09-28 报的那条：服务端开着免配对，App 却逼着输配对码。
+    // 病灶是准入模式只认**已保存**的地址，而首启的 Android 什么都还没存。
+    server.accessMode = 'open';
+    await pumpMe(tester, saveServerUrl: false, presetUrl: server.url);
+
+    final box = tester.widget<TextField>(
+        find.widgetWithText(TextField, server.url));
+    expect(box.controller!.text, server.url,
+        reason: '示例值就是初始值：用户不必把提示再手打一遍');
+    expect(find.text('免配对接入'), findsOneWidget);
+    expect(find.text('配对码（5 分钟有效，一次性）'), findsNothing);
+    engine.dispose();
+  });
+
+  testWidgets('★ 地址一改就重探：换成口令服务端，版式跟着从免配对变口令框', (tester) async {
+    server.accessMode = 'open';
+    await pumpMe(tester, saveServerUrl: false, presetUrl: server.url);
+    expect(find.text('免配对接入'), findsOneWidget);
+
+    // 服务端那边改成口令（模拟家里改了准入设置），再碰一下地址框触发防抖重探。
+    server.accessMode = 'passcode';
+    server.passcode = 'mama-2026';
+    await tester.enterText(find.widgetWithText(TextField, server.url), '${server.url}/');
+    await tester.pump(const Duration(milliseconds: 600));
+    await settleReal(
+        tester, done: () => find.text('连接口令').evaluate().isNotEmpty, seconds: 25);
+
+    expect(find.text('连接口令'), findsOneWidget);
+    expect(find.text('免配对接入'), findsNothing);
+    engine.dispose();
+  });
 
   testWidgets('open 模式：免配对接入状态卡，没有配对码框', (tester) async {
     server.accessMode = 'open';

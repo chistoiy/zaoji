@@ -81,7 +81,7 @@ class ServerConfig {
   ///   （缺 photos/images = 保持现值，旧 apk 不断同步不清数据）；
   ///   孤儿回收引用面扩到 photos ∪ step.images ∪ 旧单列；
   ///   v6 再叠 `shopping_item` 纯增表（R30 购物清单，旧客户端拉不到该表也不报错）。
-  static const String version = '0.14.0';
+  static const String version = '0.14.1';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 

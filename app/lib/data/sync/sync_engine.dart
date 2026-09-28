@@ -143,8 +143,16 @@ class SyncEngine extends ChangeNotifier {
   /// 模式保持"未知"，UI 回退到配对码版式即可；自动同步照旧安静停摆。
   ///
   /// 带超时：半死的服务器不该把「我的」页钉在加载态。
-  Future<void> refreshAccessConfig() async {
-    final url = await _prefs.serverUrl();
+  ///
+  /// [urlOverride]：**用界面上正在输入的地址去探**，不是只认已保存的那份。
+  /// 这是 R21 版式判定的一处真空：未配对的 Android 设备偏好里还没有地址，
+  /// 于是探不到模式 → 永远回退成配对码版式，而服务端其实开着免配对——
+  /// 用户看到的就是「服务端没开配对码，App 却逼我输配对码」。
+  /// Web 端不出这问题只是因为 origin 恰好被预填进了偏好。
+  Future<void> refreshAccessConfig({String? urlOverride}) async {
+    final url = urlOverride != null && urlOverride.trim().isNotEmpty
+        ? _normalizeUrl(urlOverride)
+        : await _prefs.serverUrl();
     if (url == null) return;
     try {
       final res = await (await _transportOf(url))

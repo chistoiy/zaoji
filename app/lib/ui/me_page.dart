@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
@@ -18,11 +20,22 @@ import 'trash_page.dart';
 /// 同步引擎需要一个入口（填地址、输配对码、看状态、手动同步），
 /// 完整的设置页（FR-SET-01~09）等 M2+ 再扩。
 class MePage extends StatefulWidget {
-  const MePage({super.key});
+  const MePage({super.key, this.defaultServerUrl = kDefaultServerUrl});
+
+  /// 未配对时地址框的预置值（同时也是占位提示）。
+  /// 暴露成入参只为测试可注入假服务端地址——生产一律用 [kDefaultServerUrl]。
+  final String defaultServerUrl;
 
   @override
   State<MePage> createState() => _MePageState();
 }
+
+/// 未配对时地址框的**预置值**：家里那台服务端电脑的局域网地址。
+///
+/// 它同时充当占位提示与初始文本——之前只当提示，于是 Android 上用户得
+/// 把这一串**手打一遍**才能连上（而提示里已经写着它了）。占位与预填同源，
+/// 就不会出现「提示是 A、框里是 B」的漂移。换服务器时直接改框里的字即可。
+const String kDefaultServerUrl = 'http://192.168.31.141:8666';
 
 class _MePageState extends State<MePage> {
   final _urlCtrl = TextEditingController();
@@ -33,6 +46,9 @@ class _MePageState extends State<MePage> {
   String? _nodeIdShort;
   bool _loaded = false;
   bool _joined = false;
+
+  /// 地址边改边探（防抖）：准入模式决定下面给哪套接入区块。
+  Timer? _probeDebounce;
 
   @override
   void initState() {
@@ -49,6 +65,7 @@ class _MePageState extends State<MePage> {
 
   @override
   void dispose() {
+    _probeDebounce?.cancel();
     _urlCtrl.dispose();
     _codeCtrl.dispose();
     _passcodeCtrl.dispose();
@@ -73,13 +90,25 @@ class _MePageState extends State<MePage> {
       _joined = joined;
       _nodeIdShort = nodeId.length > 8 ? nodeId.substring(0, 8) : nodeId;
       _loaded = true;
-      if (knownUrl != null) _urlCtrl.text = knownUrl;
+      _urlCtrl.text = knownUrl ?? widget.defaultServerUrl;
     });
     // 准入模式决定未配对时给哪一种接入区块（三态互斥）。读不到就保持
     // "未知"，UI 回退配对码版式；重跑一次 loading 让模式上屏。
-    await engine.refreshAccessConfig();
+    // ★ 用**框里的地址**探（已保存的 or 预置的）：只认偏好的话，
+    //   未配对的 Android 永远探不到模式，open 服务端也会显示成配对码版式。
+    await engine.refreshAccessConfig(urlOverride: _urlCtrl.text);
     if (!mounted) return;
     setState(() {});
+  }
+
+  /// 地址一改就重新探模式（防抖 400 ms）——不然未配对设备上偏好里还没有地址，
+  /// 探不到模式就永远显示配对码版式，而服务端其实开着免配对。
+  void _onUrlChanged(SyncEngine engine, String raw) {
+    _probeDebounce?.cancel();
+    _probeDebounce = Timer(const Duration(milliseconds: 400), () async {
+      await engine.refreshAccessConfig(urlOverride: raw);
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _pair() async {
@@ -293,10 +322,14 @@ class _MePageState extends State<MePage> {
             controller: _urlCtrl,
             keyboardType: TextInputType.url,
             autocorrect: false,
-            enableSuggestions: false,
+            // ★ 不要写 enableSuggestions: false：Flutter 会把它翻成 Android 的
+            //   IME_FLAG_NO_PERSONALIZED_LEARNING，HyperOS / MIUI 见到这个标志
+            //   就切到「安全键盘」（没有云输入、长得像密码框），用户以为
+            //   地址框被当成了密码输入。autocorrect: false 已经够挡住自动纠错。
+            onChanged: (v) => _onUrlChanged(engine, v),
             style: const TextStyle(fontSize: 14, color: ZaojiColors.ink),
             cursorColor: ZaojiColors.accent,
-            decoration: _inputDecoration('http://192.168.31.141:8666'),
+            decoration: _inputDecoration(kDefaultServerUrl),
           ),
           const SizedBox(height: 12),
           // 接入区块由服务端准入模式决定（R21 三态互斥）。

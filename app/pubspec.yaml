@@ -3,7 +3,7 @@ description: "灶记 ZAOJI —— 家庭菜谱手账。Android 用 App，iPhone 
 publish_to: 'none'
 
 # 版本号。Android 的 versionName/versionCode 由它决定。
-version: 0.14.0+7
+version: 0.14.1+8
 
 environment:
   sdk: ^3.10.8
@@ -21,10 +21,21 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   flutter_svg: ^2.3.0
-  drift: ^2.35.0
-  drift_flutter: ^0.3.1
-  sqlite3_flutter_libs: ^0.6.0+eol
-  sqlite3: ^3.5.2
+  # drift 2.32+ 把 sqlite3 抬到 3.x（见上面那条注释），所以跟着回退到 2.31.x。
+  drift: ^2.31.0
+  # ★ SQLite 栈钉在「Flutter 自带 libsqlite3.so」那一代，**不要升到 sqlite3 3.x**：
+  #   sqlite3 3.x 改用 Dart 的 native-assets（hooks / code_assets / native_toolchain_c）
+  #   自己编库，而 `sqlite3_flutter_libs 0.6.0+eol` 是个**故意清空的壳**
+  #   （它的 CHANGELOG 原文：This version removes all code from this package）。
+  #   结果就是 APK 里一个 `libsqlite3.so` 都没有，而 Android 从 API 24 起
+  #   **不允许 dlopen 平台的 libsqlite3.so**（隐藏系统库），于是 App 一开库就抛
+  #   `dlopen failed: library "libsqlite3.so" not found`，界面停在「本地数据库打不开」。
+  #   实测于 v0.14.0 真机（2026-09-28），aapt 数过：那版 APK 里只有 3 个 .so，没有 sqlite。
+  #   0.5.4x 会把编译好的 libsqlite3.so 打进各 ABI（0.5.41 = SQLite 3.51.1，
+  #   与服务端自报的 3.51.1 同版），这条线才可用。
+  drift_flutter: ^0.2.8
+  sqlite3_flutter_libs: ^0.5.24
+  sqlite3: ^2.9.4
 
   # 同步引擎的 HTTP 层（R13）。只做同步接口的 GET/POST，不引任何重框架。
   http: ^1.2.0
