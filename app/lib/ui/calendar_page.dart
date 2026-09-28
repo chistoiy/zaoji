@@ -5,6 +5,7 @@ import '../data/store_scope.dart';
 import '../theme.dart';
 import 'menu_detail_page.dart';
 import 'recipe_detail_page.dart';
+import 'stats_page.dart';
 
 /// 日历（R24）：做过什么、排了什么，一眼看全。
 ///
@@ -87,6 +88,17 @@ class _CalendarPageState extends State<CalendarPage> {
       appBar: AppBar(
         title: const Text('日历'),
         backgroundColor: ZaojiColors.paper,
+        actions: [
+          // R32：统计入口挂这里——「这个月做了多少」的问题从日历页发起最自然。
+          IconButton(
+            key: const ValueKey('cal-stats'),
+            tooltip: '烹饪统计',
+            icon: const Icon(Icons.show_chart_outlined),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) =>
+                    StatsPage(year: _focus.year, month: _focus.month))),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 32),

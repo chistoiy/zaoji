@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zaoji/data/recipe_store.dart';
 import 'package:zaoji/data/store_scope.dart';
-import 'package:zaoji/models.dart';
 import 'package:zaoji/ui/kitchen_page.dart';
 
 /// R30 · 购物清单闭环：加购去重 → 勾选 → 购物入库变库存。

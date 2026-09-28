@@ -1788,6 +1788,32 @@ class RecipeStore extends ChangeNotifier {
     return m < 0 ? 0 : m;
   }
 
+  /// 某一月的全部完成会话明细（R32 · 烹饪统计）。
+  ///
+  /// 口径与 [monthMarks] 一致：只有 finished_at 非空且未软删的算做过。
+  /// 页面要的「开火 N 次 / 做了 M 道 / 累计 X 分钟 / 校准对照」全从这一份
+  /// 明细现算——家庭规模一个月几十行，不值得为每种聚合各写一条 SQL。
+  Future<List<MonthSession>> monthSessions(int year, int month) async {
+    final db = _db;
+    if (db == null) return const [];
+    final prefix = '${year.toString().padLeft(4, '0')}-'
+        '${month.toString().padLeft(2, '0')}';
+    final rows = await db.customSelect(
+      'SELECT recipe_id, started_at, finished_at FROM cook_session '
+      'WHERE finished_at LIKE ? AND deleted_at IS NULL',
+      variables: [Variable<String>('$prefix%')],
+    ).get();
+    return [
+      for (final r in rows)
+        MonthSession(
+          recipeId: '${r.data['recipe_id']}',
+          day: '${r.data['finished_at']}'.substring(0, 10),
+          minutes: _minutesBetween(
+              '${r.data['started_at']}', '${r.data['finished_at']}'),
+        ),
+    ];
+  }
+
   // ── 内部助手 ──
 
   Future<String> _resolveNodeId() async {
@@ -2062,6 +2088,23 @@ class CookEvent {
     required this.recipeId,
     required this.recipeName,
     required this.time,
+    required this.minutes,
+  });
+}
+
+/// 统计页用的一条完成会话（R32）。
+class MonthSession {
+  final String recipeId;
+
+  /// yyyy-MM-dd，取 finished_at 的日期部分。
+  final String day;
+
+  /// 开始→完成的分钟数；解析不出来是 0。
+  final int minutes;
+
+  const MonthSession({
+    required this.recipeId,
+    required this.day,
     required this.minutes,
   });
 }
