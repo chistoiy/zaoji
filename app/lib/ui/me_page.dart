@@ -9,6 +9,7 @@ import '../data/store_scope.dart';
 import '../theme.dart';
 import 'ai_settings_page.dart';
 import 'conflict_box_page.dart';
+import 'health_page.dart';
 import 'trash_page.dart';
 
 /// 「我的」页（R13 最小可用版）：设备信息 + 同步配对与状态。
@@ -204,6 +205,28 @@ class _MePageState extends State<MePage> {
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => const ConflictBoxPage(),
+                          ),
+                        ),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        key: const ValueKey('me-health'),
+                        leading: const Icon(
+                          Icons.monitor_heart_outlined,
+                          color: ZaojiColors.muted,
+                        ),
+                        title: const Text('数据体检', style: TextStyle(fontSize: 14)),
+                        subtitle: const Text(
+                          '缺料缺步骤、过期库存、挂起的锅——一页看账',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          color: ZaojiColors.muted,
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const HealthPage(),
                           ),
                         ),
                       ),

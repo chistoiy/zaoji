@@ -1814,6 +1814,48 @@ class RecipeStore extends ChangeNotifier {
     ];
   }
 
+  // ═══════════════════ R33 · 数据体检的两份原始料 ═══════════════════
+
+  /// 全设备、全家的**未完成**会话（体检页拿去配菜谱名）。
+  ///
+  /// 续做入口（R20）只认本设备的，账本可不能只查自己——
+  /// 挂在灶上的可能是全家任何一台手机。
+  Future<List<({String recipeId, String startedAt})>> openCookSessions() async {
+    final db = _db;
+    if (db == null) return const [];
+    final rows = await db.customSelect(
+      'SELECT recipe_id, started_at FROM cook_session '
+      'WHERE finished_at IS NULL AND deleted_at IS NULL '
+      'ORDER BY started_at',
+    ).get();
+    return [
+      for (final r in rows)
+        (recipeId: '${r.data['recipe_id']}', startedAt: '${r.data['started_at']}'),
+    ];
+  }
+
+  /// 清单项 id → 最近一次写入的**物理时刻**。
+  ///
+  /// shopping_item 没有业务时间列（R30 定样：清单是短命账，值当为它加列），
+  /// 体检要「挂了多久」只能退而求其次读 updated_at 的 HLC 物理段——
+  /// 语义上是「至少挂了这么久」，勾过一次的项以勾选时刻起算，够用且不撒谎。
+  Future<Map<String, DateTime>> shoppingItemAges() async {
+    final db = _db;
+    if (db == null) return const {};
+    final rows = await db.customSelect(
+      'SELECT id, updated_at FROM shopping_item WHERE deleted_at IS NULL',
+    ).get();
+    final out = <String, DateTime>{};
+    for (final r in rows) {
+      final h = Hlc.tryDecode('${r.data['updated_at']}');
+      if (h != null) {
+        out['${r.data['id']}'] =
+            DateTime.fromMillisecondsSinceEpoch(h.physicalMs);
+      }
+    }
+    return out;
+  }
+
   // ── 内部助手 ──
 
   Future<String> _resolveNodeId() async {
