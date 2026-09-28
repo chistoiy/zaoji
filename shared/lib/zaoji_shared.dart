@@ -8,6 +8,7 @@
 /// 会，就放这里，并且必须有单测。
 library;
 
+export 'src/allergen.dart';
 export 'src/cn_number.dart';
 export 'src/conflict.dart';
 export 'src/hlc.dart';

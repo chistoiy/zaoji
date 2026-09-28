@@ -1,11 +1,13 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
 import '../data/store_scope.dart';
 import '../data/sync/sync_engine.dart' show MediaWidth;
 import '../models.dart';
 import '../theme.dart';
+import '../widgets/allergen_bits.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/time_capsule_text.dart';
 import 'timer_sheet.dart';
@@ -101,13 +103,20 @@ class _CookingPageState extends State<CookingPage> {
     if (!mounted) return;
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('「${widget.recipe.name}」又做了一次 🎉')),
+      SnackBar(content: Text('「${widget.recipe.name}」又做了一次')),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final stepText = widget.recipe.steps[_step].text;
+    final store = StoreScope.of(context);
+    // 命中过敏原时把横幅钉在**屏幕顶部**而不是原型那样放在右侧速查面板里：
+    // 原型那侧面板就是「食材速查」的展开区，收起时横幅跟着消失——
+    // 而这屏的"收起来"才是常态，警告不该跟着一起收。
+    final hits = store.allergenWarnInRecipes
+        ? store.allergenHitsFor(widget.recipe)
+        : const <AllergenHit>[];
 
     return Scaffold(
       appBar: AppBar(
@@ -132,6 +141,12 @@ class _CookingPageState extends State<CookingPage> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
               children: [
+                RecipeAllergenBanner(
+                  hits: hits,
+                  title: '注意分餐',
+                  withIngredients: false,
+                  padding: const EdgeInsets.only(bottom: 14),
+                ),
                 // ★ 正文 ≥20px（FR-COOK-06）：灶台前 1 米外要读得清。
                 // 时间胶囊照旧可点起计时（FR-COOK-02），原文一字不改。
                 RichText(
@@ -185,6 +200,7 @@ class _CookingPageState extends State<CookingPage> {
                   ingredients: widget.recipe.ingredients,
                   checked: _checked,
                   onToggle: _toggleChecked,
+                  hits: hits,
                 ),
               ],
             ),
@@ -292,14 +308,23 @@ class _IngredientChecklist extends StatelessWidget {
     required this.ingredients,
     required this.checked,
     required this.onToggle,
+    this.hits = const [],
   });
 
   final List<Ingredient> ingredients;
   final Set<int> checked;
   final ValueChanged<int> onToggle;
 
+  /// 整道菜的命中项（R40）。勾选面板默认是收起来的，所以真正的提醒
+  /// 靠上面那条横幅；这里只是"展开对菜时能看到是谁"。
+  final List<AllergenHit> hits;
+
   @override
   Widget build(BuildContext context) {
+    final byIng = <String, List<AllergenHit>>{};
+    for (final h in hits) {
+      (byIng[h.ingredient] ??= <AllergenHit>[]).add(h);
+    }
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
       child: ExpansionTile(
@@ -308,7 +333,9 @@ class _IngredientChecklist extends StatelessWidget {
         title: Text(
           '食材速查（已备 ${checked.length}/${ingredients.length}）',
           style: TextStyle(
-              fontSize: 14, fontWeight: FontWeight.w600, color: context.zj.ink2),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: context.zj.ink2),
         ),
         children: [
           for (var i = 0; i < ingredients.length; i++)
@@ -317,9 +344,25 @@ class _IngredientChecklist extends StatelessWidget {
               controlAffinity: ListTileControlAffinity.leading,
               value: checked.contains(i),
               onChanged: (_) => onToggle(i),
-              title: Text(
-                '${ingredients[i].name}　${ingredients[i].qty}',
-                style: const TextStyle(fontSize: 14),
+              title: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    '${ingredients[i].name}　${ingredients[i].qty}',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  // 灶台前只来得及扫一眼，这里只挂「是谁」，
+                  // 完整原因在上面的横幅和菜谱详情里
+                  for (final h in (byIng[ingredients[i].name] ?? const []))
+                    if (h.isAllergy)
+                      AllergenTag(
+                          who: h.memberName,
+                          word: h.word,
+                          allergy: true,
+                          mode: AllergenTagMode.who),
+                ],
               ),
             ),
         ],

@@ -12,6 +12,7 @@ import '../theme.dart';
 import 'ai_settings_page.dart';
 import 'conflict_box_page.dart';
 import 'health_page.dart';
+import 'members_page.dart';
 import 'theme_page.dart';
 import 'trash_page.dart';
 
@@ -260,6 +261,47 @@ class _MePageState extends State<MePage> {
                         ),
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _sectionTitle('家庭'),
+                _SyncCard(
+                  child: ListenableBuilder(
+                    listenable: StoreScope.of(context),
+                    builder: (context, _) => Column(
+                      children: [
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          key: const ValueKey('me-members'),
+                          leading: Icon(
+                            Icons.family_restroom,
+                            color: context.zj.muted,
+                          ),
+                          title: const Text('家庭成员与过敏原',
+                              style: TextStyle(fontSize: 14)),
+                          subtitle: Text(
+                            // 副标题只报事实：有人就列名字和限制条数，没人就说还没加
+                            StoreScope.of(context).members.isEmpty
+                                ? '还没有添加家人'
+                                : StoreScope.of(context)
+                                    .members
+                                    .map((m) => '${m.name}·'
+                                        '${m.totalRestrictions == 0 ? '无限制' : '${m.totalRestrictions}项'}')
+                                    .join('  '),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: Icon(
+                            Icons.chevron_right,
+                            color: context.zj.muted,
+                          ),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const MembersPage(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),

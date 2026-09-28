@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
 import '../data/share_text.dart';
 import '../data/store_scope.dart';
+import '../widgets/allergen_bits.dart';
 import '../data/sync/sync_engine.dart';
 import '../data/sync/sync_scope.dart';
 import '../models.dart';
@@ -67,9 +69,12 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   /// 加入菜单（R23）：选一餐把这道菜加进去。addDish 幂等，连点不长两个行。
+  ///
+  /// R40：命中过敏原时先确认一次（FR-SET-04 的「排菜单时拦截」开关）。
   Future<void> _pickMenu(BuildContext context, Recipe recipe) async {
     final store = StoreScope.of(context);
     final menus = store.menus;
+    final hits = store.allergenHitsFor(recipe);
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: context.zj.paper,
@@ -101,7 +106,17 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                           '${m.serveAt.isEmpty ? '' : '${m.serveAt} 开饭 · '}${m.recipeIds.length} 道菜',
                           style: TextStyle(
                               fontSize: 11.5, color: context.zj.muted)),
-                      onTap: () {
+                      onTap: () async {
+                        // 先确认再关弹层：反过来做的话确认框会挂在
+                        // 已经消失的 ctx 上，表现为"点了一下没反应"
+                        if (store.allergenConfirmOnMenu &&
+                            !await confirmAllergenAddToMenu(ctx,
+                                hits: hits,
+                                recipeName: recipe.name,
+                                mealLabel: '${dayLabel(m.day)} · ${m.meal}')) {
+                          return;
+                        }
+                        if (!ctx.mounted) return;
                         Navigator.pop(ctx);
                         store.addDish(m.id, recipe.id);
                       },
@@ -159,8 +174,13 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     return ListenableBuilder(
       listenable: StoreScope.of(context),
       builder: (context, _) {
+        final store = StoreScope.of(context);
         final recipe =
             StoreScope.of(context).recipeById(widget.recipe.id) ?? widget.recipe;
+        // 警示开关关掉后四处都不标（FR-SET-04 的开关是全局的），
+        // 但加菜单的拦截走另一个开关——那是"要不要问我一次"，不是"要不要标出来"
+        final warnHits =
+            store.allergenWarnInRecipes ? store.allergenHitsFor(recipe) : const <AllergenHit>[];
         return Scaffold(
           appBar: AppBar(
             title: Text(recipe.name),
@@ -213,6 +233,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               ],
               _Hero(recipe: recipe),
               const SizedBox(height: 16),
+              // 无命中时横幅自己收成 0 尺寸，布局不跳版
+              RecipeAllergenBanner(hits: warnHits),
               _NutritionBlock(recipe: recipe),
               if (recipe.photos.isNotEmpty) ...[
                 const SizedBox(height: 18),
@@ -225,7 +247,8 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 trailing: '${recipe.servings} 人份',
               ),
               const SizedBox(height: 10),
-              _IngredientTable(ingredients: recipe.ingredients),
+              _IngredientTable(
+                  ingredients: recipe.ingredients, hits: warnHits),
               const SizedBox(height: 26),
               const _SectionTitle(num: '02', title: '做法'),
               const SizedBox(height: 4),
@@ -733,12 +756,20 @@ class _SectionTitle extends StatelessWidget {
 }
 
 class _IngredientTable extends StatelessWidget {
-  const _IngredientTable({required this.ingredients});
+  const _IngredientTable({required this.ingredients, this.hits = const []});
 
   final List<Ingredient> ingredients;
 
+  /// 整道菜的命中项（R40）。按食材名分到各行，没命中的行不垫条纹——
+  /// 满屏警告等于没有警告。
+  final List<AllergenHit> hits;
+
   @override
   Widget build(BuildContext context) {
+    final byIng = <String, List<AllergenHit>>{};
+    for (final h in hits) {
+      (byIng[h.ingredient] ??= []).add(h);
+    }
     return Container(
       decoration: BoxDecoration(
         color: context.zj.surface,
@@ -753,7 +784,9 @@ class _IngredientTable extends StatelessWidget {
                 padding: EdgeInsets.symmetric(horizontal: 14),
                 child: Divider(height: 1),
               ),
-            _IngredientRow(item: ingredients[i]),
+            _IngredientRow(
+                item: ingredients[i],
+                hits: byIng[ingredients[i].name] ?? const []),
           ],
         ],
       ),
@@ -762,41 +795,72 @@ class _IngredientTable extends StatelessWidget {
 }
 
 class _IngredientRow extends StatelessWidget {
-  const _IngredientRow({required this.item});
+  const _IngredientRow({required this.item, this.hits = const []});
 
   final Ingredient item;
+  final List<AllergenHit> hits;
 
   @override
   Widget build(BuildContext context) {
+    final hard = hits.where((h) => h.isAllergy).toList();
+    final row = Row(
+      children: [
+        // 主食材加一个小圆点。推荐算法里缺主食材要 ×0.5，
+        // 所以这个标记在界面上也该看得见
+        SizedBox(
+          width: 14,
+          child: item.isMain
+              ? Icon(Icons.circle, size: 6, color: context.zj.accent)
+              : const SizedBox.shrink(),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.name,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: item.isMain ? FontWeight.w600 : FontWeight.w400,
+                  color: context.zj.ink,
+                ),
+              ),
+              if (hits.isNotEmpty) ...[
+                const SizedBox(height: 5),
+                Wrap(
+                  key: ValueKey('ing-alert-${item.name}'),
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final h in hits)
+                      AllergenTag(
+                          who: h.memberName, word: h.word, allergy: h.isAllergy),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        // 分量显示**原文**（「半个」不写成「0.5 个」）
+        Text(
+          item.qty,
+          style: TextStyle(fontSize: 13, color: context.zj.muted),
+        ),
+      ],
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
-      child: Row(
-        children: [
-          // 主食材加一个小圆点。推荐算法里缺主食材要 ×0.5，
-          // 所以这个标记在界面上也该看得见
-          SizedBox(
-            width: 14,
-            child: item.isMain
-                ? Icon(Icons.circle, size: 6, color: context.zj.accent)
-                : const SizedBox.shrink(),
-          ),
-          Expanded(
-            child: Text(
-              item.name,
-              style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: item.isMain ? FontWeight.w600 : FontWeight.w400,
-                color: context.zj.ink,
+      // 命中的行整行垫一层淡警告底（原型 .ing.is-allergen）：
+      // 标签只在行内某处时容易被扫过去漏掉，整行垫底才拦得住
+      child: hard.isEmpty
+          ? row
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                color: context.zj.accentSofter,
+                borderRadius: BorderRadius.circular(ZaojiRadius.xs),
               ),
+              child: row,
             ),
-          ),
-          // 分量显示**原文**（「半个」不写成「0.5 个」）
-          Text(
-            item.qty,
-            style: TextStyle(fontSize: 13, color: context.zj.muted),
-          ),
-        ],
-      ),
     );
   }
 }

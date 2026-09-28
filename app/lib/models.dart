@@ -5,6 +5,8 @@
 /// （每次翻译都是一次出错机会）。
 library;
 
+import 'dart:convert';
+
 class Ingredient {
   final String name;
 
@@ -375,6 +377,63 @@ class ShoppingItem {
         'prep' => '备菜',
         _ => '手动',
       };
+}
+
+/// 家庭成员与忌口（R40 · FR-SET-04，schema 的 `member` 表）。
+///
+/// 这张表 R5 建模期就在（注释写着"后补要改四处 UI"），本轮补的正是那四处 UI。
+/// 它**参与同步**：妈妈在平板上加的"小宝 过敏 鸡蛋"，灶台边的手机必须立刻知道——
+/// 忌口是全家的事，不是某台设备的事（与主题/备菜板那类本机偏好刻意区分开）。
+class Member {
+  const Member({
+    required this.id,
+    required this.name,
+    this.avatar = 0,
+    this.allergens = const [],
+    this.dislikes = const [],
+  });
+
+  final String id;
+  final String name;
+
+  /// 头像色块编号（schema `avatar` 是 INTEGER，不是色值字符串——
+  /// 颜色属于主题，存 hex 进库就会在换肤时变成一坨对不上的旧色）。
+  final int avatar;
+
+  /// 过敏：走**警告**（条纹 + 图标 + 写明谁）。
+  final List<String> allergens;
+
+  /// 忌口：走**提示**（淡一档）。两者语义不同，不能合成一列。
+  final List<String> dislikes;
+
+  /// 头像上那个字：取名字第一个字（"妈妈"→"妈"）。
+  /// 不另开一列存它——存了就会和名字不一致。
+  /// 用 runes 不用 `characters`：这个文件是纯 Dart 模型层，不引 Flutter 依赖。
+  String get avatarChar => name.isEmpty ? '?' : String.fromCharCode(name.runes.first);
+
+  factory Member.fromRow(Map<String, Object?> row) => Member(
+        id: '${row['id']}',
+        name: '${row['name']}',
+        avatar: (row['avatar'] as int?) ?? 0,
+        allergens: _stringList(row['allergens']),
+        dislikes: _stringList(row['dislikes']),
+      );
+
+  int get totalRestrictions => allergens.length + dislikes.length;
+}
+
+/// JSON 数组列的宽松解码：脏值（非数组、非字符串元素）按空处理，不抛。
+/// 这一列用户可以手填、也可能被旧端写坏，读的时候不能假设它一定干净。
+List<String> _stringList(Object? raw) {
+  final text = raw == null ? '[]' : raw.toString();
+  if (text.trim().isEmpty) return const [];
+  try {
+    final decoded = jsonDecode(text);
+    if (decoded is! List) return const [];
+    return [for (final e in decoded) if ('$e'.trim().isNotEmpty) '$e'];
+  } catch (_) {
+    return const [];
+  }
 }
 
 /// 写热量用的草稿（saveNutrition 的入参）。

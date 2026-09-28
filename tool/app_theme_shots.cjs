@@ -14,7 +14,9 @@ const ROOT = path.resolve(__dirname, '..');
 const WEB = path.join(ROOT, 'app', 'build', 'web');
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const THEMES = (process.argv[2] || 'shihong,indigo,rouge,night,stone').split(',');
-const ROUTES = ['', '#/calendar'];   // 传第二个参数可只截首页
+// 第三个参数可以换一组深链（逗号分隔），默认只截首页与日历。
+// 逐屏走查新页面时不用改脚本：node tool/app_theme_shots.cjs indigo,night "",#/members
+const ROUTES = (process.argv[3] || ',#/calendar').split(',');
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript',
   '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg',
@@ -63,7 +65,8 @@ srv.listen(0, '127.0.0.1', async () => {
         return /菜谱|日历|我的|菜单/.test(t);
       }, null, { timeout: 60000 }).catch(() => {});
       await page.waitForTimeout(2500);
-      const shot = path.join(out, 'app__' + theme + (route ? '__cal' : '__home') + '.png');
+      const tag = route === '' ? 'home' : route.replace(/[#\/]/g, '_');
+      const shot = path.join(out, 'app__' + theme + '__' + tag + '.png');
       await page.screenshot({ path: shot });
       const text = await page.evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 60));
       console.log('  ' + theme + (route || '  ') + ' → ' + path.basename(shot) + '   语义文本: ' + text);

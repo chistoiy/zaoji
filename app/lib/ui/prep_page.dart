@@ -4,6 +4,7 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 import '../data/share_text.dart';
 import '../data/store_scope.dart';
 import '../theme.dart';
+import '../widgets/allergen_bits.dart';
 import 'menus_page.dart';
 import 'share_sheet.dart';
 
@@ -316,6 +317,31 @@ class _PrepPageState extends State<PrepPage> {
                         dimmed ? TextDecoration.lineThrough : null,
                   ),
                 ),
+                // 备菜清单也标过敏原（R40）：这一行的用途是"去买/去洗"，
+                // 恰恰是最该知道"这袋虾是给谁买不得"的时刻
+                if (!dimmed && store.allergenWarnInRecipes)
+                  Builder(builder: (context) {
+                    final hits = store
+                        .allergenHitsForIngredient(name)
+                        .where((h) => h.isAllergy)
+                        .toList();
+                    if (hits.isEmpty) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Wrap(
+                        key: ValueKey('prep-alert-$key'),
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          for (final h in hits)
+                            AllergenTag(
+                                who: h.memberName,
+                                word: h.word,
+                                allergy: true),
+                        ],
+                      ),
+                    );
+                  }),
                 if (merged && from.isNotEmpty)
                   InkWell(
                     onTap: () => setState(() {

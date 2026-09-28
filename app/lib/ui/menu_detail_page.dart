@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
 import '../data/recipe_store.dart';
 import '../data/share_text.dart';
 import '../data/store_scope.dart';
 import '../theme.dart';
+import '../widgets/allergen_bits.dart';
 import 'menus_page.dart';
 import 'prep_page.dart';
 import 'recipe_detail_page.dart';
@@ -137,6 +139,7 @@ class MenuDetailPage extends StatelessWidget {
                         fontSize: 12.5, color: context.zj.ink2)),
               ],
               const SizedBox(height: 16),
+              _MenuAllergenBanner(menu: menu, store: store),
               for (final id in menu.recipeIds) _dishRow(context, store, id),
               OutlinedButton.icon(
                 key: const ValueKey('dish-add'),
@@ -182,6 +185,9 @@ class MenuDetailPage extends StatelessWidget {
 
   Widget _dishRow(BuildContext context, RecipeStore store, String recipeId) {
     final r = store.recipeById(recipeId);
+    final hits = r == null || !store.allergenWarnInRecipes
+        ? const <AllergenHit>[]
+        : store.allergenHitsFor(r);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -196,9 +202,30 @@ class MenuDetailPage extends StatelessWidget {
                 fontSize: 14, fontWeight: FontWeight.w600)),
         subtitle: r == null
             ? null
-            : Text('${r.selfTime} 分钟 · 做过 ${r.cookedCount} 次',
-                style:
-                    TextStyle(fontSize: 11.5, color: context.zj.muted)),
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${r.selfTime} 分钟 · 做过 ${r.cookedCount} 次',
+                      style:
+                          TextStyle(fontSize: 11.5, color: context.zj.muted)),
+                  if (hits.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Wrap(
+                        key: ValueKey('dish-alert-$recipeId'),
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          for (final h in hits)
+                            AllergenTag(
+                                who: h.memberName,
+                                word: h.word,
+                                allergy: h.isAllergy),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
         onTap: r == null
             ? null
             : () => Navigator.of(context).push(
@@ -258,13 +285,49 @@ class MenuDetailPage extends StatelessWidget {
                       dense: true,
                       title: Text(r.name,
                           style: const TextStyle(fontSize: 14)),
-                      subtitle: Text(
-                          '${r.ingredients.length} 样食材 · ${r.selfTime} 分钟',
-                          style: TextStyle(
-                              fontSize: 11.5, color: context.zj.muted)),
-                      onTap: () {
-                        Navigator.pop(ctx);
+                      subtitle: () {
+                        final h = store.allergenWarnInRecipes
+                            ? store.allergenHitsFor(r)
+                            : const <AllergenHit>[];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                '${r.ingredients.length} 样食材 · ${r.selfTime} 分钟',
+                                style: TextStyle(
+                                    fontSize: 11.5, color: context.zj.muted)),
+                            if (h.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 5),
+                                child: Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: [
+                                    for (final x in h)
+                                      AllergenTag(
+                                          who: x.memberName,
+                                          word: x.word,
+                                          allergy: x.isAllergy),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        );
+                      }(),
+                      onTap: () async {
+                        // 在这道菜上要选的是「加不加」，所以先标出来再问一次；
+                        // 问完仍留在弹层里，连着排几道菜不用反复开
+                        final hits = store.allergenHitsFor(r);
+                        if (store.allergenConfirmOnMenu &&
+                            !await confirmAllergenAddToMenu(ctx,
+                                hits: hits,
+                                recipeName: r.name,
+                                mealLabel: '${dayLabel(menu.day)} · ${menu.meal}')) {
+                          return;
+                        }
                         store.addDish(menu.id, r.id);
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
                       },
                     ),
                 ],
@@ -275,4 +338,70 @@ class MenuDetailPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 整餐的过敏原汇总横幅（照原型 `menuBanner`）。
+///
+/// 按「谁 · 对什么」合并，后面跟**涉及的菜名**——一餐里三道菜都含虾，
+/// 拆成三行读起来像出了三次事，合并成一行才是「今晚这桌要换掉虾」。
+class _MenuAllergenBanner extends StatelessWidget {
+  const _MenuAllergenBanner({required this.menu, required this.store});
+
+  final MenuPlan menu;
+  final RecipeStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final zj = context.zj;
+    if (!store.allergenWarnInRecipes) return const SizedBox.shrink();
+    final order = <String>[];
+    final map = <String, _MenuConflict>{};
+    for (final id in menu.recipeIds) {
+      final r = store.recipeById(id);
+      if (r == null) continue;
+      for (final h in store.allergenHitsFor(r)) {
+        if (!h.isAllergy) continue;
+        final k = '${h.memberId}|${h.word}';
+        if (!map.containsKey(k)) {
+          order.add(k);
+          map[k] = _MenuConflict(h.memberName, h.word, []);
+        }
+        if (!map[k]!.dishes.contains(r.name)) map[k]!.dishes.add(r.name);
+      }
+    }
+    final groups = [for (final k in order) map[k]!];
+    if (groups.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: AllergenBanner(
+        title: '这一餐有 ${groups.length} 处过敏原冲突',
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final g in groups)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text.rich(TextSpan(
+                  style:
+                      TextStyle(fontSize: 11.5, color: zj.ink2, height: 1.6),
+                  children: [
+                    TextSpan(
+                        text: g.who,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    TextSpan(text: ' 对「${g.word}」过敏 → 涉及 ${g.dishes.join('、')}'),
+                  ],
+                )),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuConflict {
+  _MenuConflict(this.who, this.word, this.dishes);
+  final String who;
+  final String word;
+  final List<String> dishes;
 }

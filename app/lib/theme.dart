@@ -472,6 +472,9 @@ class ZaojiRadius {
   static const double md = 14;
   static const double lg = 20;
   static const double xl = 26;
+
+  /// 药丸（原型 `--r-pill`）：过敏原标签、状态 chips 用它。
+  static const double pill = 999;
 }
 
 /// 动画时长。原型的动效规范：170 / 340 / 680 ms，

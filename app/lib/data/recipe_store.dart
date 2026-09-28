@@ -100,6 +100,8 @@ class RecipeStore extends ChangeNotifier {
     recipes = await _loadAll(db);
     await _loadFavs(db);
     await _loadTheme(db); // R39：主题只在启动时读一次（同步重载不该改这台设备的皮肤）
+    await _loadMembers(db);
+    await _loadAllergenPrefs(db);
     await _loadMenus(db);
     await _loadPrepBoards(db);
     _reindex();
@@ -397,6 +399,8 @@ class RecipeStore extends ChangeNotifier {
     await _loadPantry(db);
     // R30：购物清单随重载刷新（另一台设备加购的缺项要现身）。
     await _loadShopping(db);
+    // R40：成员与忌口同样随重载刷新——另一台设备上加的"小宝过敏鸡蛋"要立刻生效。
+    await _loadMembers(db);
     // R23：同步引擎拉回的可能就是别人排的菜单——menus/备菜板跟着一起重载。
     await _loadMenus(db);
     await _loadPrepBoards(db);
@@ -1850,6 +1854,259 @@ class RecipeStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ═══════════════════ R40 · 家庭成员与过敏原（FR-SET-04/05） ═══════════════════
+  //
+  // 三件事分开看：**成员表是全家共享的业务数据（走同步）**，
+  // 而"要不要显示警示 / 加菜单时拦不拦"是本机偏好（不走同步）——
+  // 前者是事实，后者是各台设备的显示选择。混在一列里，
+  // 就会出现"平板上关掉了提示，灶台手机也跟着看不见过敏警告"这种事故。
+
+  List<Member> members = const [];
+
+  /// 警示开关（本机偏好）。默认全开：一个默认关闭的安全提示等于没有提示。
+  bool allergenWarnInRecipes = true;
+  bool allergenConfirmOnMenu = true;
+
+  Future<void> _loadMembers(ZaojiDb db) async {
+    final rows = await db
+        .customSelect('SELECT * FROM member WHERE deleted_at IS NULL ORDER BY id')
+        .get();
+    members = [for (final r in rows) Member.fromRow(r.data)];
+  }
+
+  /// 成员名查重（活行）。同名家人在语义上就是同一个人——
+  /// 两个"爸爸"会让同一道菜的警告重复刷屏，且用户分不清哪条该删。
+  bool memberNameTaken(String name, {String? exceptId}) {
+    final n = name.trim();
+    return members.any((m) => m.name == n && m.id != exceptId);
+  }
+
+  Future<Member> createMember({
+    required String name,
+    List<String> allergens = const [],
+    List<String> dislikes = const [],
+    int avatar = 0,
+  }) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() => hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+    final id = _ulids.next();
+    final clean = _cleanWords([allergens, dislikes]);
+    // 单条语句本身就是原子的，不套 db.transaction：
+    // Web 端实测"套了 void 事务的这条写入活不过刷新"（见交接文档 §六 的丢写窗口），
+    // 少一层包装既省一次 BEGIN/COMMIT，也避开那条路径。
+    await _insert(db, kMemberTable, {
+      'id': id,
+      'updated_at': next(),
+      'updated_by': nodeId,
+      'rev': 1,
+      'deleted_at': null,
+      'name': name.trim(),
+      'avatar': avatar,
+      'allergens': jsonEncode(clean.$1),
+      'dislikes': jsonEncode(clean.$2),
+    });
+    final m = Member(
+      id: id,
+      name: name.trim(),
+      avatar: avatar,
+      allergens: clean.$1,
+      dislikes: clean.$2,
+    );
+    members = [...members, m];
+    notifyListeners();
+    _fireLocalWrite();
+    return m;
+  }
+
+  /// 整行覆盖式更新（表单是"改完再存"，不是逐字段自动保存）。
+  Future<void> updateMember(
+    String id, {
+    required String name,
+    required List<String> allergens,
+    required List<String> dislikes,
+    int? avatar,
+  }) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() => hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+    final existing = members.firstWhere((m) => m.id == id);
+    final clean = _cleanWords([allergens, dislikes]);
+    // 同 createMember：单条 UPDATE 不再套 void 事务（Web 端实测那种写法会丢，
+    // 见交接文档 §六「Web 端写完立刻刷新会丢」）
+    await db.customUpdate(
+      'UPDATE member SET updated_at = ?, updated_by = ?, rev = rev + 1, '
+      'name = ?, avatar = ?, allergens = ?, dislikes = ? WHERE id = ?',
+      variables: [
+        Variable(next()),
+        Variable(nodeId),
+        Variable(name.trim()),
+        Variable(avatar ?? existing.avatar),
+        Variable(jsonEncode(clean.$1)),
+        Variable(jsonEncode(clean.$2)),
+        Variable(id),
+      ],
+    );
+    final m = Member(
+      id: id,
+      name: name.trim(),
+      avatar: avatar ?? existing.avatar,
+      allergens: clean.$1,
+      dislikes: clean.$2,
+    );
+    members = [for (final x in members) x.id == id ? m : x];
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 软删（成员表参与同步，别的端要看到这个人消失）。
+  /// 删成员**不动任何菜谱**：警告是派生出来的，人没了警告自然没了。
+  Future<void> deleteMember(String id) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    final hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    final stamp = hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+    await db.customUpdate(
+      'UPDATE member SET updated_at = ?, updated_by = ?, rev = rev + 1, '
+      'deleted_at = ? WHERE id = ?',
+      variables: [Variable(stamp), Variable(nodeId), Variable(stamp), Variable(id)],
+    );
+    members = members.where((m) => m.id != id).toList();
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 去空白、去重、保持用户输入顺序（顺序就是他在弹层里加词的顺序，不重排）。
+  static (List<String>, List<String>) _cleanWords(List<List<String>> groups) {
+    List<String> one(List<String> src) {
+      final out = <String>[];
+      for (final w in src) {
+        final t = w.trim();
+        if (t.isNotEmpty && !out.contains(t)) out.add(t);
+      }
+      return out;
+    }
+
+    return (one(groups[0]), one(groups[1]));
+  }
+
+  /// 一道菜命中了谁（FR-SET-05 的判定入口，四处 UI 共用这一个）。
+  ///
+  /// 比的是**双方各自归一后的原文**（`AllergenMatch.norm` 剥空白与单位尾），
+  /// 外加双向包含 + 类名展开。同义词表（番茄=西红柿）在库存归一那一侧
+  /// （FR-SET-06 别名表管理，P1），过敏原判定目前不查它——
+  /// 菜里写"西红柿"、成员填"番茄"要命中，得等别名表接进来。
+  List<AllergenHit> allergenHitsFor(Recipe recipe) =>
+      AllergenMatch.matchRecipe(
+        ingredients: [for (final i in recipe.ingredients) i.name],
+        members: [
+          for (final m in members)
+            {
+              'id': m.id,
+              'name': m.name,
+              'allergens': m.allergens,
+              'dislikes': m.dislikes,
+            }
+        ],
+      );
+
+  /// 某样食材命中了谁（详情页食材行那条条纹标注用）。
+  List<AllergenHit> allergenHitsForIngredient(String name) =>
+      AllergenMatch.matchRecipe(
+        ingredients: [name],
+        members: [
+          for (final m in members)
+            {
+              'id': m.id,
+              'name': m.name,
+              'allergens': m.allergens,
+              'dislikes': m.dislikes,
+            }
+        ],
+      );
+
+  /// 全库有多少道菜和这位家人**过敏**冲突（成员页顶部那条汇总）。
+  ///
+  /// 只数 allergy 不数 dislike：忌口是"能吃但不爱吃"，把它算进"冲突"
+  /// 会让数字虚高，而这条汇总的意义是"有几道菜真不能给家里人吃"。
+  int conflictingRecipeCount({String? memberId}) {
+    final ids = <String>{};
+    for (final r in recipes) {
+      final hits = allergenHitsFor(r);
+      if (!hits.any((h) => h.isAllergy)) continue;
+      if (memberId == null ||
+          hits.any((h) => h.memberId == memberId && h.isAllergy)) {
+        ids.add(r.id);
+      }
+    }
+    return ids.length;
+  }
+
+  /// 有过敏冲突的菜名（成员页那条汇总里"→ 红烧肉、蒜蓉虾"这一段）。
+  List<String> conflictingRecipeNames(String memberId) => [
+        for (final r in recipes)
+          if (allergenHitsFor(r).any((h) => h.memberId == memberId && h.isAllergy))
+            r.name,
+      ];
+
+  /// 警示开关落库（本机偏好，不进同步流）。
+  void setAllergenWarnInRecipes(bool on) {
+    if (allergenWarnInRecipes == on) return;
+    allergenWarnInRecipes = on;
+    notifyListeners();
+    final db = _db;
+    if (db != null) {
+      unawaited(_persistPref(_prefAllergenWarn, jsonEncode(on))
+          .catchError((Object e) => debugPrint('过敏警示偏好写库失败：$e')));
+    }
+  }
+
+  void setAllergenConfirmOnMenu(bool on) {
+    if (allergenConfirmOnMenu == on) return;
+    allergenConfirmOnMenu = on;
+    notifyListeners();
+    final db = _db;
+    if (db != null) {
+      unawaited(_persistPref(_prefAllergenConfirm, jsonEncode(on))
+          .catchError((Object e) => debugPrint('加菜单拦截偏好写库失败：$e')));
+    }
+  }
+
+  static const _prefAllergenWarn = 'allergen_warn_in_recipes';
+  static const _prefAllergenConfirm = 'allergen_confirm_on_menu';
+
+  Future<void> _persistPref(String key, String value) async {
+    final db = _db;
+    if (db == null) return;
+    final cols = kLocalPrefTable.columnNames;
+    await db.customInsert(
+      'INSERT INTO ${kLocalPrefTable.name} (${cols.join(', ')}) '
+      'VALUES (?, ?) ON CONFLICT(${cols[0]}) DO UPDATE SET ${cols[1]} = excluded.${cols[1]}',
+      variables: [Variable(key), Variable(value)],
+    );
+  }
+
+  Future<void> _loadAllergenPrefs(ZaojiDb db) async {
+    final cols = kLocalPrefTable.columnNames;
+    final rows = await db
+        .customSelect(
+          'SELECT ${cols[0]}, ${cols[1]} FROM ${kLocalPrefTable.name} '
+          'WHERE ${cols[0]} IN (?, ?)',
+          variables: [Variable(_prefAllergenWarn), Variable(_prefAllergenConfirm)],
+        )
+        .get();
+    for (final r in rows) {
+      final on = '${r.data[cols[1]]}' == 'true';
+      if (r.data[cols[0]] == _prefAllergenWarn) allergenWarnInRecipes = on;
+      if (r.data[cols[0]] == _prefAllergenConfirm) allergenConfirmOnMenu = on;
+    }
+  }
+
   // ═══════════════════ R24 · 日历（做过什么 / 排了什么） ═══════════════════
   //
   // cook_session 的 started_at / finished_at 是 ISO8601 **业务时间戳**
@@ -2153,6 +2410,7 @@ final TableSpec kShoppingTable =
     kTables.firstWhere((t) => t.name == 'shopping_item');
 final TableSpec kPantryTable =
     kTables.firstWhere((t) => t.name == 'pantry_item');
+final TableSpec kMemberTable = kTables.firstWhere((t) => t.name == 'member');
 final TableSpec kCookSessionTable = kTables.firstWhere(
     (t) => t.name == 'cook_session');
 final TableSpec kIngredientTable = kTables.firstWhere(

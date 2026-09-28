@@ -12,7 +12,9 @@ import 'data/sync/sync_scope.dart';
 import 'data/sync/token_vault.dart';
 import 'theme.dart';
 import 'ui/home_shell.dart';
+import 'ui/members_page.dart';
 import 'ui/recipe_detail_page.dart';
+import 'ui/theme_page.dart';
 
 void main() {
   // 查询参数 `?a11y=1` 强制启用语义树（放 query 而不是 fragment——
@@ -251,6 +253,17 @@ Route<dynamic>? _generateRoute(RouteSettings settings) {
       builder: (_) => _RecipeDetailLoader(id: id),
       settings: settings,
     );
+  }
+
+  // 两张独立页也开深链：它们平时只能从「我的」点进去，
+  // 逐屏验收（截真产物）和排查"换肤后某页有没有漏接令牌"都要能直达。
+  if (name == '/members') {
+    return MaterialPageRoute(
+        builder: (_) => const MembersPage(), settings: settings);
+  }
+  if (name == '/theme') {
+    return MaterialPageRoute(
+        builder: (_) => const ThemePage(), settings: settings);
   }
 
   return null; // 交给默认的 404 处理
