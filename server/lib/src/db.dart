@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:sqlite3/sqlite3.dart';
@@ -101,6 +102,7 @@ class ZaojiDb {
         db.execute(stmt);
       }
       _migrateV3toV4();
+      _migrateV4toV5();
       _migrateConflictNullValues();
       db.execute(
         "INSERT INTO meta (k, v) VALUES ('schema_version', ?) "
@@ -127,6 +129,23 @@ class ZaojiDb {
     if (!hasVisitor) {
       db.execute(
         'ALTER TABLE device ADD COLUMN visitor INTEGER NOT NULL DEFAULT 0');
+    }
+  }
+
+  /// v4 → v5（R29）：`recipe.photos` + `step.images` 两个新列。
+  ///
+  /// 判据同 v3→v4：**看列在不在**，不看 meta 版本号（新程序碰旧库、
+  /// 或迁移中途被杀后重进，都走同一条幂等路径）。ALTER 与洗数据的 SQL
+  /// 来自 shared 的 `kSchemaV5AlterSql`——App 端 onUpgrade 逐字共用同一份，
+  /// 迁移脚本出现第二份就等于等着两端漂移。
+  void _migrateV4toV5() {
+    final hasPhotos = db
+        .select('PRAGMA table_info(recipe)')
+        .any((r) => r['name'] == 'photos');
+    if (!hasPhotos) {
+      for (final stmt in kSchemaV5AlterSql) {
+        db.execute(stmt);
+      }
     }
   }
 
@@ -170,14 +189,38 @@ class ZaojiDb {
   ///
   /// 判据宁可宽松：多留一张图的代价是几十 KB，误删一张的代价是一张再也没有的照片。
   Set<String> referencedCoverShas() {
-    final rs = db.select(
-      'SELECT DISTINCT cover_sha256 FROM recipe '
-      "WHERE cover_sha256 IS NOT NULL AND cover_sha256 <> ''",
-    );
-    return {
-      for (final r in rs)
-        if ('${r['cover_sha256']}'.isNotEmpty) '${r['cover_sha256']}',
-    };
+    final out = <String>{};
+    for (final r in db.select(
+      'SELECT cover_sha256, photos FROM recipe '
+      'WHERE cover_sha256 IS NOT NULL OR photos IS NOT NULL',
+    )) {
+      final c = '${r['cover_sha256'] ?? ''}';
+      if (c.isNotEmpty) out.add(c);
+      out.addAll(_jsonShaList(r['photos']));
+    }
+    // 步骤图：v5 的 images 数组 + 旧单列（洗数据失败/半迁移状态也要被兜住——
+    // 回收是不可逆动作，引用面宁可算多一列，不能算漏）
+    for (final r in db.select(
+      'SELECT image_sha256, images FROM step '
+      'WHERE image_sha256 IS NOT NULL OR images IS NOT NULL',
+    )) {
+      final c = '${r['image_sha256'] ?? ''}';
+      if (c.isNotEmpty) out.add(c);
+      out.addAll(_jsonShaList(r['images']));
+    }
+    return out;
+  }
+
+  /// JSON 文本数组 → sha 列表。解不开就回空——**只影响这一列的引用收集**，
+  /// 坏数据本身会在冲突/载荷路径上以更醒目的方式冒出来，不在这里静默修。
+  static List<String> _jsonShaList(Object? raw) {
+    final t = '${raw ?? ''}';
+    if (t.isEmpty) return const [];
+    try {
+      final v = jsonDecode(t);
+      if (v is List) return [for (final e in v) if (e is String) e];
+    } catch (_) {}
+    return const [];
   }
 
   /// 写入一条变更日志，返回它的 `seq`。

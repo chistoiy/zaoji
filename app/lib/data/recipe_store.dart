@@ -222,6 +222,17 @@ class RecipeStore extends ChangeNotifier {
     return out;
   }
 
+  /// JSON 文本数组 → `List<String>`；null/坏值一律回空（读路径不炸页面）。
+  static List<String> _jsonShaList(Object? raw) {
+    final t = '${raw ?? ''}';
+    if (t.isEmpty) return const [];
+    try {
+      final v = jsonDecode(t);
+      if (v is List) return [for (final e in v) if (e is String) e];
+    } catch (_) {}
+    return const [];
+  }
+
   Recipe _recipeFromRow(
     Map<String, Object?> row,
     List<Map<String, Object?>> ingredientRows,
@@ -262,8 +273,12 @@ class RecipeStore extends ChangeNotifier {
             isMain: (r['is_main'] as int? ?? 0) == 1,
           ),
       ],
-      steps: [for (final r in stepRows) Step('${r['text']}')],
+      steps: [
+        for (final r in stepRows)
+          Step('${r['text']}', images: _jsonShaList(r['images'])),
+      ],
       coverSha256: row['cover_sha256'] as String?,
+      photos: _jsonShaList(row['photos']),
     );
   }
 
@@ -784,6 +799,9 @@ class RecipeStore extends ChangeNotifier {
             : null,
         'last_cooked_at': null,
         'cover_sha256': draft.coverSha256,
+        // R29：照片墙（sha256 JSON 数组）。空列表存 null 不存 '[]'——
+        // 与 cover 的「没有就是 NULL」口径一致，回收/查询少一种要特判的形状
+        'photos': draft.photos.isEmpty ? null : jsonEncode(draft.photos),
       });
 
       for (var i = 0; i < draft.ingredients.length; i++) {
@@ -817,6 +835,10 @@ class RecipeStore extends ChangeNotifier {
           'text': draft.steps[i],
           'art': null,
           'image_sha256': null,
+          // v5：步骤实拍（≤4 张由 UI 保证；这里只保证「有就存数组」）
+          'images': (i < draft.stepImages.length && draft.stepImages[i].isNotEmpty)
+              ? jsonEncode(draft.stepImages[i])
+              : null,
         });
       }
 
@@ -831,7 +853,12 @@ class RecipeStore extends ChangeNotifier {
         ingredients: draft.ingredients
             .map((i) => Ingredient(i.name, i.qty, isMain: i.isMain))
             .toList(),
-        steps: draft.steps.map((t) => Step(t)).toList(),
+        steps: [
+          for (var i = 0; i < draft.steps.length; i++)
+            Step(draft.steps[i],
+                images: i < draft.stepImages.length ? draft.stepImages[i] : const []),
+        ],
+        photos: draft.photos,
         source: RecipeSource.values.asNameMap()[draft.source] ??
             RecipeSource.manual,
         sourceModel: draft.sourceModel,
@@ -881,7 +908,7 @@ class RecipeStore extends ChangeNotifier {
       // recipe 行 UPDATE（rev+1）
       await db.customUpdate(
         'UPDATE recipe SET name = ?, sub = ?, art = ?, pal = ?, difficulty = ?, '
-        'self_time = ?, servings = ?, notes = ?, tags = ?, cover_sha256 = ?, '
+        'self_time = ?, servings = ?, notes = ?, tags = ?, cover_sha256 = ?, photos = ?, '
         'updated_at = ?, updated_by = ?, rev = rev + 1 WHERE id = ? AND deleted_at IS NULL',
         variables: [
           Variable(draft.name),
@@ -894,6 +921,7 @@ class RecipeStore extends ChangeNotifier {
           Variable(draft.notes),
           Variable(jsonEncode(draft.tags)),
           Variable(draft.coverSha256),
+          Variable(draft.photos.isEmpty ? null : jsonEncode(draft.photos)),
           Variable(recipeHlc),
           Variable(nodeId),
           Variable(recipeId),
@@ -953,6 +981,10 @@ class RecipeStore extends ChangeNotifier {
           'text': draft.steps[i],
           'art': null,
           'image_sha256': null,
+          // v5：步骤实拍（≤4 张由 UI 保证；这里只保证「有就存数组」）
+          'images': (i < draft.stepImages.length && draft.stepImages[i].isNotEmpty)
+              ? jsonEncode(draft.stepImages[i])
+              : null,
         });
       }
 
@@ -1667,6 +1699,10 @@ class RecipeDraft {
   final String source;
   final String? sourceModel;
 
+  /// R29：照片墙的 sha 列表 + 每步的实拍列表（与 steps 下标对齐）。
+  final List<String> photos;
+  final List<List<String>> stepImages;
+
   const RecipeDraft({
     required this.name,
     this.sub = '',
@@ -1682,6 +1718,8 @@ class RecipeDraft {
     this.coverSha256,
     this.source = 'manual',
     this.sourceModel,
+    this.photos = const [],
+    this.stepImages = const [],
   });
 
   RecipeDraft copyWith({

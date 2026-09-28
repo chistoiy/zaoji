@@ -25,7 +25,10 @@ class Step {
   /// 见 `shared/lib/src/step_time.dart`。
   final String text;
 
-  const Step(this.text);
+  /// R29：步骤实拍（至多 4 张的 sha256 列表，schema v5 `images` 列）。
+  final List<String> images;
+
+  const Step(this.text, {this.images = const []});
 }
 
 enum RecipeSource { manual, imported, ai }
@@ -74,6 +77,10 @@ class Recipe {
   /// 字节本体不在同步流里，由显示端按 sha256 从服务端按需拉取（R16）。
   final String? coverSha256;
 
+  /// R29：照片墙的 sha256 列表（多张成品照，schema v5 `photos` 列）。
+  /// 封面是**单独选出来的那一张**（coverSha256），两者互不隐含。
+  final List<String> photos;
+
   const Recipe({
     required this.id,
     required this.name,
@@ -93,6 +100,7 @@ class Recipe {
     this.palette = const [],
     this.tags = const {},
     this.coverSha256,
+    this.photos = const [],
   });
 
   bool get isAi => source == RecipeSource.ai;

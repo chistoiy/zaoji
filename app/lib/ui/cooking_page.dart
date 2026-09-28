@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../data/store_scope.dart';
+import '../data/sync/sync_engine.dart' show MediaWidth;
 import '../models.dart';
 import '../theme.dart';
+import '../widgets/cover_image.dart';
 import '../widgets/time_capsule_text.dart';
 import 'timer_sheet.dart';
 
@@ -156,6 +158,27 @@ class _CookingPageState extends State<CookingPage> {
                     ),
                   ),
                 ),
+                // R29：本步实拍随步骤展示（FR-COOK-10）——灶台前不用翻回详情页找图
+                if (widget.recipe.steps[_step].images.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Wrap(
+                    key: const ValueKey('cook-step-images'),
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      for (final sha in widget.recipe.steps[_step].images)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(ZaojiRadius.md),
+                          child: SizedBox(
+                            width: 150,
+                            height: 112,
+                            child: CoverImage(
+                                sha: sha, width: MediaWidth.detail),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 18),
                 // 食材速查（FR-COOK-11）：下锅前对一遍，勾选状态随进度落库
                 _IngredientChecklist(

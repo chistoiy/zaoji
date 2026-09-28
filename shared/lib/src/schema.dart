@@ -179,7 +179,9 @@ const List<TableSpec> kTables = [
       ColumnSpec('source_model', 'TEXT', comment: 'source=ai 时记下模型名'),
       ColumnSpec('source_at', 'TEXT', comment: 'source=ai 时记下生成时间'),
       ColumnSpec('last_cooked_at', 'TEXT'),
-      ColumnSpec('cover_sha256', 'TEXT', comment: '成品图，按 sha256 按需拉取'),
+      ColumnSpec('cover_sha256', 'TEXT', comment: '成品图（封面），按 sha256 按需拉取'),
+      ColumnSpec('photos', 'TEXT',
+          comment: 'v5：照片墙的 sha256 JSON 数组（多张成品照）；封面单列在 cover_sha256'),
     ],
   ),
   TableSpec(
@@ -211,7 +213,9 @@ const List<TableSpec> kTables = [
       ColumnSpec('idx', 'INTEGER', notNull: true, comment: '第几步，从 0 起'),
       ColumnSpec('text', 'TEXT', notNull: true, comment: '原文。时间关键词是运行时解析的，不落库'),
       ColumnSpec('art', 'INTEGER', comment: '步骤插画编号'),
-      ColumnSpec('image_sha256', 'TEXT', comment: '步骤实拍图'),
+      ColumnSpec('image_sha256', 'TEXT', comment: '步骤实拍图（v5 起并入 images 数组，此列仅留档）'),
+      ColumnSpec('images', 'TEXT',
+          comment: 'v5：每步至多 4 张实拍的 sha256 JSON 数组（FR-REC-07）'),
     ],
   ),
 
@@ -494,7 +498,23 @@ const List<TableSpec> kTables = [
 /// v3 → v4：新增 `server_setting`（R21 准入配置，纯增表）+
 /// **`device` 加 `visitor` 列——这是第一例「改列」**，
 /// `IF NOT EXISTS` 救不了旧库，服务端迁移里有针对性的 ALTER（见 server/db.dart）。
-const int kSchemaVersion = 4;
+/// v4 → v5：`recipe.photos` + `step.images`（R29 多照片/步骤图）——第二例改列，
+/// 迁移脚本两端共用下面的 [kSchemaV5AlterSql]（改列语句只有一份，不许各写一套）。
+const int kSchemaVersion = 5;
+
+/// v4 → v5 的列迁移语句（服务端与 App 的 onUpgrade **逐字共用**）。
+/// UPDATE 里的值都是 64 位小写十六进制（MediaStore 入库前已验格式），
+/// 字符串拼接造 JSON 数组没有转义风险——不依赖 JSON1 扩展（winsqlite3 版本参差）。
+const List<String> kSchemaV5AlterSql = [
+  'ALTER TABLE recipe ADD COLUMN photos TEXT',
+  'ALTER TABLE step ADD COLUMN images TEXT',
+  // 旧单图洗进数组：不洗的话升级那天所有带步骤图的菜会「图凭空消失」。
+  // 注意 Dart 的相邻字面量拼接语义：混用单双引号会让 SQL 的引号错位——
+  // 整句用一种引号写到底（首跑实况：洗出来的值是字面量碎渣）。
+  'UPDATE step SET images = \'["\' || image_sha256 || \'"]\' '
+  'WHERE image_sha256 IS NOT NULL AND image_sha256 <> \'\' '
+  'AND (images IS NULL OR images = \'\')',
+];
 
 /// 同步协议的版本。客户端与服务端必须一致，否则拒绝同步而不是猜。
 ///

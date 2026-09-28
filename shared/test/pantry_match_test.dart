@@ -23,7 +23,7 @@ void main() {
       );
       // b 的蒜是常备豁免，应算全齐；c 缺两样非主料但总数超阈值
       expect((r['canCook'] as List).map((e) => e['id']), ['a', 'b']);
-      expect((r['almostThere'] as List), isEmpty);
+      expect(r['almostThere'] as List, isEmpty);
       expect((r['needShopping'] as List).map((e) => e['id']), ['c']);
     });
 

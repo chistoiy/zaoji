@@ -83,10 +83,21 @@ class ZaojiDb extends GeneratedDatabase {
     onUpgrade: (m, from, to) async {
       // 升级同样执行全量 createSql：它自带 IF NOT EXISTS，对已存在的表是无害的
       // no-op，缺的表会被补出来（v2 → v3 补 local_pref 就是这条路径）。
-      // 目前所有迁移都是纯增表；哪天出现「改列」级别的迁移，
-      // 必须在这里按版本号写针对性脚本，不能靠 IF NOT EXISTS。
       for (final t in clientTables) {
         await customStatement(t.createSql());
+      }
+      // v4 → v5（R29）改列迁移：createSql 救不了已存在的表，
+      // ALTER 脚本与服务端**逐字共用 shared 的 kSchemaV5AlterSql**。
+      // 判据用列在不在（幂等，半迁移重进也安全），与 R21 的 v4 同法。
+      if (from < 5) {
+        final hasPhotos =
+            (await customSelect('PRAGMA table_info(recipe)').get())
+            .any((r) => r.read<String>('name') == 'photos');
+        if (!hasPhotos) {
+          for (final stmt in kSchemaV5AlterSql) {
+            await customStatement(stmt);
+          }
+        }
       }
     },
     beforeOpen: (details) async {

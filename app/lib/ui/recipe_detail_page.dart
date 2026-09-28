@@ -175,6 +175,10 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
               _Hero(recipe: recipe),
               const SizedBox(height: 16),
               _NutritionBlock(recipe: recipe),
+              if (recipe.photos.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                _GalleryStrip(recipe: recipe),
+              ],
               const SizedBox(height: 22),
               _SectionTitle(
                 num: '01',
@@ -194,7 +198,11 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                 ),
               ),
               for (var i = 0; i < recipe.steps.length; i++)
-                _StepRow(index: i + 1, text: recipe.steps[i].text),
+                _StepRow(
+                  index: i + 1,
+                  text: recipe.steps[i].text,
+                  images: recipe.steps[i].images,
+                ),
               if (recipe.notes.trim().isNotEmpty) ...[
                 const SizedBox(height: 26),
                 const _SectionTitle(num: '03', title: '注意'),
@@ -754,11 +762,48 @@ class _IngredientRow extends StatelessWidget {
   }
 }
 
+/// 成品照片墙（FR-REC-06）：封面之外拍过的成品照，横向一排，点开看大图。
+class _GalleryStrip extends StatelessWidget {
+  const _GalleryStrip({required this.recipe});
+
+  final Recipe recipe;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 92,
+      child: ListView(
+        key: const ValueKey('recipe-gallery'),
+        scrollDirection: Axis.horizontal,
+        children: [
+          for (final sha in recipe.photos)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: () => _StepRow._showFull(context, sha),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(ZaojiRadius.sm),
+                  child: SizedBox(
+                    width: 122,
+                    child: CoverImage(sha: sha, width: MediaWidth.card),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _StepRow extends StatelessWidget {
-  const _StepRow({required this.index, required this.text});
+  const _StepRow({required this.index, required this.text, this.images = const []});
 
   final int index;
   final String text;
+
+  /// R29：本步实拍（至多 4 张，schema v5）。
+  final List<String> images;
 
   @override
   Widget build(BuildContext context) {
@@ -793,23 +838,67 @@ class _StepRow extends StatelessWidget {
           ),
           const SizedBox(width: 11),
           Expanded(
-            child: RichText(
-              // 原文一个字都没改写：只是把时间区间换成胶囊
-              text: TextSpan(
-                style: bodyStyle,
-                children: buildTimeCapsuleSpans(
-                  text,
-                  style: bodyStyle,
-                  onTap: (hit) => showTimerSheet(
-                    context,
-                    sourceText: hit.text,
-                    seconds: hit.suggestedSeconds,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                RichText(
+                  // 原文一个字都没改写：只是把时间区间换成胶囊
+                  text: TextSpan(
+                    style: bodyStyle,
+                    children: buildTimeCapsuleSpans(
+                      text,
+                      style: bodyStyle,
+                      onTap: (hit) => showTimerSheet(
+                        context,
+                        sourceText: hit.text,
+                        seconds: hit.suggestedSeconds,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                if (images.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Wrap(
+                      key: ValueKey('step-img-$index'),
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final sha in images)
+                          GestureDetector(
+                            onTap: () => _showFull(context, sha),
+                            child: ClipRRect(
+                              borderRadius:
+                                  BorderRadius.circular(ZaojiRadius.xs),
+                              child: SizedBox(
+                                width: 88,
+                                height: 66,
+                                child: CoverImage(
+                                    sha: sha, width: MediaWidth.card),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 全屏看原图（详情页照片墙与步骤图共用）。
+  static void _showFull(BuildContext context, String sha) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.all(18),
+        backgroundColor: Colors.black,
+        child: InteractiveViewer(
+          child: CoverImage(sha: sha, fit: BoxFit.contain),
+        ),
       ),
     );
   }

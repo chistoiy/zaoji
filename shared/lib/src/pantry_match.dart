@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 /// 库存 × 菜谱匹配（R28 · 清空冰箱）。
 ///
 /// **为什么放 shared**：这是「买不买、做什么」的判定算法——
@@ -51,7 +49,7 @@ class PantryMatch {
 
     for (final r in recipes) {
       final ings = ((r['ingredients'] as List?) ?? const [])
-          .whereType<Map>()
+          .whereType<Map<Object?, Object?>>()
           .map((e) => e.cast<String, Object?>())
           .toList();
       final matched = <String>[];

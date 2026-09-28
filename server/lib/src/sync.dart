@@ -543,7 +543,7 @@ class SyncService {
         'reason': '变更必须带完整的 row（upsert 与 delete 都要）',
       };
     }
-    final incoming = row.map((k, v) => MapEntry('$k', v));
+    var incoming = row.map((k, v) => MapEntry('$k', v));
 
     // ★ 白名单在这里真正起作用：多出来的列一律拒绝。
     // 这挡住的是"某个版本不小心把不该同步的字段塞进了请求体"。
@@ -609,7 +609,29 @@ class SyncService {
     //    于是字段级合并会误判出一堆假冲突（conflict.dart 开头就警告过这件事：
     //    没有基线时无法区分"字段被删除"和"字段从未存在过"）。
     // 客户端从自己的表里读出来本来就是完整的，所以这个要求不增加任何负担。
-    final missing = allowed.where((c) => !incoming.containsKey(c)).toList();
+    var missing = allowed.where((c) => !incoming.containsKey(c)).toList();
+
+    // ★ R29 新增列的滚动豁免（v5：recipe.photos / step.images）。
+    // 旧客户端的"完整行"里没有这些新列，两条路都致命：
+    // ① 缺列当 null 写 → 旧端每次编辑都把照片墙**洗成空**（R6 坑 1 的加重版）；
+    // ② 缺列直接拒 → apk 没来得及更新的那台从此同步不了。
+    // 唯一安全语义：这些列**没提到 = 保持库里现值**（new row 时即 null，
+    // 老数据本来就没有照片墙，语义自然）。其余列的完整行纪律一字不动。
+    const rolling = {
+      'recipe': {'photos'},
+      'step': {'images'},
+    };
+    final exempt = (rolling[tbl] ?? const <String>{})
+        .where(missing.contains)
+        .toSet();
+    if (exempt.isNotEmpty) {
+      incoming = Map.of(incoming);
+      for (final c in exempt) {
+        incoming[c] = existing?[c];
+      }
+      missing = missing.where((c) => !exempt.contains(c)).toList();
+    }
+
     if (missing.isNotEmpty) {
       return {
         'tbl': tbl,

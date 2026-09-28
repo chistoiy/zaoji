@@ -5,6 +5,7 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 
 import '../data/recipe_store.dart';
+import '../data/sync/sync_engine.dart' show MediaWidth;
 import '../data/store_scope.dart';
 import '../data/sync/sync_scope.dart';
 import '../models.dart';
@@ -66,6 +67,14 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
   String? _coverSha;
   bool _coverBusy = false;
 
+  // R29 照片墙 / 步骤图。**已上传的存 sha，新选的存在内存等保存时一起传**——
+  // 和封面同一套「选图即压缩、保存才上传」的既有节拍，失败降级口径也统一。
+  List<String> _photos = [];
+  final List<Uint8List> _pendingPhotos = [];
+  final Map<int, List<String>> _stepPhotoShas = {};
+  final Map<int, List<Uint8List>> _pendingStepPhotos = {};
+  bool _wallBusy = false;
+
   // 快捷操作方式标签
   static const _quickMethods = ['爆炒', '水煮', '清蒸', '红烧', '烧烤', '凉拌', '烘焙', '火锅'];
   final Set<String> _selectedMethods = {};
@@ -110,6 +119,12 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
     if (r != null) {
       _selectedMethods.addAll(r.methods);
       _coverSha = r.coverSha256; // 编辑模式：保留原有封面，除非用户重选/移除
+      _photos = List.of(r.photos);
+      for (var i = 0; i < r.steps.length; i++) {
+        if (r.steps[i].images.isNotEmpty) {
+          _stepPhotoShas[i] = List.of(r.steps[i].images);
+        }
+      }
     }
   }
 
@@ -147,10 +162,17 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
           ),
     ];
 
-    final steps = <String>[
-      for (final c in _stepCtrls)
-        if (c.text.trim().isNotEmpty) c.text.trim(),
-    ];
+    // 步骤过滤空行时，步骤图必须跟着**原下标**走——按下标重排而不是靠位置记忆
+    final steps = <String>[];
+    final stepImages = <List<String>>[];
+    final keptIdx = <int>[]; // 过滤后位置 → 原控件下标（步骤图要按原下标跟行）
+    for (var i = 0; i < _stepCtrls.length; i++) {
+      final t = _stepCtrls[i].text.trim();
+      if (t.isEmpty) continue;
+      steps.add(t);
+      stepImages.add(_stepPhotoShas[i] ?? const []);
+      keptIdx.add(i);
+    }
 
     final tags = <String, List<String>>{};
     if (_selectedMethods.isNotEmpty) {
@@ -175,6 +197,40 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         }
       }
 
+      // R29：先传照片墙的新增张，再传各步新增图——全部**内容寻址、失败不阻塞保存**
+      // （与封面同一降级口径：图没传上菜照样存住，提示里说清楚）。
+      final photos = List<String>.of(_photos);
+      String? wallWarning;
+      if (_pendingPhotos.isNotEmpty) {
+        try {
+          for (final b in _pendingPhotos) {
+            photos.add(await engine.uploadMedia(b));
+          }
+        } catch (e) {
+          wallWarning = '部分成品照上传失败（$e）';
+        }
+      }
+      final uploadedStepImages = <int, List<String>>{};
+      for (final e in _pendingStepPhotos.entries) {
+        for (final b in e.value) {
+          try {
+            (uploadedStepImages[e.key] ??= []).add(await engine.uploadMedia(b));
+          } catch (_) {
+            wallWarning ??= '有步骤图上传失败';
+          }
+        }
+      }
+      for (final e in uploadedStepImages.entries) {
+        _stepPhotoShas[e.key] = [...(_stepPhotoShas[e.key] ?? const []), ...e.value];
+      }
+      // 上传回来的 sha 按**原控件下标**并进对应步骤的图列表（过滤后的行对回原位）
+      for (var k = 0; k < stepImages.length; k++) {
+        final up = uploadedStepImages[keptIdx[k]];
+        if (up != null && up.isNotEmpty) {
+          stepImages[k] = [...stepImages[k], ...up];
+        }
+      }
+
       final draft = RecipeDraft(
         name: _nameCtrl.text.trim(),
         sub: _subCtrl.text.trim(),
@@ -190,6 +246,8 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
         coverSha256: coverSha,
         source: _aiFilled && widget.isNew ? 'ai' : 'manual',
         sourceModel: _aiFilled && widget.isNew ? _aiModel : null,
+        photos: photos,
+        stepImages: stepImages,
       );
 
       if (widget.isNew) {
@@ -202,10 +260,13 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
           _saved = true;
           _saving = false;
         });
-        if (coverWarning != null) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(coverWarning)));
+        if (coverWarning != null || wallWarning != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text([
+              ?coverWarning,
+              ?wallWarning,
+            ].join('；'))),
+          );
         }
         Navigator.of(context).pop(true); // 告诉上一页保存成功
       }
@@ -315,6 +376,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
             children: [
               _coverField(),
+              _photoWallField(),
               const SizedBox(height: 18),
               _basicFields(),
               const SizedBox(height: 14),
@@ -532,6 +594,223 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
               : Text('AI 补全失败：$s'),
           duration: const Duration(seconds: 3)));
     }
+  }
+
+  // ───────────────────── R29 · 照片墙 / 步骤图 ─────────────────────
+
+  /// 选图 → 压到 1600px/q82（与封面同一口径、同一实现）。
+  Future<Uint8List?> _compressPhoto(XFile x) async {
+    final raw = await x.readAsBytes();
+    final decoded = img.decodeImage(raw);
+    if (decoded == null) return null;
+    final resized =
+        decoded.width > 1600 ? img.copyResize(decoded, width: 1600) : decoded;
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 82));
+  }
+
+  Future<void> _pickWallPhotos() async {
+    setState(() => _wallBusy = true);
+    try {
+      final picked = await ImagePicker().pickMultiImage();
+      for (final x in picked.take(8 - _pendingPhotos.length - _photos.length)) {
+        final c = await _compressPhoto(x);
+        if (c != null) _pendingPhotos.add(c);
+      }
+    } catch (_) {
+      // 相册不可用/用户取消：和封面同口径——不弹错误，墙保持原样
+    } finally {
+      if (mounted) setState(() => _wallBusy = false);
+    }
+  }
+
+  Future<void> _pickStepPhotos(int i) async {
+    final room = 4 -
+        ((_stepPhotoShas[i]?.length ?? 0) +
+            (_pendingStepPhotos[i]?.length ?? 0));
+    if (room <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('一步最多 4 张，先移掉一张再加'),
+            duration: Duration(seconds: 2)));
+      }
+      return;
+    }
+    setState(() => _wallBusy = true);
+    try {
+      final picked = await ImagePicker().pickMultiImage();
+      for (final x in picked.take(room)) {
+        final c = await _compressPhoto(x);
+        if (c != null) (_pendingStepPhotos[i] ??= []).add(c);
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _wallBusy = false);
+    }
+  }
+
+  Widget _miniThumb(
+      {required Widget child, VoidCallback? onLongPress, VoidCallback? onTap}) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6, top: 6),
+      child: GestureDetector(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(ZaojiRadius.xs),
+          child: SizedBox(width: 56, height: 56, child: child),
+        ),
+      ),
+    );
+  }
+
+  /// 成品照片墙（FR-REC-06）：封面之下、基础字段之上。长按缩略图 = 设为封面/移出。
+  Widget _photoWallField() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        key: const ValueKey('photo-wall'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Text('成品照片',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: ZaojiColors.ink2)),
+              SizedBox(width: 8),
+              Text('长按可设为封面',
+                  style: TextStyle(fontSize: 10.5, color: ZaojiColors.muted)),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Wrap(
+            children: [
+              for (final sha in _photos)
+                _miniThumb(
+                  child: CoverImage(sha: sha, width: MediaWidth.card),
+                  onTap: () => _showFullPhoto(sha),
+                  onLongPress: () => _wallMenu(sha),
+                ),
+              for (final _ in _pendingPhotos) const _MiniThumbPending(),
+              if (_photos.length + _pendingPhotos.length < 8)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: GestureDetector(
+                    onTap: _wallBusy ? null : _pickWallPhotos,
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: ZaojiColors.line),
+                        borderRadius: BorderRadius.circular(ZaojiRadius.xs),
+                        color: ZaojiColors.paper2,
+                      ),
+                      child: _wallBusy
+                          ? const Center(
+                              child: SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2)))
+                          : const Icon(Icons.add_photo_alternate_outlined,
+                              size: 20, color: ZaojiColors.muted),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _wallMenu(String sha) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('这张照片…', style: const TextStyle(fontSize: 15)),
+        children: [
+          ListTile(
+            leading: const Icon(Icons.image_outlined),
+            title: const Text('设为封面'),
+            onTap: () => Navigator.pop(ctx, 'cover'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline, color: ZaojiColors.muted),
+            title: const Text('移出照片墙'),
+            onTap: () => Navigator.pop(ctx, 'remove'),
+          ),
+        ],
+      ),
+    );
+    if (action == null || !mounted) return;
+    setState(() {
+      if (action == 'cover') {
+        // 封面是「选出来的那一张」：墙里去掉它，旧封面回墙头（不丢引用）
+        final old = _coverSha;
+        _coverSha = sha;
+        _photos.remove(sha);
+        if (old != null && !_photos.contains(old)) _photos.insert(0, old);
+        _coverBytes = null;
+      } else if (action == 'remove') {
+        _photos.remove(sha);
+      }
+    });
+  }
+
+  void _showFullPhoto(String sha) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.all(18),
+        backgroundColor: Colors.black,
+        child: InteractiveViewer(
+          child: CoverImage(sha: sha, fit: BoxFit.contain),
+        ),
+      ),
+    );
+  }
+
+  /// 某一步的实拍条（FR-REC-07：0–4 张）。
+  Widget _stepPhotoStrip(int i) {
+    final shas = _stepPhotoShas[i] ?? const <String>[];
+    final pending = _pendingStepPhotos[i] ?? const <Uint8List>[];
+    if (shas.isEmpty && pending.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Wrap(
+      key: ValueKey('step-photos-$i'),
+      children: [
+        for (final sha in shas)
+          _miniThumb(
+            child: CoverImage(sha: sha, width: MediaWidth.card),
+            onTap: () => _showFullPhoto(sha),
+            onLongPress: () => setState(() => _stepPhotoShas[i] =
+                shas.where((x) => x != sha).toList()),
+          ),
+        for (final _ in pending) const _MiniThumbPending(),
+        if (shas.length + pending.length < 4)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: GestureDetector(
+              key: ValueKey('step-photo-add-$i'),
+              onTap: _wallBusy ? null : () => _pickStepPhotos(i),
+              child: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  border: Border.all(color: ZaojiColors.line),
+                  borderRadius: BorderRadius.circular(ZaojiRadius.xs),
+                  color: ZaojiColors.paper2,
+                ),
+                child: const Icon(Icons.add_a_photo_outlined,
+                    size: 18, color: ZaojiColors.muted),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _coverField() {
@@ -776,6 +1055,7 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
                   minLines: 2,
                   decoration: _inputDeco('描述这一步，直接写时间关键词（如「小火炖 20 分钟」）'),
                 ),
+                _stepPhotoStrip(i),
               ],
             ),
           ),
@@ -893,4 +1173,33 @@ class _IngredientRow {
     required this.qtyCtrl,
     this.isMain = false,
   });
+}
+
+/// 已选未传的占位缩略：只表达「这张在路上」，不做进度数字。
+class _MiniThumbPending extends StatelessWidget {
+  const _MiniThumbPending();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.only(right: 6, top: 6),
+      child: SizedBox(
+        width: 56,
+        height: 56,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: ZaojiColors.paper2,
+            borderRadius: BorderRadius.all(Radius.circular(ZaojiRadius.xs)),
+          ),
+          child: Center(
+            child: SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

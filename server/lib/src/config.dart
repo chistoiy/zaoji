@@ -76,7 +76,11 @@ class ServerConfig {
   /// 0.13.0：备份能力（R26）——在线 SQLite 快照 + 自描述清单（逐文件 sha256）
   ///   打 zip，本地留底 + WebDAV（坚果云实测）上传 + 双侧保留裁剪；
   ///   `/api/admin/backup*`（仅本机）与 `restore` 子命令。
-  static const String version = '0.13.0';
+  /// 0.14.0：schema v5（R29 照片墙/步骤图：recipe.photos + step.images，
+  ///   迁移两端共用 shared 的 kSchemaV5AlterSql）；同步新增列滚动豁免
+  ///   （缺 photos/images = 保持现值，旧 apk 不断同步不清数据）；
+  ///   孤儿回收引用面扩到 photos ∪ step.images ∪ 旧单列。
+  static const String version = '0.14.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
