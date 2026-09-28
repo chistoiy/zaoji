@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../data/recipe_store.dart';
+import '../data/share_text.dart';
 import '../data/store_scope.dart';
 import '../theme.dart';
 import 'menus_page.dart';
 import 'prep_page.dart';
 import 'recipe_detail_page.dart';
+import 'share_sheet.dart';
 
 /// 菜单详情（R23）：这一餐的菜 + 加菜/移除 + 一键备菜入口。
 class MenuDetailPage extends StatelessWidget {
@@ -21,6 +23,32 @@ class MenuDetailPage extends StatelessWidget {
         title: const Text('这一餐'),
         backgroundColor: ZaojiColors.paper,
         actions: [
+          // R34 · 文字分享（FR-SHARE-01 第二类）：这一餐的搭配发出去，不带任何链接。
+          IconButton(
+            key: const ValueKey('menu-share'),
+            icon: const Icon(Icons.ios_share),
+            tooltip: '分享这一餐',
+            onPressed: () {
+              final store = StoreScope.of(context);
+              final m = store.menuById(menuId);
+              if (m == null) return;
+              final dishes = [
+                for (final id in m.recipeIds)
+                  if (store.recipeById(id) != null) store.recipeById(id)!,
+              ];
+              showShareSheet(
+                context,
+                title: '${m.day} · ${m.meal}',
+                filename: '灶记-${m.day}-${m.meal}.txt',
+                toggles: const [ShareToggle('sig', '署名')],
+                buildText: (on) => shareMenu(
+                  menu: m,
+                  dishes: dishes,
+                  withSignature: on.contains('sig'),
+                ),
+              );
+            },
+          ),
           IconButton(
             key: const ValueKey('menu-edit'),
             icon: const Icon(Icons.edit_outlined),

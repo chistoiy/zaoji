@@ -42,6 +42,10 @@ dependencies:
   # 系统相册/相机选图（Web = 文件选择器；Android = Photo Picker）
   image_picker: ^1.1.0
 
+  # 分享存 .txt（R34）：Web 端用 Blob + <a download> 落地文本文件。
+  # 只在条件导入的 web 分支里用到，Android 编译路径不带它。
+  web: ^1.1.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../data/share_text.dart';
 import '../data/store_scope.dart';
 import '../data/sync/sync_engine.dart';
 import '../data/sync/sync_scope.dart';
@@ -14,6 +15,7 @@ import 'ai_settings_page.dart';
 import 'cooking_page.dart';
 import 'menus_page.dart';
 import 'recipe_edit_page.dart';
+import 'share_sheet.dart';
 import 'timer_sheet.dart';
 
 /// 菜品详情。
@@ -121,6 +123,36 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     );
   }
 
+  /// 分享面板：热量块**只在有估算时出现**（FR-SHARE-04 的勾选项跟着数据走），
+  /// 默认勾选；署名按 FR-SHARE-10 可关（设置里全局关是尾巴，先就地关）。
+  void _share(BuildContext context, Recipe recipe) {
+    final store = StoreScope.of(context);
+    final n = store.nutritionFor(recipe.id);
+    showShareSheet(
+      context,
+      title: recipe.name,
+      filename: '灶记-${recipe.name}.txt',
+      toggles: [
+        const ShareToggle('ing', '食材'),
+        const ShareToggle('step', '步骤'),
+        if (recipe.notes.trim().isNotEmpty) const ShareToggle('note', '注意'),
+        if (n != null) const ShareToggle('kcal', '热量'),
+        const ShareToggle('sig', '署名'),
+      ],
+      buildText: (on) => shareRecipe(
+        recipe: recipe,
+        servings: recipe.servings,
+        nutritionLine: on.contains('kcal') && n != null
+            ? '每份 ≈ ${n.perServingKcalRounded} 千卡 · 整锅约 ${n.totalKcalRounded} 千卡'
+            : null,
+        withIngredients: on.contains('ing'),
+        withSteps: on.contains('step'),
+        withNotes: on.contains('note'),
+        withSignature: on.contains('sig'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // store 通知驱动重画：做菜计数、编辑、别的设备同步下来都会走到这里
@@ -133,6 +165,13 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
           appBar: AppBar(
             title: Text(recipe.name),
             actions: [
+              // R34 · 文字分享（FR-SHARE-01 第一类）：内容即产物，不带服务器链接。
+              IconButton(
+                key: const ValueKey('detail-share'),
+                tooltip: '分享',
+                onPressed: () => _share(context, recipe),
+                icon: const Icon(Icons.ios_share),
+              ),
               IconButton(
                 tooltip: '开始做菜',
                 onPressed: () => _cook(recipe),

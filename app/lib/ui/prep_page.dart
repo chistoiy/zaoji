@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
+import '../data/share_text.dart';
 import '../data/store_scope.dart';
 import '../theme.dart';
 import 'menus_page.dart';
+import 'share_sheet.dart';
 
 /// 备菜清单（R23）：这一餐所有菜的食材合并视图。
 ///
@@ -76,6 +79,58 @@ class _PrepPageState extends State<PrepPage> {
             icon: const Icon(Icons.list_alt, size: 16),
             label: const Text('购物清单',
                 style: TextStyle(fontSize: 12.5)),
+          ),
+          // R34 · 把这张清单分享出去（FR-SHARE-08：每行 ☐，对方买菜可逐项打勾）。
+          IconButton(
+            key: const ValueKey('prep-share'),
+            icon: const Icon(Icons.ios_share),
+            tooltip: '分享清单',
+            onPressed: () {
+              final store = StoreScope.of(context);
+              final menu = store.menuById(widget.menuId);
+              if (menu == null) return;
+              final board = store.prepBoardOf(widget.menuId);
+              final kept = store
+                  .mergeForPrep(menu.recipeIds)
+                  .where((l) => !board.excluded.contains(l.key))
+                  .where((l) => !board.done.contains(l.key))
+                  .toList();
+              // 手动项拼成同型的 MergedLine：量走 unparsed（原样显示，不折算）。
+              final lines = [
+                ...kept,
+                for (final e in board.extra.entries)
+                  MergedLine(
+                    key: 'x:${e.key}',
+                    name: e.key,
+                    parts: [
+                      Amount(
+                          value: null,
+                          unit: e.value,
+                          kind: AmountKind.unparsed,
+                          raw: e.value.isEmpty ? '适量' : e.value)
+                    ],
+                    from: const [],
+                    anyVague: false,
+                  ),
+              ];
+              showShareSheet(
+                context,
+                title: '${menu.day} · ${menu.meal} 备菜清单',
+                filename: '灶记-备菜-${menu.day}.txt',
+                toggles: [
+                  if (lines.any((l) => l.from.length > 1))
+                    const ShareToggle('src', '标出来自哪道菜'),
+                  const ShareToggle('sig', '署名'),
+                ],
+                buildText: (on) => sharePrep(
+                  day: menu.day,
+                  meal: menu.meal,
+                  lines: lines,
+                  withSources: on.contains('src'),
+                  withSignature: on.contains('sig'),
+                ),
+              );
+            },
           ),
         ],
       ),
