@@ -109,6 +109,30 @@ class SyncEngine extends ChangeNotifier {
 
   Future<bool> isPaired() => _prefs.isPaired();
 
+  /// 同步策略（FR-DATA-05，本机偏好、**不参与同步**——和备菜板同一条立场：
+  /// 每台设备离网络的远近不一样，手机可以「仅下载」省流量，平板不必跟着变）。
+  ///
+  /// 三个词按**实际行为**说：仅上传=只把本机改动推上去（不拉），
+  /// 仅下载=只拉服务端更新（本机没推的改动继续留在水位线之后，等切回双向）。
+  /// 需求原文里「以某端为准覆盖另一端」那种**强制覆盖语义这里刻意没有**：
+  /// 它要绕过冲突箱直接抹掉一端的改动，与 FR-DATA-06「冲突不静默覆盖」正面冲突。
+  Future<void> loadSyncMode() async {
+    _syncMode = SyncMode.parse(await _prefs.syncMode());
+  }
+
+  /// 改策略：落库 + 通知（UI 的选中态跟着走）。
+  Future<void> setSyncMode(SyncMode m) async {
+    if (m == _syncMode) return;
+    _syncMode = m;
+    await _prefs.setSyncMode(m.wire);
+    notifyListeners();
+  }
+
+  /// 当前策略（`loadSyncMode` 之前是默认的双向）。
+  SyncMode get syncMode => _syncMode;
+
+  SyncMode _syncMode = SyncMode.bidir;
+
   /// 冷启动/回前台/防抖共用的自动入口（R21 起语义从「已配对才同步」扩展为
   /// 「**被允许自动同步**就同步」）：
   ///
@@ -116,6 +140,7 @@ class SyncEngine extends ChangeNotifier {
   /// - 无 token：只有服务端处于 **open** 且没要求手动，才以免配对身份同步；
   ///   其余情况安静停在 neverPaired——这不是错误，是「还没接入」。
   Future<void> syncIfPaired() async {
+    await loadSyncMode();
     // 网页端首次：没存过地址就拿当前访问 origin 当地址。
     // 用户从服务器上看到的就是这台服务器——没有第二个答案值得让他手输。
     if (kIsWeb && await _prefs.serverUrl() == null) {
@@ -342,10 +367,13 @@ class SyncEngine extends ChangeNotifier {
   }
 
   /// 一轮完整同步。并发调用直接合并成「等正在跑的那轮」。
-  Future<void> sync() {
+  ///
+  /// [direction] 只影响**这一轮**（手动「上传改动」/「拉取更新」按一次走一次），
+  /// 不改动用户设的常驻策略；不传就用常驻策略。
+  Future<void> sync({SyncMode? direction}) {
     if (_busy) return _running ?? Future.value();
     _busy = true;
-    _running = _doSync().whenComplete(() {
+    _running = _doSync(direction).whenComplete(() {
       _busy = false;
       _running = null;
       notifyListeners();
@@ -353,9 +381,15 @@ class SyncEngine extends ChangeNotifier {
     return _running!;
   }
 
+  /// 手动「上传改动」：只推不拉，一轮次性动作。
+  Future<void> pushNow() => sync(direction: SyncMode.upload);
+
+  /// 手动「拉取更新」：只拉不推，一轮次性动作。
+  Future<void> pullNow() => sync(direction: SyncMode.download);
+
   Future<void>? _running;
 
-  Future<void> _doSync() async {
+  Future<void> _doSync(SyncMode? direction) async {
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
     final pairedServerId = await _prefs.serverId();
@@ -399,8 +433,16 @@ class SyncEngine extends ChangeNotifier {
         await _prefs.setServerId(serverId);
       }
 
-      var pushed = await _pushPending(transport, hasToken ? token : null);
-      var applied = await _pullAll(transport, hasToken ? token : null);
+      // 方向闸门（FR-DATA-05）：本轮走常驻策略，还是被手动按钮指定成单向。
+      final mode = direction ?? _syncMode;
+      var pushed = 0;
+      var applied = 0;
+      if (mode != SyncMode.download) {
+        pushed = await _pushPending(transport, hasToken ? token : null);
+      }
+      if (mode != SyncMode.upload) {
+        applied = await _pullAll(transport, hasToken ? token : null);
+      }
 
       _lastSyncAt = _now();
       _consecutiveFails = 0;
@@ -785,6 +827,25 @@ class SyncEngine extends ChangeNotifier {
     _transport?.close();
     super.dispose();
   }
+}
+
+/// 同步策略（FR-DATA-05）。`wire` 是落进 local_pref 的字符串，别改名——
+/// 老设备上存过的值要能被新包读回来。
+enum SyncMode {
+  bidir('bidir', '双向合并'),
+  upload('upload', '仅上传'),
+  download('download', '仅下载');
+
+  const SyncMode(this.wire, this.label);
+
+  /// 落库值。
+  final String wire;
+
+  /// 界面上的词。
+  final String label;
+
+  static SyncMode parse(String? raw) =>
+      SyncMode.values.firstWhere((m) => m.wire == raw, orElse: () => bidir);
 }
 
 enum SyncPhase {

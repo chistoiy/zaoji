@@ -41,6 +41,7 @@ class SyncPrefs {
   static const _kPushWatermark = 'sync_push_watermark';
   static const _kPendingMutation = 'sync_pending_mutation';
   static const _kDeviceName = 'sync_device_name';
+  static const _kSyncMode = 'sync_mode';
 
   static const _tbl = 'local_pref';
   static const _colKey = 'pref_key';
@@ -118,6 +119,11 @@ class SyncPrefs {
 
   Future<String?> deviceName() => _read(_kDeviceName);
   Future<void> setDeviceName(String v) => _write(_kDeviceName, v);
+
+  /// 同步策略（FR-DATA-05）：'bidir' / 'upload' / 'download'。
+  /// 存 local_pref = **本机偏好，不参与同步**（与备菜板同一条立场）。
+  Future<String?> syncMode() => _read(_kSyncMode);
+  Future<void> setSyncMode(String v) => _write(_kSyncMode, v);
 
   Future<int> pullCursor() async =>
       int.tryParse(await _read(_kPullCursor) ?? '') ?? 0;

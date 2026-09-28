@@ -14,12 +14,16 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 
 /// 同步引擎测试。
 ///
-/// ⚠️ **为什么不用真服务端**：zaoji_server 锁 sqlite3 ^2.x（sqlite_loader 依赖
-/// 已被 3.x 移除的 open.overrideFor），app 需要 ^3.x，版本解算冲突（R11 已知事项）。
-/// 所以这里起一个**测试内的 HTTP 模拟服务端**（dart:io HttpServer），
-/// 走**真 HTTP + 真协议形状**（配对 / 鉴权 / 幂等 / seq 游标 / 载荷跟随），
-/// 引擎代码零 mock。服务端的正确性由 server 自己的 138 个测试保证；
-/// 「真 exe + 真 Web 产物」的两端 E2E 用人工链路验证（交接文档 R13）。
+/// 用**测试内的 dart:io HttpServer 模拟服务端**（FakeSyncServer），走真 HTTP +
+/// 真协议形状（配对 / 鉴权 / 幂等 / seq 游标 / 载荷跟随），引擎代码零 mock。
+/// 服务端的正确性由 server 自己的测试保证；「真 exe + 真 Web 产物」的两端 E2E
+/// 用人工链路验证（交接文档 R13）。
+///
+/// 注：R11 时代这里写过「不能把 zaoji_server 拉进 dev_dependencies，因为
+/// app 要 sqlite3 ^3.x 而服务端锁 ^2.x」——**那条前提已经不成立**：
+/// R36 把 app 的 SQLite 栈退回 2.9.4（3.x 那代在 Android 上不带 libsqlite3.so），
+/// 两端现在同版。留着真服务端依赖仍然没必要（进程内起服务反而更难控制），
+/// 但别再拿"版本解算冲突"当理由。
 void main() {
   late Directory tmp;
   late RecipeStore store;
@@ -265,6 +269,82 @@ void main() {
           await engine.fetchMediaCached('d' * 64, width: MediaWidth.card), isNull);
       // ③ 档位不在白名单（服务端 400，不是"回原图"）
       expect(await engine.fetchMediaCached(sha, width: 333), isNull);
+    });
+  });
+
+  // ── R37 · 同步策略（FR-DATA-05）：方向由用户说了算，不是只有双向一条路 ──
+
+  group('同步策略', () {
+    void zeroCounts() {
+      server.pushCount = 0;
+      server.pullCount = 0;
+    }
+
+    test('常驻「仅上传」：这一轮只 POST，不发拉取', () async {
+      await paired();
+      await engine.setSyncMode(SyncMode.upload);
+      await store.createRecipe(RecipeDraft(name: '本机新菜'));
+      zeroCounts();
+
+      await engine.sync();
+      expect(server.pushCount, greaterThan(0), reason: engine.lastError);
+      expect(server.pullCount, 0);
+    });
+
+    test('★ 常驻「仅下载」：只拉，本机没推的改动留在原地不丢', () async {
+      await paired();
+      await engine.setSyncMode(SyncMode.download);
+      await store.createRecipe(RecipeDraft(name: '本机新菜'));
+      zeroCounts();
+
+      await engine.sync();
+      expect(server.pullCount, greaterThan(0), reason: engine.lastError);
+      expect(server.pushCount, 0);
+
+      // 切回双向：那条改动还在水位线之后，照样推得上去（策略不是丢弃开关）
+      await engine.setSyncMode(SyncMode.bidir);
+      zeroCounts();
+      await engine.sync();
+      expect(server.pushCount, greaterThan(0),
+          reason: '仅下载期间攒下的改动不该被忘掉');
+    });
+
+    test('手动「上传改动 / 拉取更新」只作用一轮，不改常驻策略', () async {
+      await paired();
+      zeroCounts();
+      await store.createRecipe(RecipeDraft(name: '本机新菜'));
+
+      await engine.pushNow();
+      expect(server.pushCount, greaterThan(0), reason: engine.lastError);
+      expect(server.pullCount, 0);
+      expect(engine.syncMode, SyncMode.bidir,
+          reason: '一次性动作不留副作用，否则用户下次同步方向莫名其妙');
+
+      zeroCounts();
+      await engine.pullNow();
+      expect(server.pullCount, greaterThan(0));
+      expect(server.pushCount, 0);
+      expect(engine.syncMode, SyncMode.bidir);
+    });
+
+    test('★ 策略是本机偏好：换引擎实例读得回来，且一行 change_log 都不产生', () async {
+      await engine.setSyncMode(SyncMode.download);
+
+      final again = SyncEngine(
+        db: store.dbOrNull!,
+        prefs: SyncPrefs(store.dbOrNull!),
+        transport: HttpSyncTransport(Uri.parse(server.url)),
+      );
+      expect(again.syncMode, SyncMode.bidir,
+          reason: '没 load 之前是默认值——UI 进页面要先 loadSyncMode');
+      await again.loadSyncMode();
+      expect(again.syncMode, SyncMode.download);
+      again.dispose();
+
+      // local_pref 不是同步表：手机设成「仅下载」不该把平板的策略一起改掉。
+      expect(server.rows.containsKey('local_pref'), isFalse,
+          reason: '策略一旦被推上服务端，就等于跨设备互相改写');
+      expect(await SyncPrefs(store.dbOrNull!).syncMode(), 'download');
     });
   });
 }

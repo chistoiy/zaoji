@@ -92,6 +92,9 @@ class _MePageState extends State<MePage> {
       _loaded = true;
       _urlCtrl.text = knownUrl ?? widget.defaultServerUrl;
     });
+    // 策略与准入模式都是「进页面先对齐一次」的只读态：不这么做，
+    // 常驻策略会一直显示成默认的双向，即使本机早就存过「仅下载」。
+    await engine.loadSyncMode();
     // 准入模式决定未配对时给哪一种接入区块（三态互斥）。读不到就保持
     // "未知"，UI 回退配对码版式；重跑一次 loading 让模式上屏。
     // ★ 用**框里的地址**探（已保存的 or 预置的）：只认偏好的话，
@@ -383,6 +386,51 @@ class _MePageState extends State<MePage> {
               ),
               const SizedBox(width: 12),
               Expanded(child: _statusLine(engine)),
+            ],
+          ),
+        ],
+        // ── 手动方向 + 常驻策略（FR-DATA-05）──────────────────────────
+        // 「配好地址之后就该看见上传/下载的入口」——之前只有双向一条路，
+        // 免配对模式下更是只挂一个「自动同步」徽标，用户没有任何可点的东西。
+        // 现在：两个一次性方向动作（按一次走一次）+ 常驻策略（决定自动同步
+        // 与「立即同步」的方向）。能谈上话（已接入 / 免配对）才摆出来，
+        // 未接入时这两排按钮点了也是报错，不该出现在界面上。
+        if (_joined || engine.accessMode == SyncAccessMode.open) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const ValueKey('sync-push'),
+                  onPressed: engine.isBusy ? null : engine.pushNow,
+                  icon: const Icon(Icons.cloud_upload_outlined, size: 16),
+                  label: const Text('上传改动',
+                      style: TextStyle(fontSize: 12.5)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const ValueKey('sync-pull'),
+                  onPressed: engine.isBusy ? null : engine.pullNow,
+                  icon: const Icon(Icons.cloud_download_outlined, size: 16),
+                  label: const Text('拉取更新',
+                      style: TextStyle(fontSize: 12.5)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final m in SyncMode.values)
+                FilterChip(
+                  key: ValueKey('sync-mode-${m.wire}'),
+                  label: Text(m.label, style: const TextStyle(fontSize: 12)),
+                  selected: engine.syncMode == m,
+                  onSelected: (_) => engine.setSyncMode(m),
+                ),
             ],
           ),
         ],

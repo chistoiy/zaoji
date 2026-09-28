@@ -123,6 +123,39 @@ void main() {
     engine.dispose();
   });
 
+  testWidgets('★ 免配对模式下也有上传/下载入口与同步策略（FR-DATA-05）', (tester) async {
+    // 用户报的：配好地址之后界面上只有一个「自动同步」徽标，没有任何可点的方向。
+    server.accessMode = 'open';
+    await pumpMe(tester, saveServerUrl: false, presetUrl: server.url);
+
+    expect(find.byKey(const ValueKey('sync-push')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sync-pull')), findsOneWidget);
+    for (final m in ['bidir', 'upload', 'download']) {
+      expect(find.byKey(ValueKey('sync-mode-$m')), findsOneWidget);
+    }
+
+    // 选「仅上传」：选中态立刻跟上，并且落进本机偏好
+    await tester.tap(find.byKey(const ValueKey('sync-mode-upload')));
+    await settleReal(tester, done: () => engine.syncMode == SyncMode.upload);
+    expect(engine.syncMode, SyncMode.upload);
+    expect(prefs.syncMode(), completes);
+    expect(await prefs.syncMode(), 'upload');
+    final chip = tester.widget<FilterChip>(
+        find.byKey(const ValueKey('sync-mode-upload')));
+    expect(chip.selected, isTrue);
+    engine.dispose();
+  });
+
+  testWidgets('未接入（配对码模式）时不给方向按钮——点了只会报错', (tester) async {
+    server.accessMode = 'pairCode';
+    await pumpMe(tester, saveServerUrl: false, presetUrl: 'http://127.0.0.1:9');
+
+    expect(find.text('配对码（5 分钟有效，一次性）'), findsOneWidget);
+    expect(find.byKey(const ValueKey('sync-push')), findsNothing);
+    expect(find.byKey(const ValueKey('sync-mode-bidir')), findsNothing);
+    engine.dispose();
+  });
+
   testWidgets('open 模式：免配对接入状态卡，没有配对码框', (tester) async {
     server.accessMode = 'open';
     await pumpMe(tester);

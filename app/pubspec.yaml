@@ -3,7 +3,7 @@ description: "灶记 ZAOJI —— 家庭菜谱手账。Android 用 App，iPhone 
 publish_to: 'none'
 
 # 版本号。Android 的 versionName/versionCode 由它决定。
-version: 0.14.1+8
+version: 0.14.2+9
 
 environment:
   sdk: ^3.10.8
@@ -62,11 +62,11 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
 
-  # 注：不能把 zaoji_server 拉进 dev_dependencies 做端到端测试——
-  # 服务端锁 sqlite3 ^2.x（sqlite_loader 依赖已被 3.x 移除的 open.overrideFor），
-  # app 需要 ^3.x（drift 硬要求），版本解算必然失败（R11 已知事项）。
-  # 所以引擎测试用「测试内 dart:io HttpServer 模拟同步协议」走真 HTTP；
-  # 真两端 E2E 用「真 exe + Web 产物」的人工链路验证（见交接文档 R13）。
+  # 注：R36 起 app 与服务端同用 sqlite3 2.9.x，把 zaoji_server 拉进 dev_dependencies
+  # 在版本解算上已经可行（R11 那条「app 要 3.x」的前提随 3.x 一起作废）。
+  # 但仍然不这么做：进程内起真服务反而难控制端口与生命周期，
+  # 引擎测试用 test/fake_sync_server.dart 走真 HTTP + 真协议形状就够，
+  # 两端一致性由「真 exe + 真 Web 产物」的人工 E2E 兜（见交接文档 R13）。
 
 flutter:
   uses-material-design: true
