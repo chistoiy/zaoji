@@ -9,6 +9,7 @@ import 'package:zaoji/data/sync/sync_scope.dart';
 import 'package:zaoji/data/sync/sync_transport.dart';
 import 'package:zaoji/models.dart';
 import 'package:zaoji/ui/ai_settings_page.dart';
+import 'package:zaoji/ui/kitchen_page.dart';
 import 'package:zaoji/ui/recipe_detail_page.dart';
 import 'package:zaoji/ui/recipe_edit_page.dart';
 
@@ -153,6 +154,34 @@ void main() {
       expect(saved.isAi, isTrue, reason: 'FR-REC-21/35：来源=ai + 模型名');
       expect(saved.sourceModel, 'deepseek-flash');
       expect(saved.steps.length, greaterThanOrEqualTo(3));
+      engine.dispose();
+    });
+  });
+
+  group('AI 推荐（厨房页）', () {
+    testWidgets('推荐→确认→加入我的菜谱，来源记 ai；忽略只影响本次', (tester) async {
+      server.aiConfigured = true;
+      server.aiEnabled = true;
+      // 备点库存让推荐区可用
+      await store.upsertPantry(name: '豆腐', qtyValue: 1);
+      final engine = await pumpPage(tester, const KitchenPage(initialSegment: 1));
+      await settle(tester,
+          done: () => find.byKey(const ValueKey('ai-reco-ask')).evaluate().isNotEmpty);
+      await tester.tap(find.byKey(const ValueKey('ai-reco-ask')));
+      await settle(tester,
+          done: () => find.text('蒜香豆腐煲').evaluate().isNotEmpty);
+      expect(find.textContaining('AI 推荐 · 不在你的菜谱中'), findsOneWidget);
+      expect(find.textContaining('还要买'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('ai-adopt-蒜香豆腐煲')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('ai-adopt-confirm')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('ai-adopt-yes')));
+      await settle(tester,
+          done: () => store.recipes.any((x) => x.name == '蒜香豆腐煲'));
+      final added = store.recipes.lastWhere((x) => x.name == '蒜香豆腐煲');
+      expect(added.isAi, isTrue);
+      expect(added.steps.length, 2);
       engine.dispose();
     });
   });

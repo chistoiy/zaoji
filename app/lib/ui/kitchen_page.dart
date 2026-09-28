@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../data/recipe_store.dart';
 import '../data/store_scope.dart';
+import '../data/sync/sync_scope.dart';
+import 'ai_settings_page.dart';
 import '../models.dart';
 import '../theme.dart';
 import 'recipe_detail_page.dart';
@@ -49,6 +51,7 @@ class _KitchenPageState extends State<KitchenPage> {
               segments: const [
                 ButtonSegment(value: 0, label: Text('库存')),
                 ButtonSegment(value: 1, label: Text('能做什么')),
+                ButtonSegment(value: 2, label: Text('购物清单')),
               ],
               selected: {_segment},
               onSelectionChanged: (s) =>
@@ -64,9 +67,11 @@ class _KitchenPageState extends State<KitchenPage> {
             // （R20 同类教训：页面只 build 一次 = 数据是照片不是实况）
             child: ListenableBuilder(
               listenable: store,
-              builder: (context, _) => _segment == 0
-                  ? _PantryTab(store: store)
-                  : _RecommendTab(store: store),
+              builder: (context, _) => switch (_segment) {
+                0 => _PantryTab(store: store),
+                1 => _RecommendTab(store: store),
+                _ => _ShoppingTab(store: store),
+              },
             ),
           ),
         ],
@@ -78,8 +83,62 @@ class _KitchenPageState extends State<KitchenPage> {
               onPressed: () => _PantrySheet.show(context, null),
               child: const Icon(Icons.add),
             )
-          : null,
+          : _segment == 2
+              ? FloatingActionButton(
+                  key: const ValueKey('shopping-add-fab'),
+                  backgroundColor: ZaojiColors.accent,
+                  onPressed: () => _addShoppingItem(context),
+                  child: const Icon(Icons.add),
+                )
+              : null,
     );
+  }
+
+  /// 手动加一样进购物清单：轻量两字段对话框（名称必填）。
+  Future<void> _addShoppingItem(BuildContext context) async {
+    final nameCtrl = TextEditingController();
+    final qtyCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('加进购物清单'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: const ValueKey('shopping-name'),
+              controller: nameCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: '名称'),
+            ),
+            TextField(
+              controller: qtyCtrl,
+              decoration:
+                  const InputDecoration(labelText: '要多少（可空，如 500g / 2个）'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              key: const ValueKey('shopping-save'),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('加入')),
+        ],
+      ),
+    );
+    if (ok != true || nameCtrl.text.trim().isEmpty) return;
+    if (!context.mounted) return; // 对话框挂着时页面可能被销毁（R22 弹层同族纪律）
+    final store = StoreScope.of(context);
+    await store.addShoppingItems([
+      (
+        name: nameCtrl.text.trim(),
+        qtyText: qtyCtrl.text.trim().isEmpty ? null : qtyCtrl.text.trim(),
+        recipeId: null
+      )
+    ]);
   }
 }
 
@@ -576,6 +635,120 @@ class _PantrySheetState extends State<_PantrySheet> {
 
 // ──────────────────────────── 能做什么 ────────────────────────────
 
+// ──────────────────────────── 购物清单（R30） ────────────────────────────
+
+/// 买前可勾、买回一键入库。未购在上、已购沉底——清单的动线就是购物的动线。
+class _ShoppingTab extends StatelessWidget {
+  const _ShoppingTab({required this.store});
+
+  final RecipeStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [...store.shoppingItems]
+      ..sort((a, b) => (a.bought ? 1 : 0).compareTo(b.bought ? 1 : 0));
+    final boughtCount = items.where((x) => x.bought).length;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+      children: [
+        if (items.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 60),
+            child: Center(
+              child: Text(
+                '购物清单是空的\n去「能做什么」把缺的加进来，或点 + 手动记',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 13,
+                    height: 1.8,
+                    color: ZaojiColors.muted),
+              ),
+            ),
+          ),
+        if (boughtCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('已买 $boughtCount 样，买齐了入库变库存',
+                      style: const TextStyle(
+                          fontSize: 12, color: ZaojiColors.muted)),
+                ),
+                FilledButton.icon(
+                  key: const ValueKey('shopping-stockin'),
+                  onPressed: () async {
+                    final n = await store.stockInBoughtShopping();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text('已入库 $n 样'),
+                        duration: const Duration(seconds: 2)));
+                  },
+                  icon: const Icon(Icons.download, size: 16),
+                  label: Text('购物入库（$boughtCount）'),
+                  style: FilledButton.styleFrom(
+                      backgroundColor: ZaojiColors.accent),
+                ),
+              ],
+            ),
+          ),
+        for (final x in items)
+          Container(
+            key: ValueKey('shopping-row-${x.id}'),
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(ZaojiRadius.md),
+              border: Border.all(color: ZaojiColors.line),
+            ),
+            child: Row(
+              children: [
+                Checkbox(
+                  value: x.bought,
+                  activeColor: ZaojiColors.accent,
+                  onChanged: (v) =>
+                      store.toggleShoppingBought(x.id, v ?? false),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        x.name +
+                            (x.qtyText != null && x.qtyText!.isNotEmpty
+                                ? ' · ${x.qtyText}'
+                                : ''),
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            decoration: x.bought
+                                ? TextDecoration.lineThrough
+                                : null,
+                            color: x.bought
+                                ? ZaojiColors.muted
+                                : ZaojiColors.ink),
+                      ),
+                      Text('来源：${x.sourceLabel}',
+                          style: const TextStyle(
+                              fontSize: 10.5, color: ZaojiColors.muted)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close,
+                      size: 16, color: ZaojiColors.muted),
+                  tooltip: '移除 ${x.name}',
+                  onPressed: () => store.removeShopping(x.id),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _RecommendTab extends StatelessWidget {
   const _RecommendTab({required this.store});
 
@@ -602,6 +775,7 @@ class _RecommendTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
       children: [
+        _AiRecoSection(store: store),
         _group('能做', canCook.length, const Color(0xFF37634A), canCook, context,
             empty: '都不齐——先看「要买不少」那组挑一样补？'),
         _group('差一点', almost.length, ZaojiColors.amber, almost, context,
@@ -687,6 +861,42 @@ class _RecommendTab extends StatelessWidget {
                           ),
                       ],
                     ),
+                    // FR-RECO-04：缺项一键加进购物清单（另一台设备上也能看到）
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        key: ValueKey('reco-shop-${e['id']}'),
+                        onPressed: () async {
+                          final n = await store.addShoppingItems(
+                            [
+                              for (final m in (e['missing'] as List)
+                                  .cast<Map<Object?, Object?>>())
+                                (
+                                  name: '${m['name']}',
+                                  qtyText: m['qtyText'] == null ||
+                                          '${m['qtyText']}'.isEmpty
+                                      ? null
+                                      : '${m['qtyText']}',
+                                  recipeId: '${e['id']}',
+                                )
+                            ],
+                            source: 'reco',
+                          );
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                                content: Text(n == 0
+                                    ? '缺的都已经在清单里了'
+                                    : '已把 $n 样缺的加进购物清单'),
+                                duration: const Duration(seconds: 2)),
+                          );
+                        },
+                        child: const Text('把缺的加进清单',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: ZaojiColors.accent)),
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -694,5 +904,300 @@ class _RecommendTab extends StatelessWidget {
           ),
       ],
     );
+  }
+}
+
+/// R31 · 「让 AI 推荐」区（FR-AI-40~48）。
+///
+/// 与本地匹配的关系是**补集**：本地三组只看你记过的菜，AI 推「你现在做得成、
+/// 但库里没记录」的菜——所以卡上必须标注「AI 推荐 · 不在你的菜谱中」（FR-AI-44），
+/// 加入前要确认（FR-AI-46），忽略只在本次会话生效（FR-AI-47）。
+class _AiRecoSection extends StatefulWidget {
+  const _AiRecoSection({required this.store});
+
+  final RecipeStore store;
+
+  @override
+  State<_AiRecoSection> createState() => _AiRecoSectionState();
+}
+
+class _AiRecoSectionState extends State<_AiRecoSection> {
+  bool _busy = false;
+  List<Map<String, Object?>>? _dishes;
+  String? _error;
+  final Set<String> _ignored = {};
+
+  Future<void> _ask() async {
+    // SyncScope 可选：个别测试脱引擎 pump 推荐页（R27 详情页同族教训）
+    final engine = context.getInheritedWidgetOfExactType<SyncScope>()?.engine;
+    if (engine == null) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = '还没接入家庭服务端';
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final res = await engine.aiCall('/api/ai/recommend', {
+        'pantry': [
+          for (final p in widget.store.pantryItems)
+            if (p.have) {'name': p.name, 'amount': p.qtyLabel}
+        ],
+        'existing': [for (final r in widget.store.recipes) r.name],
+      });
+      if (res['ok'] != true) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = '${res['message'] ?? '推荐失败'}';
+        });
+        return;
+      }
+      final dishes = ((res['result'] as Map)['dishes'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, Object?>())
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _dishes = dishes;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final t = '$e';
+      setState(() {
+        _busy = false;
+        _error = t.contains('401') || t.contains('StateError')
+            ? '还没配置大模型 · 我的 → 大模型能力'
+            : t.contains('未启用')
+                ? '「AI 推荐菜品」当前是关闭的，可在配置页打开'
+                : t;
+      });
+    }
+  }
+
+  Future<void> _adopt(Map<String, Object?> d) async {
+    final name = '${d['name']}';
+    final steps = (d['steps'] as List? ?? const []).map((e) => '$e').toList();
+    final ings =
+        (d['ingredients'] as List? ?? const []).whereType<Map>().toList();
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: ZaojiColors.paper,
+      shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(ZaojiRadius.xl))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        child: Column(
+          key: const ValueKey('ai-adopt-confirm'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('加入「$name」？',
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text(
+              '食材 ${ings.length} 样 · 步骤 ${steps.length} 步 · '
+              '难度 ${d['difficulty'] ?? 1} · 约 ${d['self_time'] ?? 0} 分钟\n'
+              '加入后来源会标记为 AI，可以照常逐项修改。',
+              style: const TextStyle(
+                  fontSize: 12.5, height: 1.8, color: ZaojiColors.ink2),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('先不')),
+                const Spacer(),
+                FilledButton(
+                  key: const ValueKey('ai-adopt-yes'),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: FilledButton.styleFrom(
+                      backgroundColor: ZaojiColors.accent),
+                  child: const Text('加入我的菜谱'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final engine =
+        context.getInheritedWidgetOfExactType<SyncScope>()?.engine;
+    await widget.store.createRecipe(RecipeDraft(
+      name: name,
+      sub: '${d['sub'] ?? ''}',
+      difficulty: (d['difficulty'] as num?)?.round().clamp(1, 3) ?? 1,
+      selfTime: (d['self_time'] as num?)?.round() ?? 0,
+      servings: (d['servings'] as num?)?.round() ?? 2,
+      ingredients: [
+        for (final i in ings)
+          IngredientDraft(
+              name: '${i['name']}',
+              qty: '${i['amount'] ?? ''}',
+              isMain: false),
+      ],
+      steps: steps,
+      source: 'ai',
+      sourceModel: '${engine?.aiStatusCache?['model'] ?? ''}',
+    ));
+    if (!mounted) return;
+    setState(
+        () => _dishes = _dishes?.where((x) => '${x['name']}' != name).toList());
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('「$name」已加入，来源标记为 AI'),
+        duration: const Duration(seconds: 2)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final engine = context.getInheritedWidgetOfExactType<SyncScope>()?.engine;
+    final notConfigured = engine?.aiStatusCache != null &&
+        engine!.aiStatusCache!['configured'] != true;
+    final shown = (_dishes ?? const [])
+        .where((d) => !_ignored.contains('${d['name']}'))
+        .toList();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        key: const ValueKey('ai-reco-section'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: ZaojiColors.aiBg,
+              borderRadius: BorderRadius.circular(ZaojiRadius.md),
+              border: Border.all(color: const Color(0x336E4468)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.auto_awesome,
+                    size: 18, color: ZaojiColors.ai),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                      '让 AI 按库存再推几道？\n能推出你还没记录过、但现在做得成的菜',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.6,
+                          color: ZaojiColors.ai)),
+                ),
+                if (_busy)
+                  const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: ZaojiColors.ai))
+                else
+                  TextButton(
+                    key: const ValueKey('ai-reco-ask'),
+                    onPressed: notConfigured ? _gotoSettings : _ask,
+                    child: Text(notConfigured ? '去配置' : '推荐',
+                        style: const TextStyle(
+                            fontSize: 13, color: ZaojiColors.ai)),
+                  ),
+              ],
+            ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(_error!,
+                  style: const TextStyle(
+                      fontSize: 11.5, color: ZaojiColors.accent)),
+            ),
+          for (final dish in shown)
+            Container(
+              margin: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(ZaojiRadius.md),
+                border: Border.all(color: const Color(0x336E4468)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text('${dish['name']}',
+                            style: const TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: ZaojiColors.aiBg,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Text('AI 推荐 · 不在你的菜谱中',
+                            style: TextStyle(
+                                fontSize: 9.5, color: ZaojiColors.ai)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text('${dish['reason'] ?? ''}',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.6,
+                          color: ZaojiColors.ink2)),
+                  if ((dish['extra_needed'] as List? ?? const [])
+                      .isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                          '还要买：${(dish['extra_needed'] as List).join('、')}',
+                          style: const TextStyle(
+                              fontSize: 11.5, color: ZaojiColors.amber)),
+                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        key: ValueKey('ai-ignore-${dish['name']}'),
+                        onPressed: () => setState(
+                            () => _ignored.add('${dish['name']}')),
+                        child: const Text('忽略',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: ZaojiColors.muted)),
+                      ),
+                      FilledButton(
+                        key: ValueKey('ai-adopt-${dish['name']}'),
+                        onPressed: () => _adopt(dish),
+                        style: FilledButton.styleFrom(
+                            backgroundColor: ZaojiColors.accent,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 8)),
+                        child: const Text('加入我的菜谱',
+                            style: TextStyle(fontSize: 12.5)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _gotoSettings() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const AiSettingsPage()));
   }
 }

@@ -36,32 +36,55 @@ void main() {
         req.response.statusCode = reply as int;
         req.response.write('{"error":{"message":"mocked failure about model"}}');
       } else {
-        req.response.write(jsonEncode(reply ??
-            {
-              'choices': [
-                {
-                  'message': {
-                    'content': jsonEncode({
-                      'kcal_per_serving': 250,
-                      'total_kcal': 500,
-                      'protein_g': 22,
-                      'fat_g': 30,
-                      'carb_g': 20,
-                      'per_ingredient': [
-                        {'name': '番茄', 'kcal': 54}
+        // 默认回复按请求内容分支：推荐要 dishes 形状，其余要热量形状——
+        // 一份假上游同时喂两类测试，比复制两个 server 干净
+        Map<String, Object?> auto() {
+          final isReco = body.contains('家里现有食材');
+          final content = isReco
+              ? {
+                  'dishes': [
+                    {
+                      'name': '蒜香豆腐煲',
+                      'sub': '豆腐的新做法',
+                      'difficulty': 1,
+                      'self_time': 25,
+                      'servings': 2,
+                      'ingredients': [
+                        {'name': '豆腐', 'amount': '1盒'},
+                        {'name': '蒜', 'amount': '3瓣'}
                       ],
-                      'confidence': 'medium',
-                      'note': 'mock',
-                    })
-                  }
+                      'steps': ['蒜末爆香 2 分钟', '豆腐下锅焖 15 分钟'],
+                      'reason': '用上了家里的豆腐',
+                      'extra_needed': ['蒜']
+                    }
+                  ]
                 }
-              ],
-              'model': 'deepseek-flash',
-              'usage': {
-                'prompt_tokens': 100,
-                'completion_tokens': 50
-              },
-            }));
+              : {
+                  'kcal_per_serving': 250,
+                  'total_kcal': 500,
+                  'protein_g': 22,
+                  'fat_g': 30,
+                  'carb_g': 20,
+                  'per_ingredient': [
+                    {'name': '番茄', 'kcal': 54}
+                  ],
+                  'confidence': 'medium',
+                  'note': 'mock',
+                };
+          return {
+            'choices': [
+              {
+                'message': {'content': jsonEncode(content)}
+              }
+            ],
+            'model': 'deepseek-flash',
+            'usage': {
+              'prompt_tokens': 100,
+              'completion_tokens': 50
+            },
+          };
+        }
+        req.response.write(jsonEncode(reply ?? auto()));
       }
       await req.response.close();
     });
@@ -207,6 +230,51 @@ void main() {
       final j = jsonDecode(await res.readAsString());
       expect(j['error'], 'off');
       expect(seen, isEmpty);
+    });
+
+    test('recommend：库存+已有菜谱名进 prompt，off 门与空库存各自分家', () async {
+      final res = await hit('POST', '/api/ai/recommend', {
+        'pantry': [
+          {'name': '番茄', 'amount': '2个'},
+          {'name': '鸡蛋'}
+        ],
+        'existing': ['番茄炒蛋'],
+      });
+      final j = jsonDecode(await res.readAsString()) as Map<String, Object?>;
+      expect(res.statusCode, 200);
+      final dishes = (j['result'] as Map)['dishes'] as List;
+      expect(dishes, isNotEmpty);
+      // 上游确实收到了库存与已有菜谱（不然推重样没法避免）
+      expect(seen.single['body'], contains('番茄'));
+      expect(seen.single['body'], contains('不要重复推荐'));
+
+      // 空库存 → 400 人话（不浪费一次上游调用）
+      final bad = await hit('POST', '/api/ai/recommend', {'pantry': []});
+      expect(bad.statusCode, 400);
+
+      // 能力开关关掉 → 409 off，不打上游
+      final c = state.ai.config()..flagRecommend = false;
+      await state.ai.saveConfig(c);
+      final off = await hit('POST', '/api/ai/recommend', {
+        'pantry': [
+          {'name': '米'}
+        ]
+      });
+      expect(off.statusCode, 409);
+      expect(jsonDecode(await off.readAsString())['error'], 'off');
+    });
+
+    test('recommend 缓存：相同库存+相同已有清单，第二次不打上游', () async {
+      final body = {
+        'pantry': [
+          {'name': '豆腐'}
+        ],
+        'existing': <String>[],
+      };
+      await hit('POST', '/api/ai/recommend', body);
+      final second = await hit('POST', '/api/ai/recommend', body);
+      expect(jsonDecode(await second.readAsString())['cached'], true);
+      expect(seen.length, 1);
     });
 
     test('recipe_fill：菜名进、结构化菜谱出（步骤文本带时间关键词义务在 prompt 里）',

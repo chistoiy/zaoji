@@ -45,6 +45,7 @@ Future<String> statusPageHtml(ServerState st, List<String> ips,
     'menu_item': '菜单里的菜',
     'cook_session': '做菜模式进度',
     'pantry_item': '食材库存',
+    'shopping_item': '购物清单',
     'nutrition': '热量估算',
     'conflict_item': '冲突箱（要用户选，不静默覆盖）',
   };

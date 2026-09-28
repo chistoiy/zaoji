@@ -47,6 +47,8 @@ class FakeSyncServer {
   int aiFillCalls = 0;
   Map<String, Object?>? aiCaloriesReply;
   Map<String, Object?>? aiFillReply;
+  Map<String, Object?>? aiRecommendReply;
+  int aiRecommendCalls = 0;
   String? aiFailWith; // 'off' | 'auth'：非 null 时能力端点直接回该错误
 
   static const serverId = 'fake-server';
@@ -91,6 +93,8 @@ class FakeSyncServer {
     aiFillCalls = 0;
     aiCaloriesReply = null;
     aiFillReply = null;
+    aiRecommendReply = null;
+    aiRecommendCalls = 0;
     aiFailWith = null;
   }
 
@@ -343,6 +347,35 @@ class FakeSyncServer {
             ],
             'confidence': 'medium',
             'note': '按常见营养数据估算',
+          },
+        };
+      }
+    } else if (path == '/api/ai/recommend' && req.method == 'POST') {
+      aiRecommendCalls++;
+      if (aiFailWith != null) {
+        status = aiFailWith == 'off' ? 409 : 502;
+        res = {'ok': false, 'error': aiFailWith, 'message': 'mock $aiFailWith'};
+      } else {
+        res = {
+          'ok': true,
+          'model': aiModel,
+          'result': aiRecommendReply ?? {
+            'dishes': [
+              {
+                'name': '蒜香豆腐煲',
+                'sub': '豆腐的新做法',
+                'difficulty': 1,
+                'self_time': 25,
+                'servings': 2,
+                'ingredients': [
+                  {'name': '豆腐', 'amount': '1盒'},
+                  {'name': '蒜', 'amount': '3瓣'}
+                ],
+                'steps': ['蒜末爆香 2 分钟', '豆腐下锅焖 15 分钟'],
+                'reason': '用上了家里的豆腐',
+                'extra_needed': ['蒜']
+              }
+            ]
           },
         };
       }

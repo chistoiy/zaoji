@@ -282,6 +282,11 @@ class AiService {
         'max_tokens': maxTokens,
         'temperature': 0.2,
         'response_format': {'type': 'json_object'},
+        // deepseek-flash 是推理模型：实测重任务里 reasoning 能把 max_tokens
+        // 全部吃光、content 返回空串（推荐场景真发过）。我们的三类任务
+        // （热量/补全/推荐）要的是**稳定的结构化输出**不是深度推理，
+        // 统一 thinking=disabled——09-28 验证记录：关思考 0.9s 出合规 JSON。
+        'thinking': {'type': 'disabled'},
       });
       req.write(body);
       res = await req.close().timeout(timeout);
@@ -403,6 +408,46 @@ class AiService {
       '要求：步骤 4~8 条；带等待的步骤必须把时间写进步骤文本（如「小火炖 20 分钟」）'
       '以便应用识别时间胶囊；食材分量用家庭习惯（个/勺/克）。',
       hint == null || hint.isEmpty ? '菜名：$name' : '菜名：$name\n补充要求：$hint',
+      maxTokens: 3000,
+    );
+    _putCache(ck, r);
+    return r;
+  }
+
+  /// AI 推荐菜品（R31 · FR-AI-40~48）：按家里现有食材推能做的菜。
+  ///
+  /// 与本地匹配（shared PantryMatch）的关系不是替代是补集：本地匹「库里有记录的」，
+  /// AI 推「库里没有但你现在做得成的」——所以 prompt 里把已有菜谱名一起给模型，
+  /// **推重复菜是最伤信任的**（用户会以为 AI 没在听）。
+  /// 「优先不新增食材或新增 ≤2 样」（FR-AI-43）写在要求里；
+  /// 是否标注「不在你的菜谱中」由客户端比对决定（服务端不掌握全库）。
+  Future<Map<String, Object?>> recommend({
+    required List<Map<String, Object?>> pantry,
+    required List<String> existingRecipeNames,
+    int want = 5,
+  }) async {
+    final cfg = config();
+    if (!cfg.enabled || !cfg.flagRecommend) {
+      throw AiUpstreamException('off', 'AI 或「AI 推荐菜品」能力未启用');
+    }
+    final ck = _cacheKey('recommend', {
+      'p': pantry, 'e': existingRecipeNames, 'w': want,
+    });
+    if (_cache[ck] != null) return {..._cache[ck]!, 'cached': true};
+    final lines = pantry
+        .map((e) => '${e['name']}${(e['amount'] ?? '').toString().isEmpty ? '' : ' ${e['amount']}'}')
+        .join('、');
+    final r = await chatJson(
+      '你是家庭厨师。根据家里现有食材推荐家常菜，只输出 JSON，不要解释文字或围栏。'
+      '字段：{"dishes":[{"name":str,"sub":str,"difficulty":1|2|3,"self_time":int,'
+      '"servings":int,"ingredients":[{"name":str,"amount":str}],'
+      '"steps":[str],"reason":str(为什么推荐：用上了哪些现有食材),'
+      '"extra_needed":[str](还需要买的食材，尽量空)]}]} '
+      '硬性要求：优先做现有食材就能完成的菜，最多 $want 道，'
+      '每道菜需要新买的食材不超过 2 样（extra_needed 里列出来）；'
+      'steps 里带等待的步骤必须写时间（如「炖 40 分钟」）；不要推荐与已有菜谱同名或高度相似的菜。',
+      '家里现有食材：$lines\n'
+      '已有菜谱（不要重复推荐）：${existingRecipeNames.join('、')}',
       maxTokens: 3000,
     );
     _putCache(ck, r);

@@ -65,6 +65,7 @@ String fieldLabel(String tbl, String field) {
     'cook_session': {'started_at': '开始时间', 'finished_at': '完成时间'},
     'pantry_item': {'name': '食材', 'amount': '库存量'},
     'nutrition': {'kcal': '热量', 'protein_g': '蛋白质', 'fat_g': '脂肪', 'carb_g': '碳水'},
+    'shopping_item': {'name': '食材', 'qty_text': '要买量', 'bought': '已买'},
   };
   if (field == 'deleted_at') return '删除状态';
   return labels[tbl]?[field] ?? field;

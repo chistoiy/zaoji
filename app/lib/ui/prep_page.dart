@@ -45,6 +45,39 @@ class _PrepPageState extends State<PrepPage> {
       appBar: AppBar(
         title: const Text('备菜清单'),
         backgroundColor: ZaojiColors.paper,
+        actions: [
+          // FR-PLAN-10 第一步：这份清单能一键变购物清单（同名去重在 store 里）。
+          // 货架排序/导出图片等尾巴记在交接文档——先让"买菜带着手机"成立。
+          TextButton.icon(
+            key: const ValueKey('prep-to-shop'),
+            onPressed: () async {
+              final store = StoreScope.of(context);
+              final menu = store.menuById(widget.menuId);
+              if (menu == null) return;
+              final lines = store.mergeForPrep(menu.recipeIds);
+              final n = await store.addShoppingItems(
+                [
+                  for (final l in lines)
+                    (
+                      name: l.name,
+                      qtyText:
+                          l.qtyText.isEmpty ? null : l.qtyText,
+                      recipeId: null,
+                    )
+                ],
+                source: 'prep',
+              );
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(
+                      n == 0 ? '清单里已经有了' : '已把 $n 样加进购物清单'),
+                  duration: const Duration(seconds: 2)));
+            },
+            icon: const Icon(Icons.list_alt, size: 16),
+            label: const Text('购物清单',
+                style: TextStyle(fontSize: 12.5)),
+          ),
+        ],
       ),
       body: ListenableBuilder(
         listenable: StoreScope.of(context),

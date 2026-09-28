@@ -280,6 +280,40 @@ class PantryItem {
   }
 }
 
+/// 购物清单条目（R30，schema v6 shopping_item）。
+class ShoppingItem {
+  final String id;
+  final String name;
+  final String? qtyText;
+  final String source; // manual / reco / prep
+  final String? recipeId;
+  final bool bought;
+
+  const ShoppingItem({
+    required this.id,
+    required this.name,
+    this.qtyText,
+    this.source = 'manual',
+    this.recipeId,
+    this.bought = false,
+  });
+
+  factory ShoppingItem.fromRow(Map<String, Object?> row) => ShoppingItem(
+        id: '${row['id']}',
+        name: '${row['name']}',
+        qtyText: row['qty_text'] as String?,
+        source: '${row['source'] ?? 'manual'}',
+        recipeId: row['recipe_id'] as String?,
+        bought: (row['bought'] as int? ?? 0) == 1,
+      );
+
+  String get sourceLabel => switch (source) {
+        'reco' => '缺项',
+        'prep' => '备菜',
+        _ => '手动',
+      };
+}
+
 /// 写热量用的草稿（saveNutrition 的入参）。
 class NutritionDraft {
   final double perServingKcal;

@@ -301,6 +301,25 @@ const List<TableSpec> kTables = [
     ],
   ),
 
+  // ───────────────── 购物清单（R30 · v6 纯增表） ─────────────────
+  TableSpec(
+    name: 'shopping_item',
+    scope: TableScope.business,
+    comment: '购物清单。推荐缺项/备菜一键加入，买回来到库存',
+    columns: [
+      ...kStandardColumns,
+      ColumnSpec('name', 'TEXT', notNull: true),
+      ColumnSpec('qty_text', 'TEXT', comment: '要买多少的口语原文，可空'),
+      ColumnSpec('source', 'TEXT',
+          notNull: true,
+          defaultSql: "'manual'",
+          comment: 'manual / reco(缺项) / prep(备菜导出)'),
+      ColumnSpec('recipe_id', 'TEXT', comment: '为哪道菜缺的（可空）'),
+      ColumnSpec('bought', 'INTEGER',
+          notNull: true, defaultSql: '0', comment: '已买：勾上后等「购物入库」收编'),
+    ],
+  ),
+
   // ───────────────── 热量 ─────────────────
   TableSpec(
     name: 'nutrition',
@@ -500,7 +519,10 @@ const List<TableSpec> kTables = [
 /// `IF NOT EXISTS` 救不了旧库，服务端迁移里有针对性的 ALTER（见 server/db.dart）。
 /// v4 → v5：`recipe.photos` + `step.images`（R29 多照片/步骤图）——第二例改列，
 /// 迁移脚本两端共用下面的 [kSchemaV5AlterSql]（改列语句只有一份，不许各写一套）。
-const int kSchemaVersion = 5;
+/// v5 → v6：纯增表 `shopping_item`（R30 购物清单）——回到 v3 那类安全路径，
+/// 两端 createSql 幂等补建，无需改列脚本；旧客户端拉不到这张表的行也不报错
+/// （未知表按自己的表清单自然跳过），**apk 不再是发版硬约束**。
+const int kSchemaVersion = 6;
 
 /// v4 → v5 的列迁移语句（服务端与 App 的 onUpgrade **逐字共用**）。
 /// UPDATE 里的值都是 64 位小写十六进制（MediaStore 入库前已验格式），

@@ -392,6 +392,8 @@ class RecipeStore extends ChangeNotifier {
     await _loadNutrition(db);
     // R28：库存同样随重载刷新（同步引擎拉回别人买的菜）。
     await _loadPantry(db);
+    // R30：购物清单随重载刷新（另一台设备加购的缺项要现身）。
+    await _loadShopping(db);
     // R23：同步引擎拉回的可能就是别人排的菜单——menus/备菜板跟着一起重载。
     await _loadMenus(db);
     await _loadPrepBoards(db);
@@ -542,6 +544,143 @@ class RecipeStore extends ChangeNotifier {
     pantryItems = pantryItems.where((x) => x.id != id).toList();
     notifyListeners();
     _fireLocalWrite();
+  }
+
+  // ─────────────── R30 · 购物清单（shopping_item） ───────────────
+
+  List<ShoppingItem> shoppingItems = const [];
+
+  Future<void> _loadShopping(ZaojiDb db) async {
+    final rows = await db
+        .customSelect(
+          'SELECT * FROM shopping_item WHERE deleted_at IS NULL',
+        )
+        .get();
+    shoppingItems = [for (final r in rows) ShoppingItem.fromRow(r.data)];
+  }
+
+  /// 批量加购。**同名（活行）跳过**——清单是集合不是流水（撞名口径同库存）。
+  /// 返回真正新增的条数，UI 用它报「加了 N 样」。
+  Future<int> addShoppingItems(
+      List<({String name, String? qtyText, String? recipeId})> items,
+      {String source = 'manual'}) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() =>
+        hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+    var added = 0;
+    final fresh = <ShoppingItem>[];
+    await db.transaction(() async {
+      for (final it in items) {
+        final name = it.name.trim();
+        if (name.isEmpty) continue;
+        final dup = shoppingItems.any((x) => x.name == name) ||
+            fresh.any((x) => x.name == name);
+        if (dup) continue;
+        final id = _ulids.next();
+        await _insert(db, kShoppingTable, {
+          'id': id,
+          'updated_at': next(),
+          'updated_by': nodeId,
+          'rev': 1,
+          'deleted_at': null,
+          'name': name,
+          'qty_text': it.qtyText,
+          'source': source,
+          'recipe_id': it.recipeId,
+          'bought': 0,
+        });
+        fresh.add(ShoppingItem(
+            id: id,
+            name: name,
+            qtyText: it.qtyText,
+            source: source,
+            recipeId: it.recipeId));
+        added++;
+      }
+    });
+    if (fresh.isNotEmpty) {
+      shoppingItems = [...shoppingItems, ...fresh];
+      notifyListeners();
+      _fireLocalWrite();
+    }
+    return added;
+  }
+
+  Future<void> toggleShoppingBought(String id, bool bought) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    final hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    await db.customUpdate(
+      'UPDATE shopping_item SET bought = ?, updated_at = ?, updated_by = ?, '
+      'rev = rev + 1 WHERE id = ? AND deleted_at IS NULL',
+      variables: [
+        Variable(bought ? 1 : 0),
+        Variable(hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode()),
+        Variable(nodeId),
+        Variable(id),
+      ],
+    );
+    shoppingItems = [
+      for (final x in shoppingItems)
+        if (x.id == id)
+          ShoppingItem(
+              id: x.id,
+              name: x.name,
+              qtyText: x.qtyText,
+              source: x.source,
+              recipeId: x.recipeId,
+              bought: bought)
+        else
+          x,
+    ];
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  Future<void> removeShopping(String id) async {
+    final db = _db!;
+    final nodeId = await _resolveNodeId();
+    final now = DateTime.now();
+    var hlc = Hlc.now(nodeId, wallMs: now.millisecondsSinceEpoch);
+    String next() =>
+        hlc.tick(nodeId, wallMs: now.millisecondsSinceEpoch).encode();
+    await db.customUpdate(
+      'UPDATE shopping_item SET deleted_at = ?, updated_at = ?, updated_by = ?, '
+      'rev = rev + 1 WHERE id = ? AND deleted_at IS NULL',
+      variables: [Variable(next()), Variable(next()), Variable(nodeId), Variable(id)],
+    );
+    shoppingItems = shoppingItems.where((x) => x.id != id).toList();
+    notifyListeners();
+    _fireLocalWrite();
+  }
+
+  /// 购物入库（FR-PAN-08）：已勾的条目逐样进库存（同名复用库存原行），
+  /// 进完把清单行删掉（软删上墓碑）。返回入库样数。
+  Future<int> stockInBoughtShopping() async {
+    final bought = shoppingItems.where((x) => x.bought).toList();
+    if (bought.isEmpty) return 0;
+    for (final b in bought) {
+      final q = _parseQty(b.qtyText);
+      await upsertPantry(
+          name: b.name, qtyValue: q?.$1, qtyUnit: q?.$2, have: true);
+      await removeShopping(b.id);
+    }
+    return bought.length;
+  }
+
+  /// 「500g」「2个」→ (500.0, 'g')；「适量」等模糊量 → null（只记有）。
+  static (double, String?)? _parseQty(String? text) {
+    final t = (text ?? '').trim();
+    final m = RegExp(r'^(\d+(?:\.\d+)?)\s*([一-龥a-zA-Z]*)').firstMatch(t);
+    if (m == null) return null;
+    final v = double.tryParse(m.group(1)!);
+    if (v == null) return null;
+    final unit = m.group(2) ?? '';
+    return (v, unit.isEmpty ? null : unit);
   }
 
   /// 清空冰箱的推荐结果（FR-RECO-01~04 本地匹配部分）。
@@ -1792,6 +1931,8 @@ const String kSeedNodeId = 'seed';
 final TableSpec kRecipeTable = kTables.firstWhere((t) => t.name == 'recipe');
 final TableSpec kNutritionTable =
     kTables.firstWhere((t) => t.name == 'nutrition');
+final TableSpec kShoppingTable =
+    kTables.firstWhere((t) => t.name == 'shopping_item');
 final TableSpec kPantryTable =
     kTables.firstWhere((t) => t.name == 'pantry_item');
 final TableSpec kCookSessionTable = kTables.firstWhere(

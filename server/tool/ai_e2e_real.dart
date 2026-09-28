@@ -60,6 +60,20 @@ Future<void> main() async {
         '难度 ${fr['difficulty']}，耗时 ${fr['self_time']} 分');
     check(timeInText, '步骤文本里确实带了时间关键词（时间胶囊能识别）');
 
+    final rec = await state.ai.recommend(
+        pantry: const [
+          {'name': '豆腐', 'amount': '1盒'},
+          {'name': '鸡蛋', 'amount': '3个'},
+          {'name': '葱'},
+        ],
+        existingRecipeNames: const ['番茄炒蛋', '紫菜蛋花汤']);
+    final dishes = (rec['result'] as Map)['dishes'] as List? ?? const [];
+    final first = dishes.isNotEmpty ? dishes.first as Map : const {};
+    check(dishes.isNotEmpty, 'AI 推荐：出了 ${dishes.length} 道，'
+        '首道「${first['name']}」还要买：'
+        '${(first['extra_needed'] as List? ?? const []).join('、')} '
+        '（缓存=${rec['cached'] == true}）');
+
     final u = state.ai.usage();
     // 只记**能力调用**（热量+补全=2 次）；连通测试不计费——它是配置动作不是能力
     check((u['calls'] as int? ?? 0) >= 2, '用量记账：$u');

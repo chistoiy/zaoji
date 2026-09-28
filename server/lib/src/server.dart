@@ -169,6 +169,8 @@ class ZaojiServer {
       ..post('/api/ai/config', (Request req) => _aiConfigWrite(state, req))
       ..post('/api/ai/test', (Request req) => _aiTest(state, req))
       ..post('/api/ai/calories', (Request req) => _aiCalories(state, req))
+      ..post('/api/ai/recommend',
+          (Request req) => _aiRecommend(state, req))
       ..post('/api/ai/recipe-fill',
           (Request req) => _aiRecipeFill(state, req));
 
@@ -1019,6 +1021,35 @@ class ZaojiServer {
         servings: body['servings'] is int ? body['servings'] as int : 2,
         ingredients: ingredients,
       );
+      return _json({'ok': true, ...r});
+    } on AiUpstreamException catch (e) {
+      return _json({'ok': false, 'error': e.kind, 'message': e.detail},
+          status: e.kind == 'off' ? 409 : 502);
+    }
+  }
+
+  static Future<Response> _aiRecommend(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    final pantry = (body?['pantry'] as List? ?? const [])
+        .whereType<Map<Object?, Object?>>()
+        .map((e) => e.cast<String, Object?>())
+        .toList();
+    if (pantry.isEmpty) {
+      return _json({'error': 'bad_request', 'message': '库存是空的——先记几样家里有的'},
+          status: 400);
+    }
+    final existing = (body?['existing'] as List? ?? const [])
+        .map((e) => '$e')
+        .toList();
+    try {
+      final r = await state.ai.recommend(
+          pantry: pantry, existingRecipeNames: existing);
       return _json({'ok': true, ...r});
     } on AiUpstreamException catch (e) {
       return _json({'ok': false, 'error': e.kind, 'message': e.detail},
