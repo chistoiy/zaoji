@@ -33,7 +33,13 @@ const path = require('path');
 const {chromium} = require('playwright-core');
 
 const ROOT = path.resolve(__dirname, '..');
-const WEB = path.join(ROOT, 'app', 'build', 'web');
+// 默认量本仓库的 app/build/web；`--web=<目录>` 指到别处（v0.14.4 热修分支的产物要单独验，
+// 那条线上没有 #/members 深链，配合 --skip-members 用）。
+const argWeb = process.argv.find(a => a.startsWith('--web='));
+const WEB = argWeb
+  ? path.resolve(argWeb.slice('--web='.length))
+  : path.join(ROOT, 'app', 'build', 'web');
+const SKIP_MEMBERS = process.argv.includes('--skip-members');
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const PORT = 8791; // ★ 固定端口：随机端口 = 每次一个新 origin = 一个新库，跨刷新无从对比
 const PROFILE = path.join(ROOT, 'dist', 'web_probe_profile');
@@ -322,6 +328,9 @@ srv.listen(PORT, '127.0.0.1', async () => {
   await h.show('重启后', M1);
 
   console.log('\n〔4〕不套事务的单条写（createMember）同条件对照');
+  if (SKIP_MEMBERS) {
+    console.log('  ·    --skip-members：这条线上的产物没有 #/members 深链（v0.14.4 热修分支），跳过');
+  } else {
   await h.boot(BASE + '?a11y=1#/members', true);
   await h.tap('添加第一位家人', {partial: true}) || await h.tap('添加家人', {partial: true});
   await h.p.waitForTimeout(1600);
@@ -333,6 +342,7 @@ srv.listen(PORT, '127.0.0.1', async () => {
   await h.p.waitForTimeout(6000);
   const sD = await h.peek(M3);
   check('D 单条写零等待刷新后也在盘上', onDisk(sD, M3), '这条修复前就一直是通的，当对照组用');
+  }
 
   console.log('\n〔5〕同 origin 双开第二个页面（★ 断言 E：读到的是同一份吗）');
   const p3 = await ctx.newPage();
