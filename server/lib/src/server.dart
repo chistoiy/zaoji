@@ -141,6 +141,8 @@ class ZaojiServer {
       // R22：冲突裁决。鉴权与数据接口同一套（token 优先、开放模式认来访者）。
       ..post('/api/conflicts/resolve',
           (Request req) => _resolveConflicts(state, req))
+      // R43 · FR-DATA-13：回收站的「永久删除」。鉴权同数据接口。
+      ..post('/api/purge', (Request req) => _purge(state, req))
       // 媒体接口（R16）：同样要 token。GET 是显示端按需拉取，PUT 是上传。
       ..put('/api/media/<sha>',
           (Request req) => _mediaPut(state, req, req.params['sha']!))
@@ -644,8 +646,48 @@ class ZaojiServer {
     return _json({'ok': true, 'results': results});
   }
 
-  static Response _unauthorized(ServerState state) {
-    // 提示要按**当前模式**说：口令模式下让用户去输口令，
+  /// R43 · FR-DATA-13：回收站的「永久删除」。
+  ///
+  /// 请求体 `{rows:[{tbl,id},…]}`（1..200 条，同冲突裁决那套上限）。
+  /// 服务端只物理删**已经在回收站里**的行（前置条件在 SyncService.purge 里），
+  /// 逐条回 `purged / skipped / rejected`，整批一个事务。
+  ///
+  /// 图片字节不在这个请求里删：`recipe.photos` / `cover_sha256` 一没，
+  /// 下一次孤儿媒体回收（R18）自然把它们连派生图一起清掉——
+  /// 把几百 MB 的磁盘扫描塞进一个用户等结果的请求里是错的分层。
+  static Future<Response> _purge(ServerState state, Request req) async {
+    final device = _resolveDevice(state, req);
+    if (device == null) return _unauthorized(state);
+
+    final Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    final rows = body?['rows'];
+    if (rows is! List || rows.isEmpty || rows.length > 200 ||
+        !rows.every((e) => e is Map && e['tbl'] is String && e['id'] is String)) {
+      return _json({
+        'error': 'bad_request',
+        'message': 'rows 必须是 1..200 个 {tbl, id} 对象的数组',
+      }, status: 400);
+    }
+
+    final results = state.sync.purge(
+      device: device,
+      rows: [
+        for (final e in rows) (e as Map).map((k, v) => MapEntry('$k', v)),
+      ],
+    );
+    final n = results.where((r) => r['outcome'] == 'purged').length;
+    await state.log.write(
+        '[purge] ${device.name} 永久删除 $n 项（收到 ${rows.length}）'
+        '· 被拒：${results.where((r) => r['outcome'] == 'rejected').length}');
+    return _json({'ok': true, 'results': results});
+  }
+
+  static Response _unauthorized(ServerState state) {    // 提示要按**当前模式**说：口令模式下让用户去输口令，
     // 别再让人家满世界找已经不该存在的配对码。
     final mode = state.sync.accessMode;
     final hint = switch (mode) {

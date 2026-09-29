@@ -19,8 +19,16 @@ class FakeSyncServer {
   int seq = 0;
   int pushCount = 0;
   int pullCount = 0;
+
+  /// R43 · `/api/purge` 被调了几次、每次收了什么（断言"没接入就不该打到服务端"用得上）。
+  int purgeCount = 0;
+  final purgeBodies = <Map<String, Object?>>[];
   Map<String, String>? lastPullQuery;
   int? protocolVersionOverride;
+
+  /// R43 · 关掉它就演**老服务端**：`/api/purge` 这条路由不存在，回 HTML 404。
+  /// （家里那台现在跑的就是 v0.14.3，这条组合一定会被踩到，不能只在文档里假设。）
+  bool supportsPurge = true;
 
   /// 每个请求回包前故意慢这么久。测「进行中」的 UI（进度条、按钮禁用态）时
   /// 用它把中间态钉住——本机 localhost 往返时快时慢，不设延迟的断言会偶发。
@@ -82,6 +90,9 @@ class FakeSyncServer {
     tokens.clear();
     seq = 0;
     pushCount = 0;
+    purgeCount = 0;
+    purgeBodies.clear();
+    supportsPurge = true;
     pullCount = 0;
     lastPullQuery = null;
     latency = Duration.zero;
@@ -231,6 +242,26 @@ class FakeSyncServer {
         (status, res) = req.method == 'POST'
             ? _push(json)
             : (200, _pull(req.uri.queryParameters));
+      } else if (req.uri.path == '/api/purge') {
+        // R43 · 永久删除。鉴权同数据接口，语义镜像真服务端（见 _purge）。
+        //
+        // **老服务端的形状**：v0.14.3 及更早的 exe 没有这条路由，shelf 兜底回的是
+        // **HTML 404**（不是 JSON）。这台假服务端要能演这一出，
+        // 否则"新前端 + 旧服务端"这条真会撞上的组合就只在文档里存在过。
+        if (!supportsPurge) {
+          req.response.statusCode = 404;
+          req.response.headers.contentType = ContentType.html;
+          req.response.write('<html><body>404 not found</body></html>');
+          await req.response.close();
+          return;
+        }
+        if (_deviceIdOf(req) == null && !_allowAnonymous(req)) {
+          req.response.statusCode = 401;
+          req.response.write(jsonEncode({'error': 'unauthorized'}));
+          await req.response.close();
+          return;
+        }
+        (status, res) = _purge(json);
       } else if (req.uri.path == '/api/conflicts/resolve') {
         // R22：鉴权与数据接口同一套（token 优先，开放模式认 X-Node-Id）
         if (_deviceIdOf(req) == null && !_allowAnonymous(req)) {
@@ -733,6 +764,103 @@ class FakeSyncServer {
       });
     }
     return (200, {'ok': true, 'results': results});
+  }
+
+  /// R43 · 永久删除。**镜像真服务端 SyncService.purge 的四条语义**，不是简化版：
+  /// ① 只认同步白名单里的表；② 只删已经在回收站里的行；
+  /// ③ `recipe` 级联 `ingredient` / `step`；④ 每条物理删各写一条 `op:'purge'` 变更。
+  /// 第 ④ 条是这个假件最容易偷懒漏掉的地方——漏了它，客户端测试就测不出
+  /// "对端设备留着一条还能恢复的墓碑"这个真问题。
+  (int, Map<String, Object?>) _purge(Map<String, Object?> body) {
+    purgeCount++;
+    purgeBodies.add(body);
+    final items = body['rows'];
+    if (items is! List || items.isEmpty || items.length > 200) {
+      return (
+        400,
+        {'error': 'bad_request', 'message': 'rows 必须是 1..200 个 {tbl, id}'}
+      );
+    }
+    final out = <Map<String, Object?>>[];
+    for (final raw in items) {
+      final e = (raw as Map).cast<String, Object?>();
+      final tbl = '${e['tbl']}';
+      final rowId = '${e['id'] ?? e['rowId'] ?? ''}';
+      if (!syncWhitelist.containsKey(tbl)) {
+        out.add({
+          'tbl': tbl,
+          'rowId': rowId,
+          'outcome': 'rejected',
+          'reason': '未知或不允许同步的表：$tbl'
+        });
+        continue;
+      }
+      if (rowId.isEmpty) {
+        out.add({
+          'tbl': tbl,
+          'rowId': rowId,
+          'outcome': 'rejected',
+          'reason': '缺少 id'
+        });
+        continue;
+      }
+      final row = (rows[tbl] ?? const {})[rowId];
+      if (row == null) {
+        out.add({
+          'tbl': tbl,
+          'rowId': rowId,
+          'outcome': 'skipped',
+          'reason': '服务端没有这一行（可能已经永久删除过了）'
+        });
+        continue;
+      }
+      if (row['deleted_at'] == null) {
+        out.add({
+          'tbl': tbl,
+          'rowId': rowId,
+          'outcome': 'rejected',
+          'reason': '这一行还没进回收站，不能直接永久删除'
+        });
+        continue;
+      }
+      _purgeOne(tbl, rowId);
+      out.add({'tbl': tbl, 'rowId': rowId, 'outcome': 'purged'});
+    }
+    return (200, {'ok': true, 'results': out});
+  }
+
+  void _purgeOne(String tbl, String rowId) {
+    final stamp = _stamp();
+    if (tbl == 'recipe') {
+      for (final child in const ['ingredient', 'step']) {
+        final t = rows[child];
+        if (t == null) continue;
+        final kids = t.entries
+            .where((en) => '${en.value['recipe_id']}' == rowId)
+            .map((en) => en.key)
+            .toList();
+        for (final kid in kids) {
+          t.remove(kid);
+          changeLog.add({
+            'seq': ++seq,
+            'tbl': child,
+            'rowId': kid,
+            'op': 'purge',
+            'updatedAt': stamp,
+            'updatedBy': 'device',
+          });
+        }
+      }
+    }
+    rows[tbl]!.remove(rowId);
+    changeLog.add({
+      'seq': ++seq,
+      'tbl': tbl,
+      'rowId': rowId,
+      'op': 'purge',
+      'updatedAt': stamp,
+      'updatedBy': 'device',
+    });
   }
 
   Map<String, Object?> _pull(Map<String, String> q) {

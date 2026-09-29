@@ -157,15 +157,25 @@ class HttpSyncTransport implements SyncTransport {
     } catch (e) {
       throw SyncNetworkException('连不上服务端', e);
     }
+    // ★ 先判状态码，再试着解析载荷（与 [getBytes] 同一套姿势）。
+    //   旧写法是"解析失败就先抛 SyncNetworkException"，于是**非 2xx 但 body 不是 JSON**
+    //   的响应（老服务端没有这条路由时返回的是 HTML 404 页；反向代理的错误页同理）
+    //   会把状态码这条事实整个丢掉，只剩一句"响应不是 JSON"——
+    //   引擎本该按 401/404/409 分支决策的东西，就这么退化成了网络错误。
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      Map<String, Object?> payload = {};
+      try {
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        if (decoded is Map) payload = decoded.map((k, v) => MapEntry('$k', v));
+      } catch (_) {/* 载荷解不出来就用空 map，状态码照样交出去 */}
+      throw SyncTransportException(res.statusCode, payload);
+    }
     final Map<String, Object?> payload;
     try {
       final decoded = jsonDecode(utf8.decode(res.bodyBytes));
       payload = decoded is Map ? decoded.map((k, v) => MapEntry('$k', v)) : {};
     } catch (e) {
       throw SyncNetworkException('服务端响应不是 JSON（HTTP ${res.statusCode}）', e);
-    }
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw SyncTransportException(res.statusCode, payload);
     }
     return payload;
   }

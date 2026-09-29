@@ -60,6 +60,12 @@ const List<Map<String, Object?>> kEndpoints = [
     'status': 'ready'
   },
   {
+    'path': '/api/purge',
+    'method': 'POST',
+    'title': '永久删除回收站里的行（逐条结果，级联子行，广播 purge）',
+    'status': 'ready'
+  },
+  {
     'path': '/api/media/{sha256}',
     'method': 'PUT',
     'title': '上传图片（内容寻址，哈希不符拒绝）',
@@ -197,9 +203,10 @@ class ServerState {
       '${config.dataDir.path}${Platform.pathSeparator}zaoji.db',
     );
     final state = ServerState._(config, id, DateTime.now(), db);
-    // 启动时顺手清一次过期数据（过期的配对码、超过保留期的幂等记录）。
-    // 只在启动时做，不做后台定时器——重启频率高于过期频率的场景不存在，
-    // 而少一个常驻定时器就少一类「服务关不掉」的问题。
+    // 启动时顺手清一次过期数据（过期的配对码、超过保留期的幂等记录、到龄的回收站墓碑）。
+    // 依旧**不做常驻定时器**——但"30 天自动清理"不能只靠重启来对（家里那台能连跑几个月），
+    // 所以另一条触发路在 `SyncService.cleanupIfStale()`：有人来拉变更时就距上次清理的时长补一次。
+    // 少一个常驻定时器就少一类「服务关不掉」的问题，这条立场没变。
     final cleaned = state.sync.cleanup();
     if (cleaned > 0) {
       await state.log.write('  已清理过期数据 $cleaned 行（配对码 / 幂等记录）');

@@ -971,6 +971,16 @@ img{display:block;max-width:100%}
 .toast.out{animation:toastOut var(--dur-fast) ease-in both}
 @keyframes toastOut{to{opacity:0;transform:translateY(8px) scale(.96)}}
 .toast svg{color:#7FD9A6;flex-shrink:0}
+/* R43 · 删除后 5 秒可撤销的提示条。
+   .toast-wrap 是 pointer-events:none（不挡下面的列表），
+   带按钮的这条必须自己把 pointer-events 收回来，否则「撤销」点了没反应。
+   真机同款陷阱在 Flutter 那边叫 persist：带 action 的 SnackBar 不写 persist:false 就永挂。*/
+.toast.has-act{padding-right:6px;pointer-events:auto}
+.toast-act{
+  border:0;background:none;color:#7FD9A6;font:inherit;font-weight:700;
+  padding:4px 11px;border-radius:var(--r-pill);cursor:pointer;flex-shrink:0;
+}
+.toast-act:active{background:rgba(127,217,166,.16)}
 
 /* —— 悬浮计时窗 —— */
 .timer-fab{
@@ -2907,6 +2917,9 @@ const S = {
   fab:{ x:null, y:null },
   addFab:{ x:null, y:null },   // 主页悬浮「添加菜品」按钮的位置（本机偏好，不参与同步）
   toasts:[],
+  trashed:{},         // R43 · 菜谱库删掉的菜 id → 删除时刻（回收站列它，5 秒内可撤销）
+  purged:{},          // R43 · 演示里按过「永久删除」的回收站条目 id → 不再出现在回收站
+  toastUndo:null,     // R43 · 当前那条带「撤销」的提示条对应的恢复动作
   serverTab:'overview',
   lastSync:'今天 20:31',
   syncChoice:'bidir',
@@ -3354,7 +3367,8 @@ const SCREENS = {};
 
 /* ─────────── 数据筛选 ─────────── */
 function visibleRecipes() {
-  let list = RECIPES.slice();
+  // R43 · 软删除（进回收站）的菜从列表消失，但数据还在 RECIPES 里，随时能撤销
+  let list = RECIPES.filter(function (r) { return !S.trashed[r.id]; });
   const f = S.filters;
   const q = S.q.trim().toLowerCase();
   if (q) list = list.filter(function (r) {
@@ -3393,7 +3407,7 @@ SCREENS.recipes = function () {
   const fcnt = filterCount();
   const quickMethods = GROUP_MAP.method.tags;
 
-  let head = appbar('菜谱', '共 ' + RECIPES.length + ' 道 · 收藏 ' + favN + ' 道', false,
+  let head = appbar('菜谱', '共 ' + list.length + ' 道 · 收藏 ' + favN + ' 道', false,
     '<button type="button" class="iconbtn" data-act="nav" data-screen="search" aria-label="搜索">' + ic('search', 21) + '</button>' +
     '<button type="button" class="iconbtn is-solid" data-act="sheet-filter" aria-label="筛选排序" style="position:relative">' + ic('sliders', 20) +
       (fcnt ? '<span class="count-badge" style="position:absolute;top:-4px;right:-4px">' + fcnt + '</span>' : '') + '</button>');
@@ -3535,7 +3549,7 @@ SCREENS['recipe-detail'] = function (p) {
         '<span style="flex:1"></span>' +
         '<button type="button" class="iconbtn" data-act="fav" data-id="' + r.id + '" aria-pressed="' + fav + '" aria-label="收藏" style="color:' + (fav ? '#FFD0B4' : 'var(--tint-2)') + '">' + ic('bookmark', 19) + '</button>' +
         '<button type="button" class="iconbtn" data-act="share-open" data-kind="recipe" data-id="' + r.id + '" aria-label="分享" style="color:var(--tint-2)">' + ic('upload', 19) + '</button>' +
-        '<button type="button" class="iconbtn" data-act="toast" data-msg="更多操作（原型示意）" aria-label="更多">' + ic('more', 19) + '</button>' +
+        '<button type="button" class="iconbtn" data-act="sheet-trash-confirm" data-id="' + r.id + '" aria-label="删除">' + ic('trash', 19) + '</button>' +
       '</div>' +
       '<div class="hero-in">' +
         '<div style="display:flex;align-items:center;gap:9px;margin-bottom:7px">' + chili(r.diff, true) +
@@ -4972,15 +4986,43 @@ SCREENS.schedule = function () {
   '</div>';
 };
 
+/* ═══════════════════ R43 · 删除这道菜（二次确认 + 5 秒撤销） ═══════════════════
+   与实现对齐的三件事：① 删之前问一次；② 说清"进回收站、30 天内可恢复"；
+   ③ 删掉之后给一条 5 秒的撤销条——撤销不是另一套逻辑，就是把回收站里那条拿回来。*/
+function trashedRecipes() {
+  return Object.keys(S.trashed).map(function (id) {
+    const r = R_MAP[id];
+    if (!r) return null;
+    return { id:'tr-' + r.id, kind:'recipe', name:r.name, del:'刚刚', left:30,
+             sub: r.ings.length + ' 种食材 · ' + r.steps.length + ' 步' };
+  }).filter(Boolean);
+}
+function trashAll() { return trashedRecipes().concat(TRASH).filter(function (t) { return !S.purged[t.id]; }); }
+function sheetTrashConfirm(id) {
+  const r = R_MAP[id];
+  return sheet('删除这道菜？',
+    '<p style="font-size:12.5px;line-height:1.85;color:var(--ink-2)">' +
+      '「' + esc(r.name) + '」会先进<b>回收站</b>，30 天内随时可以恢复；' +
+      '它的食材与步骤一起收起，家里其他设备上也一并收起。' +
+    '</p>' +
+    '<p style="font-size:11.5px;line-height:1.85;color:var(--muted);margin-top:9px">' +
+      '要彻底清掉（连图片一起、别的设备也找不到），到回收站里按「永久删除」。' +
+    '</p>',
+    '<button type="button" class="btn btn-ghost" style="flex:1" data-act="sheet-close">取消</button>' +
+    '<button type="button" class="btn btn-danger" style="flex:1" data-act="trash-run" data-id="' + r.id + '">删除</button>');
+}
+
 /* ═══════════════════ 23 · 回收站（v1.1） ═══════════════════ */
 S.trashSel = {};
 SCREENS.trash = function () {
-  const sel = TRASH.filter(function (t) { return S.trashSel[t.id]; });
+  // R43 · 刚删的菜当场就该出现在这里（真机上 store 删完立刻重绘，不等同步）
+  const ITEMS = trashAll();
+  const sel = ITEMS.filter(function (t) { return S.trashSel[t.id]; });
   const byKind = {};
-  TRASH.forEach(function (t) { byKind[t.kind] = (byKind[t.kind] || 0) + 1; });
+  ITEMS.forEach(function (t) { byKind[t.kind] = (byKind[t.kind] || 0) + 1; });
 
   return '<div class="screen is-full">' +
-    appbar('回收站', TRASH.length + ' 项 · 30 天后自动清理', { act:'back' },
+    appbar('回收站', ITEMS.length + ' 项 · 30 天后自动清理', { act:'back' },
       '<button type="button" class="iconbtn" data-act="trash-all" aria-label="全选">' + ic('check', 20) + '</button>') +
 
     '<div class="px">' +
@@ -4996,11 +5038,11 @@ SCREENS.trash = function () {
           }).join('') + '</div>' +
       '</div>' +
 
-      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">' + pad(TRASH.length) + '</span>' +
+      '<div class="sec-head" style="padding:0;margin:26px 0 12px"><span class="sec-num">' + pad(ITEMS.length) + '</span>' +
         '<span class="sec-title">待清理</span>' +
         '<span class="sec-more">' + (sel.length ? '已选 ' + sel.length + ' 项' : '点左侧勾选') + '</span></div>' +
 
-      '<div style="display:flex;flex-direction:column;gap:9px">' + TRASH.map(function (t) {
+      '<div style="display:flex;flex-direction:column;gap:9px">' + ITEMS.map(function (t) {
         const k = TRASH_KIND[t.kind];
         const on = !!S.trashSel[t.id];
         const lifePct = Math.round(t.left / 30 * 100);
@@ -6351,17 +6393,25 @@ setInterval(function () {
 }, 250);
 
 /* ═══════════════════ 悬浮提示 ═══════════════════ */
-function toast(msg) {
+function toast(msg, opts) {
+  opts = opts || {};
   const w = document.getElementById('toastWrap');
   if (!w) return;
   const el = document.createElement('div');
-  el.className = 'toast';
-  el.innerHTML = ic('check', 16) + '<span>' + esc(msg) + '</span>';
+  el.className = 'toast' + (opts.action ? ' has-act' : '');
+  el.innerHTML = ic(opts.icon || 'check', 16) + '<span>' + esc(msg) + '</span>' +
+    (opts.action ? '<button type="button" class="toast-act" data-act="toast-undo">' + esc(opts.action) + '</button>' : '');
   w.appendChild(el);
+  // 带撤销的条给满 5 秒（FR-DATA-14 的窗口）；普通条还是 2.1 秒
+  const ms = opts.ms || (opts.action ? 5000 : 2100);
+  if (opts.action) S.toastUndo = opts.onUndo || null;
   setTimeout(function () {
     el.classList.add('out');
-    setTimeout(function () { el.remove(); }, 220);
-  }, 2100);
+    setTimeout(function () {
+      el.remove();
+      if (opts.action && w.querySelector('.toast-act') === null) S.toastUndo = null;
+    }, 220);
+  }, ms);
 }
 
 /* ═══════════════════ 右侧屏幕导航 ═══════════════════ */
@@ -6948,6 +6998,34 @@ document.addEventListener('click', function (e) {
     return;
   }
 
+  /* —— R43：删除这道菜（先问一次，删完给 5 秒撤销）—— */
+  if (act === 'sheet-trash-confirm') {
+    S.sheet = sheetTrashConfirm(el.dataset.id); renderOverlays(); return;
+  }
+  if (act === 'trash-run') {
+    const r = R_MAP[el.dataset.id];
+    S.sheet = null;
+    S.trashed[r.id] = Date.now();
+    renderOverlays(); renderScreen(false);
+    toast('已删除「' + r.name + '」', {
+      action:'撤销', icon:'trash',
+      onUndo: function () {
+        delete S.trashed[r.id];
+        renderScreen(false);
+        toast('已恢复「' + r.name + '」');
+      }
+    });
+    return;
+  }
+  if (act === 'toast-undo') {
+    const fn = S.toastUndo;
+    S.toastUndo = null;
+    const nodes = document.querySelectorAll('.toast.has-act');
+    for (var ti = 0; ti < nodes.length; ti++) { nodes[ti].classList.add('out'); }
+    if (fn) fn();
+    return;
+  }
+
   /* —— v1.1：回收站 —— */
   if (act === 'trash-toggle') {
     const id = el.dataset.id;
@@ -6956,22 +7034,34 @@ document.addEventListener('click', function (e) {
     return;
   }
   if (act === 'trash-all') {
-    const all = TRASH.every(function (t) { return S.trashSel[t.id]; });
-    TRASH.forEach(function (t) { S.trashSel[t.id] = !all; });
+    const items = trashAll();
+    const all = items.every(function (t) { return S.trashSel[t.id]; });
+    items.forEach(function (t) { S.trashSel[t.id] = !all; });
     renderScreen(false);
-    toast(all ? '已取消全选' : '已全选 ' + TRASH.length + ' 项');
+    toast(all ? '已取消全选' : '已全选 ' + items.length + ' 项');
     return;
   }
   if (act === 'trash-restore-one') {
-    const t = TRASH.filter(function (x) { return x.id === el.dataset.id; })[0];
+    const t = trashAll().filter(function (x) { return x.id === el.dataset.id; })[0];
+    if (/^tr-/.test(t.id)) { delete S.trashed[t.id.slice(3)]; }
+    S.trashSel[t.id] = false;
     renderScreen(false);
     toast('已恢复「' + t.name + '」');
     return;
   }
   if (act === 'trash-restore' || act === 'trash-purge') {
-    const n = TRASH.filter(function (t) { return S.trashSel[t.id]; }).length;
+    const picked = trashAll().filter(function (t) { return S.trashSel[t.id]; });
+    const n = picked.length;
     if (!n) return;
-    TRASH.forEach(function (t) { S.trashSel[t.id] = false; });
+    // 本机删的那批：恢复=从回收站拿回列表；永久删除=演示里直接从回收站抹掉
+    // （真机上永久删除要先问服务端，别家设备跟着一起清，见回收站那头）
+    picked.forEach(function (t) {
+      if (/^tr-/.test(t.id)) {
+        if (act === 'trash-restore') { delete S.trashed[t.id.slice(3)]; }
+        else { S.purged[t.id] = true; }
+      }
+      S.trashSel[t.id] = false;
+    });
     renderScreen(false);
     toast((act === 'trash-restore' ? '已恢复 ' : '已永久删除 ') + n + ' 项');
     return;

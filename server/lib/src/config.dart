@@ -73,6 +73,13 @@ class ServerConfig {
   /// 0.12.0：服务端代码零改动——与 app 0.12.0（日历页）对齐发布线，
   /// 日历是纯客户端派生读（cook_session/menu 早已在白名单），本轮只换托管的 Web 产物。
   /// 0.10.0：冲突裁决 `POST /api/conflicts/resolve`（服务端盖 HLC，含过期回声守卫）。
+  /// 0.15.0：schema v7（R39 库存三态 + `recipe.created_at`，两端共用 kSchemaV7AlterSql，
+  ///   新列进滚动豁免）；**永久删除** `POST /api/purge`（R43 · FR-DATA-13）——
+  ///   只物理删已在回收站里的行，`recipe` 连带 `ingredient`/`step`，逐条写 `op:'purge'` 变更
+  ///   让全家的设备把它**真的删掉**（不然对方一点「恢复」就复活）；
+  ///   启动时的 cleanup 顺带把**超过 30 天的墓碑**按同一套 purge 清掉。
+  ///   ★ 同步协议版本**刻意不动**：旧 apk 拉到 `purge` 会走它已有的「无载荷＝打墓碑」分支，
+  ///   安全退化成软删除；而动版本号会让所有旧设备的推送直接 409，代价大得多。
   /// 0.13.0：备份能力（R26）——在线 SQLite 快照 + 自描述清单（逐文件 sha256）
   ///   打 zip，本地留底 + WebDAV（坚果云实测）上传 + 双侧保留裁剪；
   ///   `/api/admin/backup*`（仅本机）与 `restore` 子命令。

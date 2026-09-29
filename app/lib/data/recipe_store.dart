@@ -57,6 +57,12 @@ class RecipeStore extends ChangeNotifier {
 
   List<Recipe> recipes = const [];
 
+  /// 回收站里的菜谱（R43）。与 [recipes] 同源：`_loadAll` 统一刷一次，
+  /// 就地改内存缓存的那几条快路径（[softDeleteRecipe]）自己补一笔。
+  /// 页面读这个字段而不是自己去查库——再让每个页面各自记一遍
+  /// "什么时候该重新查"就会有人漏（R40 的旧账）。
+  List<Recipe> deletedItems = const [];
+
   /// id → Recipe 索引。`recipeById` 原来是线性扫描，深链每次进入全表扫一遍；
   /// 现在建表后 O(1)。随 [recipes] 一起在 [_reindex] 里维护。
   final Map<String, Recipe> _byId = {};
@@ -223,6 +229,9 @@ class RecipeStore extends ChangeNotifier {
         ),
       );
     }
+    // ★ 回收站的列表也在这里一起刷新：所有写路径（新建/编辑/软删/恢复/永久删）
+    //   都已经走 _loadAll，再加一处"记得顺便刷新回收站"迟早会漏（R40 的教训）。
+    deletedItems = await _queryDeleted(db);
     return out;
   }
 
@@ -1313,6 +1322,13 @@ class RecipeStore extends ChangeNotifier {
 
     // ★ 先提交、后广播（同 createRecipe 尾注）
     recipes = recipes.where((r) => r.id != recipeId).toList();
+    // 回收站列表跟着长一条：softDelete 是就地改内存缓存、不走 _loadAll 的那几条路径之一，
+    // 漏掉这里，回收站页（只读 deletedItems）就要等下一次同步重载才看得见。
+    // 放在最前，与 _queryDeleted 的 ORDER BY updated_at DESC 同序。
+    deletedItems = [
+      existing,
+      ...deletedItems.where((r) => r.id != recipeId),
+    ];
     _reindex();
     notifyListeners();
     _fireLocalWrite();
@@ -1514,8 +1530,13 @@ class RecipeStore extends ChangeNotifier {
 
   /// 列出回收站里的菜谱（deleted_at IS NOT NULL）。
   /// 只读操作，不触发同步。
-  Future<List<Recipe>> listDeleted() async {
-    final db = _db!;
+  ///
+  /// 页面**不要**在 initState 里 await 它：这条查询走真库，Widget 测试的 FakeAsync
+  /// 不会把 isolate 的回复送进来（回收站页第一版就卡在加载圈里出不来）。
+  /// 结果同时缓存在 [deletedItems]，页面读那个字段 + 挂 ListenableBuilder。
+  Future<List<Recipe>> listDeleted() => _queryDeleted(_db!);
+
+  Future<List<Recipe>> _queryDeleted(ZaojiDb db) async {
     final rows = await db
         .customSelect(
           'SELECT * FROM recipe WHERE deleted_at IS NOT NULL ORDER BY updated_at DESC',

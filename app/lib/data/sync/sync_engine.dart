@@ -254,6 +254,78 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
+  /// R43 · 永久删除回收站里的东西（FR-DATA-13）。
+  ///
+  /// **顺序是刻意的：先问服务端，服务端认了才删本机。**
+  /// 反过来做会留一条复活路径——别台设备的回收站里那条还在、还能点「恢复」，
+  /// 一推就回到你这台机器上，而用户已经看见"已永久删除"了。
+  /// 这种"删了又回来"比不删更伤信任，所以宁可多一次往返。
+  ///
+  /// 返回 null = 成功；否则是给人看的失败原因。不抛（与 [resolveConflicts] 同一口径：
+  /// 这是用户点一下就要看到结果的动作，不能靠上层 try/catch 兜）。
+  Future<String?> purgeRecipePermanently(String recipeId) async {
+    final serverUrl = await _prefs.serverUrl();
+    if (serverUrl == null) {
+      _fail('还没接入服务端，无法永久删除');
+      return '这台设备还没接入服务端，先完成接入再永久删除（回收站里的东西本身不受影响）';
+    }
+    final token = await _prefs.token();
+    final List<Map<String, Object?>> results;
+    try {
+      final res = await (await _transportOf(serverUrl)).post('/api/purge', {
+        'rows': [
+          {'tbl': 'recipe', 'id': recipeId}
+        ]
+      }, token: token);
+      results = (res['results'] as List? ?? const [])
+          .cast<Map>()
+          .map((r) => r.map((k, v) => MapEntry('$k', v)))
+          .toList();
+    } on SyncTransportException catch (e) {
+      // 404 在这条调用上只有一个意思：**对面那台服务端还没有 /api/purge 这个路由**
+      // （v0.14.3 及更早的 exe 就是这种状态）。这时给人看"连不上"是误导——
+      // 连得上，只是它不认识这件事。本机照样一行不动。
+      if (e.statusCode == 404) {
+        _fail('服务端不认识 /api/purge（HTTP 404）');
+        return '这台服务端还不认识永久删除（服务端版本偏旧），'
+            '本机数据一行没动；把服务端的 exe 换到 v0.15.0 及以后就能用';
+      }
+      _fail(e.message);
+      return e.message;
+    } on SyncNetworkException catch (e) {
+      _fail('连不上服务端：${e.message}');
+      return '连不上服务端，这笔永久删除没有执行（本机数据一行没动）';
+    }
+    final bad = results.where((r) => r['outcome'] == 'rejected').toList();
+    if (bad.isNotEmpty) {
+      _fail('${bad.first['reason']}');
+      return '${bad.first['reason']}';
+    }
+    // 服务端已经收下并广播 purge，本机立刻物理清掉，不等下一轮拉取——
+    // 用户点完就该从回收站里消失，"等下次同步再不见"是骗人的。
+    await _purgeLocalRecipe(recipeId);
+    await _onDataApplied?.call();
+    _lastError = null;
+    notifyListeners();
+    return null;
+  }
+
+  /// 本机这一侧的永久删除：菜谱连同它的食材行与步骤行一起清。
+  ///
+  /// 这里级联是**本地体验**的级联（回收站只列菜谱，子行留着就是幽灵数据）；
+  /// 别的设备靠服务端广播的那几条子行 purge 变更各自清，两条路互不依赖。
+  Future<void> _purgeLocalRecipe(String recipeId) async {
+    final db = _db;
+    await db.transaction(() async {
+      await db.customUpdate('DELETE FROM ingredient WHERE recipe_id = ?',
+          variables: [Variable(recipeId)]);
+      await db.customUpdate('DELETE FROM step WHERE recipe_id = ?',
+          variables: [Variable(recipeId)]);
+      await db.customUpdate('DELETE FROM recipe WHERE id = ?',
+          variables: [Variable(recipeId)]);
+    });
+  }
+
   /// 提交冲突裁决（R22），返回服务端的逐条结果。
   ///
   /// **裁决为什么走服务端而不是本地改行再推**：推上去的行不带 base 快照，
@@ -642,15 +714,28 @@ class SyncEngine extends ChangeNotifier {
   }
 
   /// 拉回的变更按 applyOrder 排（父表在前），同表内按 seq 稳定排序。
+  ///
+  /// ★ 但 `purge` 必须**排在所有写入之后、且按表序倒过来**（先子后父）。
+  ///   客户端开着 `PRAGMA foreign_keys = ON`（与服务端同一立场，见 zaoji_db 的
+  ///   beforeOpen），一行 `DELETE FROM recipe` 排在它的 ingredient/step 之前，
+  ///   整页应用就会以 FOREIGN KEY constraint failed 失败——R43 的 B 设备测试
+  ///   就是这么抓出来的：永久删除一道菜，会让别的设备**整轮同步报错**。
+  ///   同表内仍按 seq 升序（LWW 靠 updated_at，不靠这里的顺序，但稳定序让日志可读）。
   List<Map<String, Object?>> _sortedByApplyOrder(List<Map> changes) {
     int orderOf(Object? tbl) {
       final i = ZaojiDb.syncedTablesSorted.indexWhere((t) => t.name == '$tbl');
       return i < 0 ? 1 << 30 : i;
     }
 
+    bool isPurge(Map c) => '${c['op']}' == 'purge';
+
     final list = changes.map((c) => c.map((k, v) => MapEntry('$k', v))).toList()
       ..sort((a, b) {
-        final byTable = orderOf(a['tbl']).compareTo(orderOf(b['tbl']));
+        final pa = isPurge(a), pb = isPurge(b);
+        if (pa != pb) return pa ? 1 : -1;
+        final byTable = pa
+            ? orderOf(b['tbl']).compareTo(orderOf(a['tbl']))
+            : orderOf(a['tbl']).compareTo(orderOf(b['tbl']));
         if (byTable != 0) return byTable;
         return ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0);
       });
@@ -668,6 +753,21 @@ class SyncEngine extends ChangeNotifier {
 
     final pulledHlc = '${change['updatedAt'] ?? ''}';
     final row = change['row'];
+
+    // ★ R43 · `purge` 是「永久删除」，与 delete 不是一档：这里**物理删**，不打墓碑。
+    //   子行（ingredient/step）由服务端级联成一条条独立的 purge 变更送过来，
+    //   所以本机逐条照办就行，不需要在这里猜"这道菜的子行有哪些"。
+    //   老服务端不会发这个 op（它没有 /api/purge），所以这条分支只可能来自新服务端。
+    if ('${change['op']}' == 'purge') {
+      // 删不到也算应用过（本机可能早就没有这一行），但不虚报计数。
+      final had = await _selectRow(tbl, allowed, rowId);
+      if (had == null) return 0;
+      await _db.customUpdate(
+        'DELETE FROM $tbl WHERE id = ?',
+        variables: [Variable(rowId)],
+      );
+      return 1;
+    }
 
     if (row is! Map) {
       // 无载荷的 delete：服务端说这行已经不在了。给本地打墓碑（LWW 保护）。

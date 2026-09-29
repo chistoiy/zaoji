@@ -98,8 +98,13 @@ class SyncService {
   int cleanup({
     Duration pairCodeRetention = const Duration(hours: 24),
     Duration mutationRetention = const Duration(days: 7),
+    Duration tombstoneRetention = const Duration(days: 30),
   }) {
     final t = now();
+    // 时间戳**先落再清**（开机 / 拉取 / 手动三条路都算一次清理，所以戳记写在这里而不是调用方）：
+    // 万一下面抛了，也不许后面每个请求都重试一遍全表扫——
+    // 那等于把一次失败的开销摊到这一天的每次同步上。
+    _setSetting(kLastCleanupAtKey, t.toIso8601String());
     var deleted = 0;
     db.db.execute('BEGIN');
     try {
@@ -109,6 +114,10 @@ class SyncService {
       db.db.execute('DELETE FROM applied_mutation WHERE applied_at < ?',
           [t.subtract(mutationRetention).toIso8601String()]);
       deleted += _changesCount();
+      // R43 · FR-DATA-13「30 天后自动清理」：回收站不该是无底洞。
+      // 走 purgeTombstone 而不是裸 DELETE —— 每台设备都得知道这行**真的没了**，
+      // 否则它自己回收站里还留着一条能恢复的，一点就把这行推回来了。
+      deleted += _purgeExpiredTombstones(before: t.subtract(tombstoneRetention));
       db.db.execute('COMMIT');
     } catch (_) {
       db.db.execute('ROLLBACK');
@@ -116,6 +125,164 @@ class SyncService {
     }
     return deleted;
   }
+
+  /// ★ **30 天这条账不能只靠重启来对**。
+  ///
+  /// `ServerState.boot()` 里那一次 `cleanup()` 是唯一的调用点，而家里那台笔记本
+  /// 一跑就是几个月——"回收站 30 天后自动清掉"就会变成一句写在代码里的谎话。
+  /// 这里把触发点从"开机"挪到"有人来同步"：**距上次清理超过 [interval] 就顺手清一次**。
+  ///
+  /// 仍然**不引入常驻定时器**（boot 那头的理由原样成立：少一个定时器就少一类
+  /// "服务关不掉"的问题），也仍然不改变清理的语义——走 [_purgeExpiredTombstones]，
+  /// 每条物理删都广播 `purge`。
+  ///
+  /// 为什么挑 pull 而不是 push：设备每天至少拉一次（只有推送才是手点的），
+  /// 而清理写出来的 `purge` 变更 seq 就在这一次拉取的窗口里，
+  /// 触发它的那台设备当场就把回收站里那条抹掉，不用等下一轮。
+  int cleanupIfStale({Duration interval = const Duration(hours: 12)}) {
+    final t = now();
+    final last = DateTime.tryParse(_setting(kLastCleanupAtKey) ?? '');
+    if (last != null && !t.isAfter(last.add(interval))) return 0;
+    // 戳记由 cleanup() 自己落（开机 / 拉取 / 手动三条路共用一份），这里不重复写
+    return cleanup();
+  }
+
+  /// 上次清理时刻的键（`server_setting`，与准入设置同表：迁移不管它，运维能看见）。
+  static const kLastCleanupAtKey = 'last_cleanup_at';
+
+  /// 把 `deleted_at` 早于 [before] 的墓碑行物理清掉，并逐条写 `purge` 变更。
+  ///
+  /// `deleted_at` 在服务端一律是**服务端墙钟 ISO 串**（见下面 delete 分支），
+  /// 所以这里可以直接用字符串比较；客户端传来的 HLC 不会落到这一列上。
+  int _purgeExpiredTombstones({required DateTime before}) {
+    final cut = before.toIso8601String();
+    var n = 0;
+    for (final tbl in syncWhitelist.keys) {
+      final ids = db.db
+          .select('SELECT id FROM $tbl WHERE deleted_at IS NOT NULL AND deleted_at < ? LIMIT 2000',
+              [cut])
+          .map((r) => r['id'] as String)
+          .toList();
+      for (final id in ids) {
+        n += _purgeOne(tbl: tbl, rowId: id, by: serverId);
+      }
+    }
+    return n;
+  }
+
+  // ───────────────────────── 永久删除（R43 · FR-DATA-13） ─────────────────────────
+
+  /// 回收站里「永久删除」那一条的服务端实现。
+  ///
+  /// **为什么必须先有墓碑**：不许拿这个接口绕过回收站直接删活数据。
+  /// 用户点永久删除时，界面上这行已经在回收站里了，所以这个前置条件不是额外规矩，
+  /// 而是把 UI 的语义钉在服务端。
+  ///
+  /// **为什么要单独写一条 `purge` 变更而不是只 DELETE**：
+  /// 只删服务端这一份，别的设备上那条还停在回收站里、还能一键恢复，
+  /// 恢复之后又会推回来 —— 「永久删除」就不永久了。
+  /// 客户端拉到 `purge` 之后把本地那行**物理删掉**，这件事才算传遍全家。
+  ///
+  /// **为什么不 bump 协议版本**：老 apk 拉到 `purge` 会走它已有的「无载荷＝打墓碑」分支，
+  /// 结果是安全退化成软删除（不炸、不复活、也不会误删别人的行）；
+  /// 而 bump 版本会让所有旧设备的推送直接 409，代价大得多。
+  /// 等旧包自然淘汰完再考虑把 `purge` 写进版本号。
+  ///
+  /// 级联：`recipe` 被永久删除时，它的 `ingredient` / `step` 一起物理删并各写一条变更
+  /// （否则子行留着一堆孤儿墓碑）。
+  List<Map<String, Object?>> purge({
+    required Device device,
+    required List<Map<String, Object?>> rows,
+  }) {
+    final out = <Map<String, Object?>>[];
+    db.db.execute('BEGIN');
+    try {
+      for (final r in rows) {
+        final tbl = '${r['tbl']}';
+        final rowId = '${r['id'] ?? r['rowId'] ?? ''}';
+        if (!syncWhitelist.containsKey(tbl)) {
+          out.add({
+            'tbl': tbl,
+            'rowId': rowId,
+            'outcome': 'rejected',
+            'reason': '未知或不允许同步的表：$tbl',
+          });
+          continue;
+        }
+        if (rowId.isEmpty) {
+          out.add({
+            'tbl': tbl,
+            'rowId': rowId,
+            'outcome': 'rejected',
+            'reason': '缺少 id',
+          });
+          continue;
+        }
+        final existing = _existingRow(tbl, rowId, syncWhitelist[tbl]!);
+        if (existing == null) {
+          // 已经不在了：幂等，按 skipped 报，不报错（客户端会照样物理删自己那份）。
+          out.add({
+            'tbl': tbl,
+            'rowId': rowId,
+            'outcome': 'skipped',
+            'reason': '服务端没有这一行（可能已经永久删除过了）',
+          });
+          continue;
+        }
+        if (existing['deleted_at'] == null) {
+          out.add({
+            'tbl': tbl,
+            'rowId': rowId,
+            'outcome': 'rejected',
+            'reason': '这一行还没进回收站，不能直接永久删除',
+          });
+          continue;
+        }
+        final n = _purgeOne(tbl: tbl, rowId: rowId, by: device.id);
+        out.add({
+          'tbl': tbl,
+          'rowId': rowId,
+          'outcome': 'purged',
+          'rows': n,
+        });
+      }
+      db.db.execute('COMMIT');
+    } catch (_) {
+      db.db.execute('ROLLBACK');
+      rethrow;
+    }
+    return out;
+  }
+
+  /// 物理删一行（含 recipe 的子行级联），并逐条写 `purge` 变更。返回删了几行。
+  int _purgeOne({required String tbl, required String rowId, required String by}) {
+    final hlc = _mintHlc();
+    var n = 0;
+    for (final child in _cascadeOf(tbl)) {
+      final kids = db.db
+          .select('SELECT id FROM ${child.tbl} WHERE ${child.by} = ?', [rowId])
+          .map((r) => r['id'] as String)
+          .toList();
+      for (final kid in kids) {
+        db.db.execute('DELETE FROM ${child.tbl} WHERE id = ?', [kid]);
+        _log(child.tbl, kid, 'purge', hlc, by);
+        n++;
+      }
+    }
+    db.db.execute('DELETE FROM $tbl WHERE id = ?', [rowId]);
+    _log(tbl, rowId, 'purge', hlc, by);
+    return n + 1;
+  }
+
+  /// 哪些父表在永久删除时要连带子表。**只有菜谱有一对多的子行。**
+  static List<({String tbl, String by})> _cascadeOf(String tbl) =>
+      tbl == 'recipe'
+          ? const [
+              (tbl: 'ingredient', by: 'recipe_id'),
+              (tbl: 'step', by: 'recipe_id'),
+            ]
+          : const [];
+
 
   int _changesCount() =>
       db.db.select('SELECT changes() AS c').first['c'] as int;
@@ -396,10 +563,14 @@ class SyncService {
   /// 一次同步可能要拉几百条，逐条取就是几百个请求——
   /// 在家里那台笔记本上这不是性能问题，是"手机切后台就断"的问题。
   ///
-  /// 如果某条变更对应的行已经不在了（理论上不该发生，因为我们只软删除），
-  /// 就只返回 `op: delete` 而不带载荷——宁可让客户端记一个墓碑，
-  /// 也不要让它以为拿到了数据。
+  /// 如果某条变更对应的行已经不在了（永久删除或服务端 30 天清理之后就是这种状态），
+  /// 就**只给变更、不给载荷**——客户端按 op 决定是打墓碑（delete）还是物理删（purge），
+  /// 不要以为拿到了数据。
   PullResult pull({required int since, int limit = 500}) {
+    // ★ 先顺手把过期的墓碑清掉（12 小时内只做一次，理由见 [cleanupIfStale]）。
+    //   放在读变更**之前**：清理写出的那几条 purge 变更 seq 就在本次窗口内，
+    //   来拉的设备当场收到、当场把自己回收站里那条抹掉，不用等下一轮同步。
+    cleanupIfStale();
     final entries = db.changesSince(since, limit: limit);
     final maxSeq = db.maxSeq;
 
@@ -412,11 +583,15 @@ class SyncService {
       if (!syncWhitelist.containsKey(e.tbl)) continue;
 
       final row = _rowPayload(e.tbl, e.rowId);
+      // op 一律照 change_log 里那条原样下发，**不要因为载荷取不到就改写成 'delete'**。
+      // `purge` 与 `delete` 对客户端是两件事：前者要把本地那行物理删掉，后者只打个墓碑。
+      // （旧写法在这里把 purge 洗成 delete，永久删除传到别台设备就退化成软删除，
+      //  对方回收站里那条还能"恢复"，一推就复活。）
       changes.add({
         'seq': e.seq,
         'tbl': e.tbl,
         'rowId': e.rowId,
-        'op': row == null ? 'delete' : e.op,
+        'op': e.op,
         'updatedAt': e.rowUpdatedAt,
         'updatedBy': e.rowUpdatedBy,
         if (row != null) 'row': row,
@@ -569,6 +744,16 @@ class SyncService {
     }
 
     final op = '${change['op'] ?? 'upsert'}';
+    // 客户端只能推 upsert / delete。**`purge` 是服务端的事实**（见 [purge]）：
+    // 谁都能推一条 purge 的话，「永久删除」就变成绕过回收站直接抹掉别人数据的口子。
+    if (op != 'upsert' && op != 'delete') {
+      return {
+        'tbl': tbl,
+        'rowId': rowId,
+        'outcome': 'rejected',
+        'reason': 'op 只允许 upsert 或 delete，收到：$op',
+      };
+    }
     final existing = _existingRow(tbl, rowId, allowed);
 
     if (op == 'delete') {

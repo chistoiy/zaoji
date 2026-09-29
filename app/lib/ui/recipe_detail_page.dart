@@ -308,13 +308,47 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
     if (ok != true || !context.mounted) return;
 
     final store = StoreScope.of(context);
-    await store.softDeleteRecipe(widget.recipe.id);
+    final id = widget.recipe.id;
+    final name = widget.recipe.name;
+    await store.softDeleteRecipe(id);
     if (context.mounted) {
       // 成功删除后回到列表页（详情页里的菜谱已经不在了）
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已删除（可在回收站恢复）')));
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        // R43 · FR-DATA-14：删除后 5 秒内可撤销。
+        // ★ `persist: false` 是必须的，`duration` 单独写不管用：
+        //   SnackBar 的构造里 `persist = persist ?? action != null`
+        //   ——**只要带了 action，框架就默认它要一直挂着**（怕撤销按钮跑掉），
+        //   连 5 秒都不设，变成一条挂在列表上的横幅。
+        //   本轮那条"5 秒到点自己收"的测试测的就是这个：只写 duration 时
+        //   假时钟推到 7.5 秒条还在，补上 persist:false 才按点收。
+        // 撤销就是"把墓碑擦掉"，走既有的 restoreRecipe（它会重新盖 HLC 并广播），
+        // 所以 5 秒之后也不是不能恢复——只是得自己去回收站，兜的是手滑那一秒。
+        SnackBar(
+          key: const ValueKey('delete-undo-bar'),
+          duration: const Duration(seconds: 5),
+          persist: false,
+          content: Text('已删除「$name」'),
+          action: SnackBarAction(
+            key: const ValueKey('delete-undo'),
+            label: '撤销',
+            onPressed: () async {
+              // 撤销成功就别让"已删除"那条还杵在那儿：移除当前条，
+              // 否则新的提示条要排队等它 5 秒超时才露脸（用户会以为没撤销成）。
+              messenger.removeCurrentSnackBar();
+              await store.restoreRecipe(id);
+              messenger.showSnackBar(
+                SnackBar(
+                  key: const ValueKey('delete-undone'),
+                  duration: const Duration(seconds: 2),
+                  content: Text('已恢复「$name」'),
+                ),
+              );
+            },
+          ),
+        ),
+      );
     }
   }
 }
