@@ -51,7 +51,23 @@ Head '计划（先看这段，确认没问题再加 -Apply）'
 Say "安装目录   $InstallDir"
 Say "当前 exe   $(if (Test-Path $exe) { (Get-Item $exe).Length.ToString() + ' B  mtime ' + (Get-Item $exe).LastWriteTime.ToString('MM-dd HH:mm') } else { '不在' })"
 Say "新 exe     $NewExe  ($(if (Test-Path $NewExe) { (Get-Item $NewExe).Length } else { 0 }) B)"
-Say "web 目录   $(if ($WebDir) { $WebDir } else { '不改动（起来不带 -w，只升级库）' })"
+# ★ 重启时必须沿用原来的启动参数，否则"只升级库"会把 Web 版整段弄没：
+#   现在的实例是 zaoji_server.exe -w ..\app\build\web 起来的，不带 -w 重启 = 家里没人能用网页版。
+#   本机读不到进程命令行（Get-CimInstance / Get-WmiObject 的 Win32_Process 在这台机器上都报
+#   「类不存在/无效类」，WMI 仓库是坏的），所以**改从状态页拿**：它会把托管中的 web 目录原样打出来。
+if (-not $WebDir) {
+  try {
+    $page = (Invoke-WebRequest -Uri 'http://127.0.0.1:8666/status' -UseBasicParsing -TimeoutSec 5).Content
+    $m = [regex]::Match($page, 'Web 产物：<code>([^<]+)</code>')
+    if ($m.Success) {
+      # 状态页打的是当初拼出来的原样（…\server\../app/build/web），归一化一下再传 -w，
+      # 免得日志与文档里出现一串 ".."，也免得有人照着它去手工拼路径。
+      try { $WebDir = [IO.Path]::GetFullPath($m.Groups[1].Value.Trim()) } catch { $WebDir = $m.Groups[1].Value.Trim() }
+    }
+  } catch { Say "读状态页失败，拿不到当前 -w 目录：$($_.Exception.Message)" 'DarkGray' }
+}
+if ($WebDir) { Say "web 目录   $WebDir（重启时带回 -w）" -ForegroundColor Yellow }
+else { Say "web 目录   拿不到！这台若在挂 Web 版，重启后 / 会 404 —— 请先人工确认要不要补 -WebDir" -ForegroundColor Red }
 Say "备份       exe → $exeBak"
 Say "            data → $dataBak"
 Say "目标       原地开库升到 schema v$WantSchema（迁移由服务端自己跑，幂等）" -ForegroundColor Yellow
