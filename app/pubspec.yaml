@@ -3,7 +3,11 @@ description: "灶记 ZAOJI —— 家庭菜谱手账。Android 用 App，iPhone 
 publish_to: 'none'
 
 # 版本号。Android 的 versionName/versionCode 由它决定。
-version: 0.15.0+11
+# 0.15.0+12：R40~R43 的界面与补丁（成员页 / 落盘补丁 / 别名开关 / 回收站永久删除与撤销）
+# 都要进包。versionName 仍是 0.15.0（与服务端同版号线），**build 号必须往上走**——
+# 上一份 0.15.0+11 是 R39 编的、从未发出去，两个包同名不同内容，
+# 装机时靠 versionCode 才分得清（aapt 复验这条见发版流程）。
+version: 0.15.0+12
 
 environment:
   sdk: ^3.10.8

@@ -21,6 +21,11 @@ server/zaoji_server.exe
 
 # ── 运行期数据：数据库、server_id、日志 ──
 server/data/
+# ★ 换装脚本的现场备份（upgrade_local_instance.ps1 生成）：
+#   data_backup-<时间戳>/ 里是**全家的真实数据**，zaoji_server.exe.bak-<时间戳> 是几十 MB 旧 exe。
+#   这两个是回滚用的现场，绝不是仓库内容——踩过一次 `git add -A` 就会把家庭数据推出去。
+server/data_backup-*/
+server/*.bak-*
 server/logs/
 
 # ── ★ 证书与私钥 ──
