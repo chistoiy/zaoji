@@ -403,7 +403,7 @@ void main() {
 
     test('缓存命中仍留痕，标 cached 且不重复计用量', () async {
       await hit('POST', '/api/ai/calories', calorieBody); // 第一次走上游
-      await hit('POST', '/api/ai/calories', calorieBody); // 命中缓存
+      final second = await hit('POST', '/api/ai/calories', calorieBody); // 命中缓存
       final rows = runs();
       expect(rows, hasLength(2), reason: '两次调用都要看得到');
       expect(rows.last['cached'], 1);
@@ -411,6 +411,12 @@ void main() {
       expect(seen.length, 1);
       // 月度 calls 只统计真实上游那次
       expect(state.ai.usage()['calls'], 1);
+      // 真机走查抓到的坑：缓存响应体里原本带的是**第一次**那行的 runId，
+      // 客户端照它写 run_ref，本机标记就落到别的记录上了。
+      final echoed = jsonDecode(await second.readAsString())['runId'];
+      expect(echoed, rows.last['id'],
+          reason: '回传的 runId 必须是本次这一行，客户端才认得出「本机」');
+      expect(echoed, isNot(rows.first['id']));
     });
 
     test('连通测试留 feature=test 行', () async {

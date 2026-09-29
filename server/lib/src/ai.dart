@@ -673,9 +673,9 @@ class AiService {
     });
     final hit = _cache[ck];
     if (hit != null) {
-      _recordCached('calories', p.system, p.user,
+      final id = _recordCached('calories', p.system, p.user,
           {'n': name, 's': servings, 'i': ingredients}, source, hit);
-      return {...hit, 'cached': true};
+      return {...hit, 'cached': true, if (id != null) 'runId': id};
     }
     final r = await chatJson(p.system, p.user,
         feature: 'calories',
@@ -714,8 +714,8 @@ class AiService {
     final ck = _cacheKey('recipe_fill', {'n': name, 'h': hint ?? ''});
     final hit = _cache[ck];
     if (hit != null) {
-      _recordCached('recipe_fill', p.system, p.user, {'n': name, 'h': hint ?? ''}, source, hit);
-      return {...hit, 'cached': true};
+      final id = _recordCached('recipe_fill', p.system, p.user, {'n': name, 'h': hint ?? ''}, source, hit);
+      return {...hit, 'cached': true, if (id != null) 'runId': id};
     }
     final r = await chatJson(p.system, p.user,
         maxTokens: 3000,
@@ -768,9 +768,9 @@ class AiService {
     });
     final hit = _cache[ck];
     if (hit != null) {
-      _recordCached('recommend', p.system, p.user,
+      final id = _recordCached('recommend', p.system, p.user,
           {'p': pantry, 'e': existingRecipeNames, 'w': want}, source, hit);
-      return {...hit, 'cached': true};
+      return {...hit, 'cached': true, if (id != null) 'runId': id};
     }
     final r = await chatJson(p.system, p.user,
         maxTokens: 3000,
@@ -782,9 +782,11 @@ class AiService {
   }
 
   /// 缓存命中的留痕：没走上游，所以 token/耗时记 0，cached=1（FR-AI-61）。
-  void _recordCached(String feature, String sys, String user, Object inputJson,
+  /// 返回**本次这一行**的 id：缓存响应里原本带的 runId 是第一次真调用的行，
+  /// 直接回传会让客户端的 run_ref 对到别的记录上（本机标记就丢了）。
+  int? _recordCached(String feature, String sys, String user, Object inputJson,
       String? source, Map<String, Object?> cached) {
-    _record(_row(
+    return _record(_row(
       feature: feature,
       system: sys,
       userPrompt: user,
