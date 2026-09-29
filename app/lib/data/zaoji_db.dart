@@ -185,6 +185,20 @@ class ZaojiDb extends GeneratedDatabase {
           }
         }
       }
+      // v7 → v8（R44）改列：localOnly 的 ai_usage 补 run_ref/summary。
+      // 两张新表 ai_prompts/ai_runs 是 serverOnly，客户端不建（见 clientTables），
+      // 所以本轮客户端唯一要跑的就是这两条 ALTER，与服务端共用脚本。
+      // 判据仍是列在不在（挑 run_ref 当哨兵），半迁移重进也幂等。
+      if (from < 8) {
+        final hasRunRef =
+            (await customSelect('PRAGMA table_info(ai_usage)').get())
+            .any((r) => r.read<String>('name') == 'run_ref');
+        if (!hasRunRef) {
+          for (final stmt in kSchemaV8AlterSql) {
+            await customStatement(stmt);
+          }
+        }
+      }
     },
     beforeOpen: (details) async {
       // 外键与服务端同一立场：schema 里 ingredient/step 都挂着

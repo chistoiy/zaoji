@@ -128,7 +128,8 @@ void main() {
       final after = reopened.db.db;
 
       expect(after.select("SELECT v FROM meta WHERE k = 'schema_version'").single['v'],
-          '7');
+          '$kSchemaVersion',
+          reason: '升级后 meta 记的是程序当前版本（现在 kSchemaVersion=8），不是恰好 v7');
       expect(
           after.select('PRAGMA table_info(pantry_item)')
               .map((r) => '${r['name']}')

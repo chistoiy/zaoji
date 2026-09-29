@@ -457,6 +457,47 @@ const List<TableSpec> kTables = [
       ColumnSpec('v', 'TEXT', notNull: true),
     ],
   ),
+  TableSpec(
+    name: 'ai_prompts',
+    scope: TableScope.serverOnly,
+    comment: 'R44：可编辑的提示词模板。一行一能力，覆盖内置默认；'
+        '删行 = 恢复默认。serverOnly 保证模板（可能含家庭数据措辞）不上同步流',
+    columns: [
+      ColumnSpec('feature', 'TEXT',
+          primaryKey: true,
+          comment: 'calories / recipe_fill / recommend（test 不可编）'),
+      ColumnSpec('system_tpl', 'TEXT', comment: 'system 模板；NULL = 用内置默认'),
+      ColumnSpec('user_tpl', 'TEXT', comment: 'user 模板；NULL = 用内置默认'),
+      ColumnSpec('updated_at', 'INTEGER', notNull: true, comment: '毫秒时间戳'),
+    ],
+  ),
+  TableSpec(
+    name: 'ai_runs',
+    scope: TableScope.serverOnly,
+    comment: 'R44：AI 执行记录。每次调用（含失败与连通测试）留一行，'
+        '输入/输出全文可查。服务端权威留痕，永不进同步',
+    columns: [
+      ColumnSpec('id', 'INTEGER',
+          primaryKey: true,
+          autoIncrement: true,
+          comment: '单调递增，客户端 localOnly ai_usage.run_ref 引用它'),
+      ColumnSpec('at', 'INTEGER',
+          notNull: true, comment: '毫秒时间戳，保留窗口与排序都按它'),
+      ColumnSpec('feature', 'TEXT', notNull: true, comment: '含 test'),
+      ColumnSpec('model', 'TEXT'),
+      ColumnSpec('prompt_system', 'TEXT', comment: '渲染后的最终 system 全文（输入留痕①）'),
+      ColumnSpec('prompt_user', 'TEXT', comment: '渲染后的最终 user 全文（输入留痕②）'),
+      ColumnSpec('input_json', 'TEXT', comment: '客户端传来的原始参数 JSON（喂了什么数据）'),
+      ColumnSpec('output', 'TEXT', comment: '成功=结果 JSON 原文；失败=错误文案'),
+      ColumnSpec('ok', 'INTEGER', notNull: true, defaultSql: '1'),
+      ColumnSpec('error_kind', 'TEXT', comment: 'off/auth/timeout/model/http/network/parse'),
+      ColumnSpec('cached', 'INTEGER', notNull: true, defaultSql: '0', comment: '1=命中结果缓存，不计用量'),
+      ColumnSpec('in_tok', 'INTEGER', notNull: true, defaultSql: '0'),
+      ColumnSpec('out_tok', 'INTEGER', notNull: true, defaultSql: '0'),
+      ColumnSpec('duration_ms', 'INTEGER', notNull: true, defaultSql: '0'),
+      ColumnSpec('source', 'TEXT', comment: '发起端：android / web / server-test'),
+    ],
+  ),
 
   // ───────────────── 本机私有（永不外发）─────────────────
   TableSpec(
@@ -482,7 +523,8 @@ const List<TableSpec> kTables = [
   TableSpec(
     name: 'ai_usage',
     scope: TableScope.localOnly,
-    comment: 'AI 用量。只用来算钱，没有任何外发价值',
+    comment: 'R44 复活：本机视角的 AI 调用记录。服务端 ai_runs 是权威全量，'
+        '这里只记「这台设备发起过什么、结果如何」，run_ref 指回服务端行做对账',
     columns: [
       ColumnSpec('id', 'TEXT', primaryKey: true),
       ColumnSpec('at', 'TEXT', notNull: true),
@@ -493,6 +535,10 @@ const List<TableSpec> kTables = [
           notNull: true, defaultSql: '0'),
       ColumnSpec('cost_est', 'REAL', notNull: true, defaultSql: '0'),
       ColumnSpec('ok', 'INTEGER', notNull: true, defaultSql: '1'),
+      ColumnSpec('run_ref', 'TEXT',
+          comment: '服务端 ai_runs.id；空 = 这次调用没拿到服务端留痕（未配置/网络断）'),
+      ColumnSpec('summary', 'TEXT',
+          comment: '输入摘要（菜名等），仅本机展示用，不做时间一致性强判据'),
     ],
   ),
   TableSpec(
@@ -537,7 +583,10 @@ const List<TableSpec> kTables = [
 /// v6 → v7：`recipe.created_at` + `pantry_item` 的 storage/bought_at/note/stock_status
 /// ——**第三例改列**，而且是"同一轮里两处改列"（原计划分开做，但每改一次列就要
 /// 重发一次 apk，合轮只承担一次硬账）。迁移脚本两端逐字共用 [kSchemaV7AlterSql]。
-const int kSchemaVersion = 7;
+/// v7 → v8：R44 纯增表 `ai_prompts` + `ai_runs`（都是 serverOnly，客户端不建），
+/// **外加 `ai_usage`（localOnly）补 run_ref/summary 两列——第四例改列**。
+/// 新表靠两端 createSql 幂等补建，改列走逐字共用的 [kSchemaV8AlterSql]。
+const int kSchemaVersion = 8;
 
 /// v4 → v5 的列迁移语句（服务端与 App 的 onUpgrade **逐字共用**）。
 /// UPDATE 里的值都是 64 位小写十六进制（MediaStore 入库前已验格式），
@@ -571,6 +620,17 @@ const List<String> kSchemaV7AlterSql = [
   'ALTER TABLE pantry_item ADD COLUMN note TEXT',
   "ALTER TABLE pantry_item ADD COLUMN stock_status TEXT NOT NULL DEFAULT 'have'",
   "UPDATE pantry_item SET stock_status = 'none' WHERE have = 0",
+];
+
+/// v7 → v8（R44）的列迁移语句（服务端与 App 的 onUpgrade **逐字共用**）。
+///
+/// 本轮只有 `ai_usage`（localOnly）需要改列——补 run_ref/summary 两列，
+/// 用来把本机视角记录对账回服务端 `ai_runs`。两张新表 ai_prompts/ai_runs
+/// 是 serverOnly，客户端根本不建，服务端靠 schemaDdl 的 IF NOT EXISTS 补出，
+/// **无需 ALTER**。判据仍是"列在不在"（挑 run_ref 当哨兵）。
+const List<String> kSchemaV8AlterSql = [
+  'ALTER TABLE ai_usage ADD COLUMN run_ref TEXT',
+  'ALTER TABLE ai_usage ADD COLUMN summary TEXT',
 ];
 
 /// 同步协议的版本。客户端与服务端必须一致，否则拒绝同步而不是猜。
@@ -607,6 +667,9 @@ List<String> schemaDdl() => [
       // change_log 按表筛是热路径
       'CREATE INDEX IF NOT EXISTS idx_change_log_tbl ON change_log(tbl, seq);',
       'CREATE INDEX IF NOT EXISTS idx_device_token ON device(token_hash);',
+      // R44：AI 执行记录按时间倒序翻页 + 按能力筛选 + 保留窗口修剪都吃这两条索引
+      'CREATE INDEX IF NOT EXISTS idx_ai_runs_at ON ai_runs(at DESC);',
+      'CREATE INDEX IF NOT EXISTS idx_ai_runs_feature ON ai_runs(feature);',
     ];
 
 /// 表之间的写入顺序（父表在前）。

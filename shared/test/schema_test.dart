@@ -182,6 +182,64 @@ void main() {
       expect(kSchemaVersion, greaterThan(0));
     });
   });
+
+  group('R44 · AI 提示词与执行记录', () {
+    test('★ ai_prompts / ai_runs 是 serverOnly，客户端不建、也永不同步', () {
+      for (final n in ['ai_prompts', 'ai_runs']) {
+        final t = kTables.firstWhere((x) => x.name == n);
+        expect(t.scope, TableScope.serverOnly, reason: '$n 必须是服务端基建');
+        expect(syncWhitelist.containsKey(n), isFalse, reason: '$n 竟然能被同步');
+        expect(localOnlyTables, isNot(contains(n)));
+      }
+    });
+
+    test('ai_runs 的列覆盖输入/输出/用量/状态四组留痕', () {
+      final t = kTables.firstWhere((x) => x.name == 'ai_runs');
+      expect(
+        t.columnNames,
+        containsAll([
+          'id', 'at', 'feature', 'model',
+          'prompt_system', 'prompt_user', 'input_json', // 输入留痕
+          'output', // 输出留痕
+          'ok', 'error_kind', 'cached', // 状态
+          'in_tok', 'out_tok', 'duration_ms', 'source', // 用量与来源
+        ]),
+      );
+      final id = t.column('id')!;
+      expect(
+          id.primaryKey && id.autoIncrement, isTrue,
+          reason: 'ai_runs.id 要 AUTOINCREMENT，客户端 run_ref 引用它去重靠单调');
+      expect(t.column('at')!.type, 'INTEGER', reason: '保留窗口按毫秒时间戳修剪');
+    });
+
+    test('ai_prompts 以 feature 为主键（一行一能力，删行即恢复默认）', () {
+      final t = kTables.firstWhere((x) => x.name == 'ai_prompts');
+      expect(t.column('feature')!.primaryKey, isTrue);
+      expect(t.column('system_tpl')!.notNull, isFalse,
+          reason: 'NULL = 回落内置默认，不能强约束');
+      expect(t.column('user_tpl')!.notNull, isFalse);
+    });
+
+    test('ai_usage 补上 run_ref / summary 两列，仍是 localOnly', () {
+      final t = kTables.firstWhere((x) => x.name == 'ai_usage');
+      expect(t.scope, TableScope.localOnly);
+      expect(t.columnNames, containsAll(['run_ref', 'summary']));
+    });
+
+    test('★ v8 迁移脚本只改 ai_usage，且两条 ALTER 幂等可共用', () {
+      expect(kSchemaV8AlterSql, hasLength(2));
+      for (final s in kSchemaV8AlterSql) {
+        expect(s, startsWith('ALTER TABLE ai_usage ADD COLUMN'),
+            reason: '本轮改列只允许动 ai_usage，其余是纯增表：$s');
+      }
+    });
+
+    test('ai_runs 有按时间与能力的索引（翻页与修剪的热路径）', () {
+      final ddl = schemaDdl().join('\n');
+      expect(ddl, contains('idx_ai_runs_at'));
+      expect(ddl, contains('idx_ai_runs_feature'));
+    });
+  });
 }
 
 /// SQLite 关键字。用错会被解析器拒绝，或者更糟——被当成别的东西。

@@ -104,6 +104,7 @@ class ZaojiDb {
       _migrateV3toV4();
       _migrateV4toV5();
       _migrateV6toV7();
+      _migrateV7toV8();
       _migrateConflictNullValues();
       db.execute(
         "INSERT INTO meta (k, v) VALUES ('schema_version', ?) "
@@ -162,6 +163,23 @@ class ZaojiDb {
         .any((r) => r['name'] == 'stock_status');
     if (!hasStatus) {
       for (final stmt in kSchemaV7AlterSql) {
+        db.execute(stmt);
+      }
+    }
+  }
+
+  /// v7 → v8（R44）：`ai_usage` 补 run_ref/summary 两列。
+  ///
+  /// 本轮两张新表 ai_prompts/ai_runs 是 serverOnly，由 [schemaDdl] 的
+  /// `CREATE TABLE IF NOT EXISTS` 直接补出，**不需要 ALTER**；
+  /// 只有 localOnly 的 `ai_usage` 是改列，判据挑 `run_ref`（哨兵列）。
+  /// ALTER 脚本与 App 端 onUpgrade **逐字共用** shared 的 [kSchemaV8AlterSql]。
+  void _migrateV7toV8() {
+    final hasRunRef = db
+        .select('PRAGMA table_info(ai_usage)')
+        .any((r) => r['name'] == 'run_ref');
+    if (!hasRunRef) {
+      for (final stmt in kSchemaV8AlterSql) {
         db.execute(stmt);
       }
     }
