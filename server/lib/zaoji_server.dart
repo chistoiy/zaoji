@@ -8,6 +8,8 @@
 library;
 
 export 'src/ai.dart';
+export 'src/ai_prompt_store.dart';
+export 'src/ai_run_store.dart';
 export 'src/backup.dart';
 export 'src/config.dart';
 export 'src/db.dart';

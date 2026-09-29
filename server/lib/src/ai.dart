@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import 'ai_prompt_store.dart';
+import 'ai_run_store.dart';
 import 'db.dart';
 import 'file_log.dart';
 
@@ -55,6 +57,7 @@ class AiConfig {
   bool flagNutrition;
   bool flagRecipe;
   bool flagRecommend;
+  int recordDays; // R44：执行记录滚动保留天数；0 = 永久保留
 
   AiConfig({
     this.enabled = false,
@@ -65,6 +68,7 @@ class AiConfig {
     this.flagNutrition = true,
     this.flagRecipe = true,
     this.flagRecommend = true,
+    this.recordDays = 90,
   });
 
   bool get configured => key.trim().isNotEmpty && baseUrl.trim().isNotEmpty;
@@ -85,6 +89,7 @@ class AiConfig {
           'recipe': flagRecipe,
           'recommend': flagRecommend,
         },
+        'recordDays': recordDays,
       };
 
   Map<String, Object?> toJsonFull() => {
@@ -106,6 +111,9 @@ class AiConfig {
         flagRecommend: j['flags'] is Map
             ? (j['flags'] as Map)['recommend'] != false
             : true,
+        recordDays: j['recordDays'] is int
+            ? (j['recordDays'] as int)
+            : int.tryParse('${j['recordDays'] ?? ''}') ?? 90,
       );
 
   /// 部分更新：没出现的键保持原值；key 给掩码/空 = 不改（R26 同族纪律）。
@@ -124,6 +132,9 @@ class AiConfig {
       flagRecommend: body['flagRecommend'] is bool
           ? body['flagRecommend'] as bool
           : flagRecommend,
+      recordDays: body['recordDays'] is int
+          ? body['recordDays'] as int
+          : (int.tryParse('${body['recordDays'] ?? ''}') ?? recordDays),
     );
     if (body.containsKey('key')) {
       final k = '${body['key'] ?? ''}'.trim();
@@ -176,17 +187,226 @@ class AiService {
   final SettingStore settings;
   final FileLog log;
   final String serverId;
+  final RunStore? runs; // R44：执行记录落点。null = 不记（纯配置类测试可省）
+  final PromptStore? prompts; // R44：提示词覆盖层。null = 永远用内置默认
   final HttpClient _client;
   AiService({
     required this.settings,
     required this.log,
     required this.serverId,
+    this.runs,
+    this.prompts,
     HttpClient? client,
   }) : _client = client ?? HttpClient();
 
+  // ── R44：提示词契约（占位符白名单 + 内置默认模板）───────────────
+  //
+  // 三条纪律：
+  // ① 内置默认从 R27/R31 的原文**逐字照抄**（占位符只替换了插值变量），
+  //    保证「没人覆盖时渲染出的 prompt 与升级前逐字节相同」；
+  // ② required 占位符缺一个就拒存——否则数据段被删空、能力会静默哑掉；
+  // ③ 白名单外的 {{...}} 一律拒——宁可让用户回来问，也不把没替换的占位符发给模型。
+
+  /// 每个能力允许的占位符（required 必须成对出现在 system+user 合并文本里）。
+  static const Map<String, ({List<String> required, List<String> optional})>
+      kPromptPlaceholders = {
+    'calories': (required: ['{{name}}', '{{servings}}', '{{ingredients}}'], optional: []),
+    'recipe_fill': (required: ['{{name}}'], optional: ['{{hint}}']),
+    'recommend': (required: ['{{pantry}}', '{{existing}}', '{{want}}'], optional: []),
+  };
+
+  /// 内置默认模板。system 侧大多无插值；数据段统一放 user。
+  /// recommend 的 {{want}} 在 system（原文「最多 $want 道」）。
+  static const Map<String, ({String system, String user})> kDefaultPrompts = {
+    'calories': (
+      system:
+          '你是家庭菜谱的热量估算器。按常见食物营养数据估算，只输出 JSON，'
+          '不要任何解释文字或围栏。字段：'
+          '{"kcal_per_serving":int,"total_kcal":int,"protein_g":int,"fat_g":int,'
+          '"carb_g":int,"per_ingredient":[{"name":str,"kcal":int}],'
+          '"confidence":"low|medium|high","note":str}',
+      user: '菜名：{{name}}（{{servings}} 人份）\n食材：\n{{ingredients}}',
+    ),
+    // recipe_fill 的 user 默认按「有没有 hint」分两条（见 _defaultUserFor），
+    // 这里存无 hint 的那条；有 hint 的版本由 _defaultUserFor 现拼，
+    // 为的是**与升级前逐字节一致**（旧代码就是两个三元分支）。
+    'recipe_fill': (
+      system:
+          '你是中式家常菜菜谱写手。为用户生成一道真实可做的家常菜，'
+          '只输出 JSON，不要任何解释文字或围栏。字段：'
+          '{"sub":str(一句话描述,≤24字),"difficulty":1|2|3,"self_time":int(总分钟),'
+          '"servings":int,"tags":[str],"ingredients":[{"name":str,"amount":str,"kind":"main"|"side"}],'
+          '"steps":[{"text":str,"minutes":int或null}],"notes":str}'
+          '要求：步骤 4~8 条；带等待的步骤必须把时间写进步骤文本（如「小火炖 20 分钟」）'
+          '以便应用识别时间胶囊；食材分量用家庭习惯（个/勺/克）。',
+      user: '菜名：{{name}}',
+    ),
+    'recommend': (
+      system:
+          '你是家庭厨师。根据家里现有食材推荐家常菜，只输出 JSON，不要解释文字或围栏。'
+          '字段：{"dishes":[{"name":str,"sub":str,"difficulty":1|2|3,"self_time":int,'
+          '"servings":int,"ingredients":[{"name":str,"amount":str}],'
+          '"steps":[str],"reason":str(为什么推荐：用上了哪些现有食材),'
+          '"extra_needed":[str](还需要买的食材，尽量空)]}]} '
+          '硬性要求：优先做现有食材就能完成的菜，最多 {{want}} 道，'
+          '每道菜需要新买的食材不超过 2 样（extra_needed 里列出来）；'
+          'steps 里带等待的步骤必须写时间（如「炖 40 分钟」）；不要推荐与已有菜谱同名或高度相似的菜。',
+      user: '家里现有食材：{{pantry}}\n已有菜谱（不要重复推荐）：{{existing}}',
+    ),
+  };
+
+  static bool isAiFeature(String f) => kDefaultPrompts.containsKey(f);
+
+  /// 校验一段覆盖模板：未知占位符 / 缺必填 → 返回错误串；通过返回 null。
+  /// 合并 system+user 一起查必填（用户可以把 {{ingredients}} 挪进 system）。
+  static String? validatePrompt(String feature, String system, String user) {
+    final spec = kPromptPlaceholders[feature];
+    if (spec == null) return '不认识的能力：$feature';
+    final combined = '$system\n$user';
+    // 找出所有写出来的占位符 {{...}}
+    final found = RegExp(r'\{\{[^}]*\}\}').allMatches(combined).map((m) => m.group(0)!).toSet();
+    final allowed = {...spec.required, ...spec.optional};
+    for (final t in found) {
+      if (!allowed.contains(t)) {
+        return '$feature 不支持占位符 $t（可用：${allowed.join(' ')}）';
+      }
+    }
+    final missing = [for (final t in spec.required) if (!found.contains(t)) t];
+    if (missing.isNotEmpty) return '$feature 缺少必填占位符：${missing.join(' ')}';
+    return null;
+  }
+
+  /// 渲染：把 values 里每个 key 的 {{key}} 换成值（值本身不做二次转义——
+  /// 数据段里出现 `{{` 的概率按零处理，家庭菜谱文本不会有）。
+  static String render(String tpl, Map<String, String> values) {
+    var out = tpl;
+    values.forEach((k, v) => out = out.replaceAll('{{$k}}', v));
+    return out;
+  }
+
+  /// recipe_fill 的 user 默认：有 hint 时与旧代码逐字节一致。
+  static String _defaultUserFor(String feature, Map<String, String> values) {
+    if (feature == 'recipe_fill' && (values['hint'] ?? '').isNotEmpty) {
+      return '菜名：{{name}}\n补充要求：{{hint}}';
+    }
+    return kDefaultPrompts[feature]!.user;
+  }
+
+  /// 取该能力当前**生效**的 system/user 模板（覆盖优先，缺侧回落默认）。
+  ({String system, String user}) _effectiveTemplates(
+      String feature, Map<String, String> values) {
+    final ov = prompts?.get(feature);
+    final sysDefault = kDefaultPrompts[feature]!.system;
+    final userDefault = _defaultUserFor(feature, values);
+    return (
+      system: ov?.system ?? sysDefault,
+      user: ov?.user ?? userDefault,
+    );
+  }
+
+  /// 用生效模板渲染出最终 (system, user)。
+  ({String system, String user}) buildPrompt(
+      String feature, Map<String, String> values) {
+    final t = _effectiveTemplates(feature, values);
+    return (system: render(t.system, values), user: render(t.user, values));
+  }
+
+  /// GET /api/ai/prompts 的展示体：逐能力给生效模板 + 默认 + 是否已改。
+  List<Map<String, Object?>> promptViews() {
+    final out = <Map<String, Object?>>[];
+    for (final f in kDefaultPrompts.keys) {
+      final ov = prompts?.get(f);
+      out.add({
+        'feature': f,
+        'system': ov?.system ?? kDefaultPrompts[f]!.system,
+        'user': ov?.user ?? kDefaultPrompts[f]!.user,
+        'defaultSystem': kDefaultPrompts[f]!.system,
+        'defaultUser': kDefaultPrompts[f]!.user,
+        'modified': ov != null,
+        'placeholders': {
+          'required': kPromptPlaceholders[f]!.required,
+          'optional': kPromptPlaceholders[f]!.optional,
+        },
+      });
+    }
+    return out;
+  }
+
+  /// 保存覆盖（校验后写库）。返回 null=成功，否则错误文案。
+  /// 存完清一次结果缓存——改了 prompt 还命中旧缓存 = 「改了没生效」（FR-AI-53）。
+  String? savePrompt(String feature, String? system, String? user) {
+    if (!isAiFeature(feature)) return '不认识的能力：$feature';
+    final sys = system ?? kDefaultPrompts[feature]!.system;
+    final usr = user ?? kDefaultPrompts[feature]!.user;
+    final err = validatePrompt(feature, sys, usr);
+    if (err != null) return err;
+    prompts?.put(feature, system: system, user: user);
+    _cache.clear();
+    return null;
+  }
+
+  /// 恢复默认：删覆盖 + 清缓存。
+  void resetPrompt(String feature) {
+    prompts?.reset(feature);
+    _cache.clear();
+  }
+
+
   static const _settingsKey = 'ai_config';
-  static const _usageKey = 'ai_usage';
   static const timeout = Duration(seconds: 60);
+
+  /// 记录条数硬上限（FR-AI-58 的兜底：家庭用量下 90 天在 MB 级，
+  /// 但没人配错成"永久"就要有个封顶挡着磁盘）。
+  static const _runCap = 2000;
+
+  /// 写一条执行记录。**任何失败都吞掉**——留痕是旁路，绝不能把 AI 调用本身带崩。
+  /// 写完顺手按保留窗口 + 条数封顶修剪一次（不挂独立定时器，与 R40/R43 同立场）。
+  /// 返回写入行的 id（供响应体回传给客户端对账），没记成则 null。
+  int? _record(AiRunRow row) {
+    final store = runs;
+    if (store == null) return null;
+    try {
+      final id = store.insert(row);
+      final days = config().recordDays;
+      final keepMs = days <= 0 ? 0 : days * 24 * 60 * 60 * 1000;
+      store.prune(keepMs: keepMs, cap: _runCap);
+      return id;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 从一次 chatJson 的上下文拼一行记录（成功/失败/缓存共用）。
+  AiRunRow _row({
+    required String feature,
+    required String system,
+    required String userPrompt,
+    Object? inputJson,
+    String? source,
+    String? model,
+    String? output,
+    bool ok = true,
+    String? errorKind,
+    bool cached = false,
+    int inTok = 0,
+    int outTok = 0,
+    int durationMs = 0,
+  }) =>
+      AiRunRow(
+        feature: feature,
+        model: model,
+        promptSystem: system,
+        promptUser: userPrompt,
+        inputJson: inputJson == null ? null : jsonEncode(inputJson),
+        output: output,
+        ok: ok,
+        errorKind: errorKind,
+        cached: cached,
+        inTok: inTok,
+        outTok: outTok,
+        durationMs: durationMs,
+        source: source,
+      );
 
   // ── 配置存取（Key 加密落库）──
 
@@ -212,39 +432,25 @@ class AiService {
         'enabled=${c.enabled} key长度=${c.key.length}'); // 只写长度，不写内容
   }
 
-  // ── 用量（FR-AI-12 的最小实现：本月调用次数与 token）──
+  // ── 用量（FR-AI-68：本月调用次数与 token 直读 ai_runs 聚合）──
+  //
+  // 旧实现是 chatJson 成功时往 server_setting 的月度 kv 累加（_bumpUsage）。
+  // ai_runs 落地后那套成了第二份真相——它只数成功上游调用，ai_runs 也只在
+  // ok=1 且 cached=0 时计，两者语义一致，但 kv 会漂移（漏记/重复记都无从核对）。
+  // 于是改成**唯一真相就是 ai_runs**：不再写 kv，读端按需聚合。
 
   Map<String, Object?> usage() {
-    final month = _monthKey();
-    try {
-      final j = jsonDecode(settings.get(_usageKey) ?? '{}');
-      if (j is Map && j[month] is Map) {
-        return (j[month] as Map).cast<String, Object?>();
-      }
-    } catch (_) {}
-    return {'calls': 0, 'inTok': 0, 'outTok': 0};
+    final store = runs;
+    if (store == null) return {'calls': 0, 'inTok': 0, 'outTok': 0};
+    final a = store.aggregate(sinceMs: _monthStartMs());
+    return {'calls': a.calls, 'inTok': a.inTok, 'outTok': a.outTok};
   }
 
-  Future<void> _bumpUsage(int inTok, int outTok) async {
-    final month = _monthKey();
-    Map<String, Object?> all = {};
-    try {
-      final j = jsonDecode(settings.get(_usageKey) ?? '{}');
-      if (j is Map) all = j.cast<String, Object?>();
-    } catch (_) {}
-    final u = (all[month] as Map?)?.cast<String, Object?>() ?? {};
-    int n(Object? v) => v is int ? v : int.tryParse('$v') ?? 0;
-    all[month] = {
-      'calls': n(u['calls']) + 1,
-      'inTok': n(u['inTok']) + inTok,
-      'outTok': n(u['outTok']) + outTok,
-    };
-    await _saveJson(_usageKey, all);
-  }
-
-  static String _monthKey() {
-    final d = DateTime.now();
-    return '${d.year}-${d.month.toString().padLeft(2, '0')}';
+  /// 本地时区「本月 1 号 00:00」的毫秒时刻。at 存的就是本地时区的 epoch ms，
+  /// 两边同一时区口径，聚合边界才对得上。
+  static int _monthStartMs() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month).millisecondsSinceEpoch;
   }
 
   Future<void> _saveJson(String key, Map<String, Object?> v) async {
@@ -262,11 +468,20 @@ class AiService {
 
   /// 调 OpenAI 兼容 /chat/completions，要求只回 JSON。
   /// [system]/[userPrompt] 组 prompt；返回解析后的 JSON + 用量。
+  ///
+  /// R44：[feature]/[inputJson]/[source] 是留痕上下文（不传则不落记录，
+  /// 纯连通/内部调用可留空）。三路留痕收口在这里：**成功**记 ok=1，
+  /// **上游失败**在 finally 里记 ok=1=0 + errorKind 后原样抛。
+  /// 返回体多带一个 `runId`（写成的行 id），客户端存进本机 run_ref 对账。
   Future<Map<String, Object?>> chatJson(String system, String userPrompt,
-      {int maxTokens = 2048}) async {
+      {int maxTokens = 2048,
+      String? feature,
+      Object? inputJson,
+      String? source}) async {
     final cfg = config();
     final url = cfg.baseUrl.trim();
     final normalized = url.endsWith('/v1') ? '$url/chat/completions' : '$url/chat/completions';
+    final sw = Stopwatch()..start();
     HttpClientResponse res;
     try {
       final req = await _client.openUrl('POST', Uri.parse(normalized))
@@ -291,14 +506,22 @@ class AiService {
       req.write(body);
       res = await req.close().timeout(timeout);
     } on TimeoutException {
+      _fail(feature, system, userPrompt, inputJson, source, cfg.model, sw,
+          'timeout', '上游 $url 超时（>${timeout.inSeconds}s）');
       throw AiUpstreamException('timeout', '上游 $url 超时（>${timeout.inSeconds}s）');
     } on SocketException catch (e) {
+      _fail(feature, system, userPrompt, inputJson, source, cfg.model, sw,
+          'network', '连不上上游：${e.osError ?? e.message}');
       throw AiUpstreamException('network', '连不上上游：${e.osError ?? e.message}');
     } on FormatException {
+      _fail(feature, system, userPrompt, inputJson, source, cfg.model, sw,
+          'network', '上游地址不合法：$url');
       throw AiUpstreamException('network', '上游地址不合法：$url');
     }
     final text = await res.transform(utf8.decoder).join();
     if (res.statusCode == 401 || res.statusCode == 403) {
+      _fail(feature, system, userPrompt, inputJson, source, cfg.model, sw,
+          'auth', '上游拒绝该 Key（HTTP ${res.statusCode}）');
       throw AiUpstreamException('auth', '上游拒绝该 Key（HTTP ${res.statusCode}）');
     }
     if (res.statusCode != 200) {
@@ -306,15 +529,23 @@ class AiService {
       final kind = res.statusCode == 404 || text.contains('model')
           ? 'model'
           : 'http';
-      throw AiUpstreamException(kind, 'HTTP ${res.statusCode}：${_clip(text, 180)}');
+      final msg = 'HTTP ${res.statusCode}：${_clip(text, 180)}';
+      _fail(feature, system, userPrompt, inputJson, source, cfg.model, sw, kind, msg);
+      throw AiUpstreamException(kind, msg);
     }
     Object? parsed;
     try {
       parsed = jsonDecode(text);
     } catch (_) {
+      _fail(feature, system, userPrompt, inputJson, source, cfg.model, sw,
+          'http', '上游返回的不是 JSON');
       throw AiUpstreamException('http', '上游返回的不是 JSON');
     }
-    if (parsed is! Map) throw AiUpstreamException('http', '上游响应结构不认识');
+    if (parsed is! Map) {
+      _fail(feature, system, userPrompt, inputJson, source, cfg.model, sw,
+          'http', '上游响应结构不认识');
+      throw AiUpstreamException('http', '上游响应结构不认识');
+    }
     final u = (parsed['usage'] as Map?)?.cast<String, Object?>();
     int n(Object? v) => v is int ? v : int.tryParse('$v') ?? 0;
     final choices = parsed['choices'] as List?;
@@ -322,12 +553,59 @@ class AiService {
     final content = first is Map
         ? ((first['message'] as Map?)?['content'] ?? '')
         : '';
-    await _bumpUsage(n(u?['prompt_tokens']), n(u?['completion_tokens']));
     final $ = _jsonFromContent('$content');
+    final usedModel = '${parsed['model'] ?? cfg.model}';
     if ($ == null) {
-      throw AiUpstreamException('http', '模型没按约定返回 JSON（拿到 ${_clip(content.toString(), 120)}）');
+      final msg = '模型没按约定返回 JSON（拿到 ${_clip(content.toString(), 120)}）';
+      // 解析失败也记一行——输出留痕就是这段没吃下去的 content
+      _record(_row(
+        feature: feature ?? 'unknown',
+        system: system,
+        userPrompt: userPrompt,
+        inputJson: inputJson,
+        source: source,
+        model: usedModel,
+        output: '$content',
+        ok: false,
+        errorKind: 'parse',
+        inTok: n(u?['prompt_tokens']),
+        outTok: n(u?['completion_tokens']),
+        durationMs: sw.elapsedMilliseconds,
+      ));
+      throw AiUpstreamException('http', msg);
     }
-    return {'result': $, 'usage': u ?? {}, 'model': parsed['model'] ?? cfg.model};
+    final runId = _record(_row(
+      feature: feature ?? 'unknown',
+      system: system,
+      userPrompt: userPrompt,
+      inputJson: inputJson,
+      source: source,
+      model: usedModel,
+      output: jsonEncode($),
+      ok: true,
+      inTok: n(u?['prompt_tokens']),
+      outTok: n(u?['completion_tokens']),
+      durationMs: sw.elapsedMilliseconds,
+    ));
+    return {'result': $, 'usage': u ?? {}, 'model': usedModel, 'runId': runId};
+  }
+
+  /// 上游失败的统一留痕（[feature] 为空 = 不留痕，给内部/连通调用）。
+  void _fail(String? feature, String system, String userPrompt, Object? inputJson,
+      String? source, String model, Stopwatch sw, String kind, String detail) {
+    if (feature == null) return;
+    _record(_row(
+      feature: feature,
+      system: system,
+      userPrompt: userPrompt,
+      inputJson: inputJson,
+      source: source,
+      model: model,
+      output: detail,
+      ok: false,
+      errorKind: kind,
+      durationMs: sw.elapsedMilliseconds,
+    ));
   }
 
   /// 从 content 里抠 JSON：容忍 ```json 围栏与前后寒暄（推理模型偶尔会加）。
@@ -363,27 +641,46 @@ class AiService {
     required String name,
     required int servings,
     required List<Map<String, Object?>> ingredients,
+    String? source,
   }) async {
     final cfg = config();
     if (!cfg.enabled || !cfg.flagNutrition) {
+      _record(_row(
+        feature: 'calories',
+        system: '',
+        userPrompt: '菜名：$name（$servings 人份）',
+        inputJson: {'n': name, 's': servings, 'i': ingredients},
+        source: source,
+        model: cfg.model,
+        output: 'AI 或「卡路里估算」能力未启用',
+        ok: false,
+        errorKind: 'off',
+      ));
       throw AiUpstreamException('off', 'AI 或「卡路里估算」能力未启用');
     }
-    final ck = _cacheKey('calories', {
-      'n': name, 's': servings, 'i': ingredients
-    });
-    if (_cache[ck] != null) return {..._cache[ck]!, 'cached': true};
     final lines = ingredients
         .map((e) => '${e['kind'] == 'main' ? '主料' : '配料'}：'
             '${e['name']}${(e['amount'] ?? '').toString().isEmpty ? '' : ' ${e['amount']}'}')
         .join('\n');
-    final r = await chatJson(
-      '你是家庭菜谱的热量估算器。按常见食物营养数据估算，只输出 JSON，'
-      '不要任何解释文字或围栏。字段：'
-      '{"kcal_per_serving":int,"total_kcal":int,"protein_g":int,"fat_g":int,'
-      '"carb_g":int,"per_ingredient":[{"name":str,"kcal":int}],'
-      '"confidence":"low|medium|high","note":str}',
-      '菜名：$name（$servings 人份）\n食材：\n$lines',
-    );
+    final values = {
+      'name': name,
+      'servings': '$servings',
+      'ingredients': lines,
+    };
+    final p = buildPrompt('calories', values);
+    final ck = _cacheKey('calories', {
+      'n': name, 's': servings, 'i': ingredients
+    });
+    final hit = _cache[ck];
+    if (hit != null) {
+      _recordCached('calories', p.system, p.user,
+          {'n': name, 's': servings, 'i': ingredients}, source, hit);
+      return {...hit, 'cached': true};
+    }
+    final r = await chatJson(p.system, p.user,
+        feature: 'calories',
+        inputJson: {'n': name, 's': servings, 'i': ingredients},
+        source: source);
     _putCache(ck, r);
     return r;
   }
@@ -392,24 +689,39 @@ class AiService {
   Future<Map<String, Object?>> recipeFill({
     required String name,
     String? hint,
+    String? source,
   }) async {
     final cfg = config();
     if (!cfg.enabled || !cfg.flagRecipe) {
+      _record(_row(
+        feature: 'recipe_fill',
+        system: '',
+        userPrompt: '菜名：$name',
+        inputJson: {'n': name, 'h': hint ?? ''},
+        source: source,
+        model: cfg.model,
+        output: 'AI 或「AI 生成菜谱」能力未启用',
+        ok: false,
+        errorKind: 'off',
+      ));
       throw AiUpstreamException('off', 'AI 或「AI 生成菜谱」能力未启用');
     }
+    final values = {
+      'name': name,
+      'hint': hint ?? '',
+    };
+    final p = buildPrompt('recipe_fill', values);
     final ck = _cacheKey('recipe_fill', {'n': name, 'h': hint ?? ''});
-    if (_cache[ck] != null) return {..._cache[ck]!, 'cached': true};
-    final r = await chatJson(
-      '你是中式家常菜菜谱写手。为用户生成一道真实可做的家常菜，'
-      '只输出 JSON，不要任何解释文字或围栏。字段：'
-      '{"sub":str(一句话描述,≤24字),"difficulty":1|2|3,"self_time":int(总分钟),'
-      '"servings":int,"tags":[str],"ingredients":[{"name":str,"amount":str,"kind":"main"|"side"}],'
-      '"steps":[{"text":str,"minutes":int或null}],"notes":str}'
-      '要求：步骤 4~8 条；带等待的步骤必须把时间写进步骤文本（如「小火炖 20 分钟」）'
-      '以便应用识别时间胶囊；食材分量用家庭习惯（个/勺/克）。',
-      hint == null || hint.isEmpty ? '菜名：$name' : '菜名：$name\n补充要求：$hint',
-      maxTokens: 3000,
-    );
+    final hit = _cache[ck];
+    if (hit != null) {
+      _recordCached('recipe_fill', p.system, p.user, {'n': name, 'h': hint ?? ''}, source, hit);
+      return {...hit, 'cached': true};
+    }
+    final r = await chatJson(p.system, p.user,
+        maxTokens: 3000,
+        feature: 'recipe_fill',
+        inputJson: {'n': name, 'h': hint ?? ''},
+        source: source);
     _putCache(ck, r);
     return r;
   }
@@ -425,44 +737,91 @@ class AiService {
     required List<Map<String, Object?>> pantry,
     required List<String> existingRecipeNames,
     int want = 5,
+    String? source,
   }) async {
     final cfg = config();
     if (!cfg.enabled || !cfg.flagRecommend) {
+      _record(_row(
+        feature: 'recommend',
+        system: '',
+        userPrompt: '家里现有食材：${pantry.length} 项',
+        inputJson: {'p': pantry, 'e': existingRecipeNames, 'w': want},
+        source: source,
+        model: cfg.model,
+        output: 'AI 或「AI 推荐菜品」能力未启用',
+        ok: false,
+        errorKind: 'off',
+      ));
       throw AiUpstreamException('off', 'AI 或「AI 推荐菜品」能力未启用');
     }
-    final ck = _cacheKey('recommend', {
-      'p': pantry, 'e': existingRecipeNames, 'w': want,
-    });
-    if (_cache[ck] != null) return {..._cache[ck]!, 'cached': true};
     final lines = pantry
         .map((e) => '${e['name']}${(e['amount'] ?? '').toString().isEmpty ? '' : ' ${e['amount']}'}')
         .join('、');
-    final r = await chatJson(
-      '你是家庭厨师。根据家里现有食材推荐家常菜，只输出 JSON，不要解释文字或围栏。'
-      '字段：{"dishes":[{"name":str,"sub":str,"difficulty":1|2|3,"self_time":int,'
-      '"servings":int,"ingredients":[{"name":str,"amount":str}],'
-      '"steps":[str],"reason":str(为什么推荐：用上了哪些现有食材),'
-      '"extra_needed":[str](还需要买的食材，尽量空)]}]} '
-      '硬性要求：优先做现有食材就能完成的菜，最多 $want 道，'
-      '每道菜需要新买的食材不超过 2 样（extra_needed 里列出来）；'
-      'steps 里带等待的步骤必须写时间（如「炖 40 分钟」）；不要推荐与已有菜谱同名或高度相似的菜。',
-      '家里现有食材：$lines\n'
-      '已有菜谱（不要重复推荐）：${existingRecipeNames.join('、')}',
-      maxTokens: 3000,
-    );
+    final values = {
+      'pantry': lines,
+      'existing': existingRecipeNames.join('、'),
+      'want': '$want',
+    };
+    final p = buildPrompt('recommend', values);
+    final ck = _cacheKey('recommend', {
+      'p': pantry, 'e': existingRecipeNames, 'w': want,
+    });
+    final hit = _cache[ck];
+    if (hit != null) {
+      _recordCached('recommend', p.system, p.user,
+          {'p': pantry, 'e': existingRecipeNames, 'w': want}, source, hit);
+      return {...hit, 'cached': true};
+    }
+    final r = await chatJson(p.system, p.user,
+        maxTokens: 3000,
+        feature: 'recommend',
+        inputJson: {'p': pantry, 'e': existingRecipeNames, 'w': want},
+        source: source);
     _putCache(ck, r);
     return r;
   }
 
+  /// 缓存命中的留痕：没走上游，所以 token/耗时记 0，cached=1（FR-AI-61）。
+  void _recordCached(String feature, String sys, String user, Object inputJson,
+      String? source, Map<String, Object?> cached) {
+    _record(_row(
+      feature: feature,
+      system: sys,
+      userPrompt: user,
+      inputJson: inputJson,
+      source: source,
+      model: '${cached['model'] ?? ''}',
+      output: jsonEncode(cached['result']),
+      ok: true,
+      cached: true,
+    ));
+  }
+
   /// 连通测试（FR-AI-03）：用**待保存或已存的**参数发一条最小请求，
   /// 四类失败各有 kind：auth / model / network / timeout。
-  Future<void> testConnection({String? baseUrl, String? model, String? key}) async {
+  /// R44：成功与失败都记一行 `feature='test'`（FR-AI-54 的"含连通测试"）。
+  Future<void> testConnection({String? baseUrl, String? model, String? key, String? source}) async {
     final cfg = config();
     final url = (baseUrl ?? cfg.baseUrl).trim();
     final useKey = (key != null && key.isNotEmpty && !key.startsWith('••••'))
         ? key
         : cfg.key;
-    if (url.isEmpty) throw AiUpstreamException('network', 'Base URL 还没填');
+    final usedModel = (model ?? cfg.model).trim();
+    void test({required bool ok, String? errKind, String? output}) => _record(_row(
+          feature: 'test',
+          system: '',
+          userPrompt: 'ping',
+          inputJson: {'url': url, 'model': usedModel},
+          source: source ?? 'server-test',
+          model: usedModel,
+          output: output ?? (ok ? '连通正常' : ''),
+          ok: ok,
+          errorKind: errKind,
+        ));
+    if (url.isEmpty) {
+      test(ok: false, errKind: 'network', output: 'Base URL 还没填');
+      throw AiUpstreamException('network', 'Base URL 还没填');
+    }
     final normalized = '$url/chat/completions';
     try {
       final req = await _client.openUrl('POST', Uri.parse(normalized))
@@ -470,7 +829,7 @@ class AiService {
       req.headers.contentType = ContentType.json;
       req.headers.set('authorization', 'Bearer $useKey');
       req.write(jsonEncode({
-        'model': (model ?? cfg.model).trim(),
+        'model': usedModel,
         'messages': [
           {'role': 'user', 'content': 'ping'}
         ],
@@ -479,20 +838,25 @@ class AiService {
       final res = await req.close().timeout(const Duration(seconds: 30));
       final body = await res.transform(utf8.decoder).join();
       if (res.statusCode == 401 || res.statusCode == 403) {
+        test(ok: false, errKind: 'auth', output: 'Key 被拒（HTTP ${res.statusCode}）');
         throw AiUpstreamException('auth', 'Key 被拒（HTTP ${res.statusCode}）');
       }
       if (res.statusCode != 200) {
-        throw AiUpstreamException(
-            res.statusCode == 404 || body.contains('model') ? 'model' : 'http',
-            'HTTP ${res.statusCode}：${_clip(body, 160)}');
+        final kind = res.statusCode == 404 || body.contains('model') ? 'model' : 'http';
+        test(ok: false, errKind: kind, output: 'HTTP ${res.statusCode}：${_clip(body, 160)}');
+        throw AiUpstreamException(kind, 'HTTP ${res.statusCode}：${_clip(body, 160)}');
       }
+      test(ok: true);
     } on AiUpstreamException {
-      rethrow;
+      rethrow; // 已在上面记过
     } on TimeoutException {
+      test(ok: false, errKind: 'timeout', output: '地址不可达或太慢（>30s）');
       throw AiUpstreamException('timeout', '地址不可达或太慢（>30s）');
     } on SocketException catch (e) {
+      test(ok: false, errKind: 'network', output: '连不上：${e.osError ?? e.message}');
       throw AiUpstreamException('network', '连不上：${e.osError ?? e.message}');
     } on FormatException {
+      test(ok: false, errKind: 'network', output: '地址格式不对：$url');
       throw AiUpstreamException('network', '地址格式不对：$url');
     }
   }
@@ -501,6 +865,19 @@ class AiService {
     if (_cache.length >= _cacheCap) _cache.remove(_cache.keys.first);
     _cache[k] = v;
   }
+
+  // ── R44：执行记录的读端（删/查接口用；runId 在响应体回传给客户端对账）──
+
+  /// 列表 + 总数。没接记录层时回空表。
+  ({List<AiRunRow> rows, int total}) listRuns(RunFilter f) =>
+      runs?.query(f) ?? (rows: const [], total: 0);
+
+  AiRunRow? getRun(int id) => runs?.get(id);
+
+  int deleteRun(int id) => runs?.deleteOne(id) ?? 0;
+
+  /// 按筛选清空（不带筛选 = 全清）。
+  int clearRuns(RunFilter f) => runs?.deleteWhere(f) ?? 0;
 
   // ── 配置字段的防尘加密（HMAC-SHA256 计数器流 XOR）──
   //

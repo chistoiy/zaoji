@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'ai.dart';
+import 'ai_prompt_store.dart';
+import 'ai_run_store.dart';
 import 'backup.dart';
 import 'config.dart';
 import 'db.dart';
@@ -179,8 +181,12 @@ class ServerState {
   late final FileLog log = FileLog(config.logsDir, echo: stdout.writeln);
 
   /// AI 代理（R27）。Key 存 server_setting（非同步表），只回掩码。
-  late final AiService ai =
-      AiService(settings: DbSettingStore(db), log: log, serverId: serverId);
+  late final AiService ai = AiService(
+      settings: DbSettingStore(db),
+      log: log,
+      serverId: serverId,
+      runs: DbRunStore(db),
+      prompts: DbPromptStore(db));
 
   /// 备份服务（R26）。配置在 `data/backup_config.json`——
   /// **故意不进库**：库会被打进备份包，凭据不能跟着包上云（自我引用）。

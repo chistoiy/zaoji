@@ -8,6 +8,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'ai.dart';
+import 'ai_run_store.dart';
 import 'backup.dart';
 import 'config.dart';
 import 'file_log.dart';
@@ -174,7 +175,16 @@ class ZaojiServer {
       ..post('/api/ai/recommend',
           (Request req) => _aiRecommend(state, req))
       ..post('/api/ai/recipe-fill',
-          (Request req) => _aiRecipeFill(state, req));
+          (Request req) => _aiRecipeFill(state, req))
+      // R44：AI 执行记录的查/删。列表与清空走 /api/ai/runs，详情与单删带 id。
+      ..get('/api/ai/runs', (Request req) => _aiRunsList(state, req))
+      ..get('/api/ai/runs/<id>', (Request req, String id) => _aiRunsGet(state, req, id))
+      ..delete('/api/ai/runs/<id>', (Request req, String id) => _aiRunsDelete(state, req, id))
+      ..delete('/api/ai/runs', (Request req) => _aiRunsClear(state, req))
+      // R44：提示词管理。逐能力查看/编辑/恢复默认。
+      ..get('/api/ai/prompts', (Request req) => _aiPromptsList(state, req))
+      ..post('/api/ai/prompts', (Request req) => _aiPromptsWrite(state, req))
+      ..post('/api/ai/prompts/reset', (Request req) => _aiPromptsReset(state, req));
 
     /// 首页：如果托管了 Flutter Web 产物，让位给它——
     /// 否则用户打开地址看到的永远是状态页，而不是他要的 App。
@@ -1028,6 +1038,7 @@ class ZaojiServer {
         baseUrl: body['baseUrl'] as String?,
         model: body['model'] as String?,
         key: body['key'] as String?,
+        source: _aiSource(state, req),
       );
       return _json({'ok': true, 'message': '连通正常'});
     } on AiUpstreamException catch (e) {
@@ -1036,6 +1047,11 @@ class ZaojiServer {
           status: 502);
     }
   }
+
+  /// R44：这次 AI 调用是谁发起的。认证到的设备名原样用作 source——
+  /// 它是「谁按的钮」的诚实标识，也是客户端在本机记录里比对「本机发起」的依据。
+  static String? _aiSource(ServerState state, Request req) =>
+      _resolveDevice(state, req)?.name;
 
   static Future<Response> _aiCalories(ServerState state, Request req) async {
     if (_aiGuard(state, req) case final deny?) return deny;
@@ -1062,6 +1078,7 @@ class ZaojiServer {
         name: '${body['name']}',
         servings: body['servings'] is int ? body['servings'] as int : 2,
         ingredients: ingredients,
+        source: _aiSource(state, req),
       );
       return _json({'ok': true, ...r});
     } on AiUpstreamException catch (e) {
@@ -1091,7 +1108,9 @@ class ZaojiServer {
         .toList();
     try {
       final r = await state.ai.recommend(
-          pantry: pantry, existingRecipeNames: existing);
+          pantry: pantry,
+          existingRecipeNames: existing,
+          source: _aiSource(state, req));
       return _json({'ok': true, ...r});
     } on AiUpstreamException catch (e) {
       return _json({'ok': false, 'error': e.kind, 'message': e.detail},
@@ -1114,12 +1133,117 @@ class ZaojiServer {
     }
     try {
       final r = await state.ai.recipeFill(
-          name: name, hint: body?['hint'] as String?);
+          name: name,
+          hint: body?['hint'] as String?,
+          source: _aiSource(state, req));
       return _json({'ok': true, ...r});
     } on AiUpstreamException catch (e) {
       return _json({'ok': false, 'error': e.kind, 'message': e.detail},
           status: e.kind == 'off' ? 409 : 502);
     }
+  }
+
+  // ── R44：AI 执行记录 查/删 ──────────────────────────────────────────
+
+  /// 列表。摘要字段（不含 prompt/output 全文）+ 分页总数。
+  static Future<Response> _aiRunsList(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    final f = const RunFilter().fromQuery(req.url.queryParameters);
+    final r = state.ai.listRuns(f);
+    return _json({
+      'ok': true,
+      'total': r.total,
+      'limit': f.limit,
+      'offset': f.offset,
+      'runs': [for (final row in r.rows) row.toJson(full: false)],
+    });
+  }
+
+  /// 详情：全文不截断（FR-AI-56）。
+  static Future<Response> _aiRunsGet(
+      ServerState state, Request req, String id) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    final nid = int.tryParse(id);
+    if (nid == null) {
+      return _json({'error': 'bad_request', 'message': 'id 必须是数字'}, status: 400);
+    }
+    final row = state.ai.getRun(nid);
+    if (row == null) {
+      return _json({'ok': false, 'error': 'not_found'}, status: 404);
+    }
+    return _json({'ok': true, 'run': row.toJson(full: true)});
+  }
+
+  /// 单删（serverOnly 物理删，无软删墓碑纪律）。
+  static Future<Response> _aiRunsDelete(
+      ServerState state, Request req, String id) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    final nid = int.tryParse(id);
+    if (nid == null) {
+      return _json({'error': 'bad_request', 'message': 'id 必须是数字'}, status: 400);
+    }
+    final deleted = state.ai.deleteRun(nid);
+    return _json({'ok': true, 'deleted': deleted});
+  }
+
+  /// 清空：读查询参数（与列表同一套筛选），无参数 = 全清。
+  /// 用查询参数而非请求体，是为了让客户端的 DELETE 保持「不带 body」——
+  /// 家庭 LAN 里没哪个 http 客户端要为一个删除动作再拼 JSON 体。
+  static Future<Response> _aiRunsClear(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    final f = const RunFilter().fromQuery(req.url.queryParameters);
+    final deleted = state.ai.clearRuns(f);
+    await state.log.write('[ai] 执行记录清空 ${f.feature ?? '全部'}：删 $deleted 条');
+    return _json({'ok': true, 'deleted': deleted});
+  }
+
+  // ── R44：提示词管理 查看/编辑/恢复默认 ──────────────────────────
+
+  static Future<Response> _aiPromptsList(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    return _json({'ok': true, 'prompts': state.ai.promptViews()});
+  }
+
+  static Future<Response> _aiPromptsWrite(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    final feature = '${body?['feature'] ?? ''}'.trim();
+    if (feature.isEmpty) {
+      return _json({'error': 'bad_request', 'message': '需要 feature'}, status: 400);
+    }
+    final system = body?['system'] == null ? null : '${body?['system']}';
+    final user = body?['user'] == null ? null : '${body?['user']}';
+    final err = state.ai.savePrompt(feature, system, user);
+    if (err != null) {
+      // 占位符校验失败：机器码 bad_placeholder 给客户端做状态提示
+      return _json({'ok': false, 'error': 'bad_placeholder', 'message': err},
+          status: 400);
+    }
+    await state.log.write('[ai] 提示词已更新 $feature（结果缓存已清）');
+    return _json({'ok': true, 'feature': feature, 'cacheCleared': true});
+  }
+
+  static Future<Response> _aiPromptsReset(ServerState state, Request req) async {
+    if (_aiGuard(state, req) case final deny?) return deny;
+    Map<String, Object?>? body;
+    try {
+      body = await _readJson(req);
+    } on _BodyTooLarge {
+      return _payloadTooLarge();
+    }
+    final feature = '${body?['feature'] ?? ''}'.trim();
+    if (feature.isEmpty || !AiService.isAiFeature(feature)) {
+      return _json({'error': 'bad_request', 'message': '不认识的能力：$feature'},
+          status: 400);
+    }
+    state.ai.resetPrompt(feature);
+    await state.log.write('[ai] 提示词已恢复默认 $feature（结果缓存已清）');
+    return _json({'ok': true, 'feature': feature, 'cacheCleared': true});
   }
 
   /// 读 JSON 请求体。解析失败返回 null（调用方给 400），不要抛；
