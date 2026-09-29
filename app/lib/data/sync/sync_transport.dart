@@ -18,6 +18,9 @@ abstract class SyncTransport {
     String? token,
   });
 
+  /// 无体 DELETE（R44 记录删/清用筛选走查询参数，不留 JSON 体）。
+  Future<Map<String, Object?>> delete(String path, {String? token});
+
   /// 原始字节上传（R16 媒体接口）：body 为图片字节本体。
   Future<Map<String, Object?>> putBytes(
     String path,
@@ -103,6 +106,14 @@ class HttpSyncTransport implements SyncTransport {
         headers: _headers(token),
         body: jsonEncode(body),
       ),
+    );
+    return res;
+  }
+
+  @override
+  Future<Map<String, Object?>> delete(String path, {String? token}) async {
+    final res = await _guard(
+      () => _client.delete(_uri(path), headers: _headers(token)),
     );
     return res;
   }

@@ -456,6 +456,18 @@ class _NutritionBlockState extends State<_NutritionBlock> {
             }
         ],
       });
+      // R44：本机视角记一行（服务端的 ai_runs 才是权威留痕）。fire-and-forget，
+      // 写失败绝不影响热量结果展示。
+      final u = (res['usage'] as Map?)?.cast<String, Object?>() ?? const {};
+      store.logAiRun(
+        feature: 'calories',
+        ok: res['ok'] == true,
+        model: '${res['model'] ?? ''}',
+        promptTokens: (u['prompt_tokens'] as num?)?.toInt() ?? 0,
+        completionTokens: (u['completion_tokens'] as num?)?.toInt() ?? 0,
+        runRef: res['runId'] == null ? null : '${res['runId']}',
+        summary: r.name,
+      );
       if (res['ok'] != true) {
         final msg = '${res['message'] ?? res['error'] ?? '估算失败'}';
         say(msg.contains('未启用') || res['error'] == 'off'
@@ -490,6 +502,7 @@ class _NutritionBlockState extends State<_NutritionBlock> {
       );
     } catch (e) {
       final s = '$e';
+      store.logAiRun(feature: 'calories', ok: false, summary: r.name);
       final notConfigured =
           s.contains('401') || s.contains('未配置') || s.contains('StateError');
       final off = s.contains('未启用') || s.contains('off');

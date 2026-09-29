@@ -63,6 +63,86 @@ class FakeSyncServer {
   int aiRecommendCalls = 0;
   String? aiFailWith; // 'off' | 'auth'：非 null 时能力端点直接回该错误
 
+  // ── R44 · AI 执行记录（镜像真服务端 /api/ai/runs 的形状）──
+  //
+  // 每次能力调用都往这张表推一行摘要，并把它的 id 当 runId 回给客户端——
+  // 这样「发起 → 出现在列表 → 标本机」这条端到端链路能在假服务端上跑通。
+  final aiRuns = <Map<String, Object?>>[];
+  int _aiRunSeq = 0;
+  int aiRunsListCalls = 0;
+  int aiRunsDeleteCalls = 0;
+  int aiRunsClearCalls = 0;
+
+  /// 推一行执行记录，返回它的 id（回给客户端当 runId）。
+  int _pushRun(String feature,
+      {bool ok = true,
+      String? errorKind,
+      bool cached = false,
+      int inTok = 100,
+      int outTok = 50,
+      String? summary}) {
+    final id = ++_aiRunSeq;
+    aiRuns.insert(0, {
+      'id': id,
+      'at': DateTime.now().millisecondsSinceEpoch,
+      'feature': feature,
+      'model': aiModel,
+      'ok': ok,
+      'errorKind': errorKind,
+      'cached': cached,
+      'inTok': ok && !cached ? inTok : 0,
+      'outTok': ok && !cached ? outTok : 0,
+      'durationMs': ok ? 120 : 0,
+      'source': 'AI 测试机',
+      'promptExcerpt': summary ?? '',
+      'outputExcerpt': ok ? (summary ?? '结果') : (errorKind ?? '失败'),
+    });
+    return id;
+  }
+
+  /// 记本机 ai_usage 的 run_ref 用哪台设备名做「本机」比对（列表 source 字段）。
+  static const aiSourceLabel = 'AI 测试机';
+
+  // ── R44 · 提示词管理（镜像真服务端 /api/ai/prompts）──
+  // 三能力的内置默认（假数据，形状与真服务端一致即可）+ 覆盖表。
+  static const _promptDefaults = {
+    'calories': '你是家庭菜谱的热量估算器',
+    'recipe_fill': '你是中式家常菜菜谱写手',
+    'recommend': '你是家庭厨师',
+  };
+  final aiPromptOverrides = <String, Map<String, String>>{};
+  final aiPromptSaves = <Map<String, Object?>>[];
+  int aiPromptResets = 0;
+  bool aiPromptReject = false; // true → POST 一律回 bad_placeholder
+
+  static Map<String, Object?> _promptPlaceholders(String f) => switch (f) {
+        'calories' => {
+            'required': ['{{name}}', '{{servings}}', '{{ingredients}}'],
+            'optional': <String>[]
+          },
+        'recipe_fill' => {
+            'required': ['{{name}}'],
+            'optional': ['{{hint}}']
+          },
+        _ => {
+            'required': ['{{pantry}}', '{{existing}}', '{{want}}'],
+            'optional': <String>[]
+          },
+      };
+
+  List<Map<String, Object?>> _promptViews() => [
+        for (final f in _promptDefaults.keys)
+          {
+            'feature': f,
+            'system': aiPromptOverrides[f]?['system'] ?? _promptDefaults[f],
+            'user': aiPromptOverrides[f]?['user'] ?? '菜名：{{name}}',
+            'defaultSystem': _promptDefaults[f],
+            'defaultUser': '菜名：{{name}}',
+            'modified': aiPromptOverrides.containsKey(f),
+            'placeholders': _promptPlaceholders(f),
+          },
+      ];
+
   static const serverId = 'fake-server';
   static const goodCode = 'TEST24';
 
@@ -112,6 +192,15 @@ class FakeSyncServer {
     aiRecommendReply = null;
     aiRecommendCalls = 0;
     aiFailWith = null;
+    aiRuns.clear();
+    _aiRunSeq = 0;
+    aiRunsListCalls = 0;
+    aiRunsDeleteCalls = 0;
+    aiRunsClearCalls = 0;
+    aiPromptOverrides.clear();
+    aiPromptSaves.clear();
+    aiPromptResets = 0;
+    aiPromptReject = false;
   }
 
   var _hlc = Hlc.now(serverId);
@@ -369,12 +458,16 @@ class FakeSyncServer {
     } else if (path == '/api/ai/calories' && req.method == 'POST') {
       aiCaloriesCalls++;
       if (aiFailWith != null) {
+        _pushRun('calories', ok: false, errorKind: aiFailWith);
         status = aiFailWith == 'off' ? 409 : 502;
         res = {'ok': false, 'error': aiFailWith, 'message': 'mock $aiFailWith'};
       } else {
+        final rid = _pushRun('calories', summary: '${json['name']}');
         res = {
           'ok': true,
           'model': aiModel,
+          'runId': rid,
+          'usage': {'prompt_tokens': 100, 'completion_tokens': 50},
           'result': aiCaloriesReply ?? {
             'kcal_per_serving': 250, 'total_kcal': 500,
             'protein_g': 22, 'fat_g': 30, 'carb_g': 20,
@@ -390,12 +483,16 @@ class FakeSyncServer {
     } else if (path == '/api/ai/recommend' && req.method == 'POST') {
       aiRecommendCalls++;
       if (aiFailWith != null) {
+        _pushRun('recommend', ok: false, errorKind: aiFailWith);
         status = aiFailWith == 'off' ? 409 : 502;
         res = {'ok': false, 'error': aiFailWith, 'message': 'mock $aiFailWith'};
       } else {
+        final rid = _pushRun('recommend', summary: '推荐');
         res = {
           'ok': true,
           'model': aiModel,
+          'runId': rid,
+          'usage': {'prompt_tokens': 200, 'completion_tokens': 120},
           'result': aiRecommendReply ?? {
             'dishes': [
               {
@@ -419,12 +516,16 @@ class FakeSyncServer {
     } else if (path == '/api/ai/recipe-fill' && req.method == 'POST') {
       aiFillCalls++;
       if (aiFailWith != null) {
+        _pushRun('recipe_fill', ok: false, errorKind: aiFailWith);
         status = aiFailWith == 'off' ? 409 : 502;
         res = {'ok': false, 'error': aiFailWith, 'message': 'mock $aiFailWith'};
       } else {
+        final rid = _pushRun('recipe_fill', summary: '${json['name']}');
         res = {
           'ok': true,
           'model': aiModel,
+          'runId': rid,
+          'usage': {'prompt_tokens': 150, 'completion_tokens': 300},
           'result': aiFillReply ?? {
             'sub': '酸甜开胃的经典下饭菜',
             'difficulty': 2,
@@ -445,6 +546,65 @@ class FakeSyncServer {
           },
         };
       }
+    } else if (path == '/api/ai/prompts' && req.method == 'GET') {
+      res = {'ok': true, 'prompts': _promptViews()};
+    } else if (path == '/api/ai/prompts' && req.method == 'POST') {
+      aiPromptSaves.add(json);
+      if (aiPromptReject) {
+        status = 400;
+        res = {
+          'ok': false,
+          'error': 'bad_placeholder',
+          'message': 'calories 缺少必填占位符：{{ingredients}}'
+        };
+      } else {
+        final f = '${json['feature']}';
+        aiPromptOverrides[f] = {
+          'system': '${json['system']}',
+          'user': '${json['user']}',
+        };
+        res = {'ok': true, 'feature': f, 'cacheCleared': true};
+      }
+    } else if (path == '/api/ai/prompts/reset' && req.method == 'POST') {
+      aiPromptResets++;
+      aiPromptOverrides.remove('${json['feature']}');
+      res = {'ok': true, 'cacheCleared': true};
+    } else if (path == '/api/ai/runs' && req.method == 'GET') {
+      aiRunsListCalls++;
+      res = _aiRunsFiltered(req.uri.queryParameters);
+    } else if (path == '/api/ai/runs' && req.method == 'DELETE') {
+      aiRunsClearCalls++;
+      final f = req.uri.queryParameters['feature'];
+      final before = aiRuns.length;
+      aiRuns.removeWhere((r) => f == null || r['feature'] == f);
+      res = {'ok': true, 'deleted': before - aiRuns.length};
+    } else if (path.startsWith('/api/ai/runs/')) {
+      final id = int.tryParse(path.substring('/api/ai/runs/'.length));
+      if (req.method == 'GET') {
+        final match = aiRuns.where((r) => r['id'] == id);
+        if (match.isEmpty) {
+          status = 404;
+          res = {'ok': false, 'error': 'not_found'};
+        } else {
+          res = {
+            'ok': true,
+            'run': {...match.first,
+              // 详情比摘要多全文几列（镜像真服务端 full 视图）
+              'promptSystem': '你是……',
+              'promptUser': '${match.first['promptExcerpt']}',
+              'inputJson': '{}',
+              'output': '${match.first['outputExcerpt']}',
+            }..remove('promptExcerpt')..remove('outputExcerpt'),
+          };
+        }
+      } else if (req.method == 'DELETE') {
+        aiRunsDeleteCalls++;
+        final before = aiRuns.length;
+        aiRuns.removeWhere((r) => r['id'] == id);
+        res = {'ok': true, 'deleted': before - aiRuns.length};
+      } else {
+        return false;
+      }
     } else {
       return false;
     }
@@ -453,6 +613,31 @@ class FakeSyncServer {
     req.response.write(jsonEncode(res));
     await req.response.close();
     return true;
+  }
+
+  /// 按 feature / ok / q / limit / offset 过滤，返回 {ok,total,runs}。
+  Map<String, Object?> _aiRunsFiltered(Map<String, String> q) {
+    Iterable<Map<String, Object?>> rows = aiRuns;
+    final feature = q['feature'];
+    if (feature != null) rows = rows.where((r) => r['feature'] == feature);
+    final okq = q['ok'];
+    if (okq != null) rows = rows.where((r) => ('${r['ok']}' == 'true') == (okq == '1'));
+    final query = q['q'];
+    if (query != null && query.isNotEmpty) {
+      rows = rows.where((r) =>
+          '${r['promptExcerpt']}'.contains(query) ||
+          '${r['outputExcerpt']}'.contains(query));
+    }
+    final list = rows.toList();
+    final offset = int.tryParse(q['offset'] ?? '') ?? 0;
+    final limit = int.tryParse(q['limit'] ?? '') ?? list.length;
+    return {
+      'ok': true,
+      'total': list.length,
+      'limit': limit,
+      'offset': offset,
+      'runs': list.skip(offset).take(limit).toList(),
+    };
   }
 
   /// 开放模式的匿名放行判定（与真服务端同一规则：合法 X-Node-Id 才算设备）。

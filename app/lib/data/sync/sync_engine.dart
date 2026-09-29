@@ -857,6 +857,18 @@ class SyncEngine extends ChangeNotifier {
     return res;
   }
 
+  /// R44：AI 通道的 DELETE 走法（记录单删 / 清空）。
+  /// 筛选一律走查询参数，请求不带体——见 [SyncTransport.delete]。
+  Future<Map<String, Object?>> aiDelete(String path) async {
+    final token = await _prefs.token();
+    final serverUrl = await _prefs.serverUrl();
+    if (serverUrl == null) {
+      throw StateError('还没有可用的服务端地址，无法使用 AI 能力');
+    }
+    final t = await _transportOf(serverUrl);
+    return await t.delete(path, token: token);
+  }
+
   /// 最近一次 `/api/ai/status` 的响应。null = 本会话还没读到。
   /// 入口徽标（FR-AI-10「未配置」）读它——**读不到按未配置渲染**，
   /// 布局照旧占位，绝不因「还没查」而把入口抹掉。

@@ -964,6 +964,64 @@ class RecipeStore extends ChangeNotifier {
     );
   }
 
+  // ── R44 · AI 执行记录的本机视角（localOnly ai_usage，不走同步）────────
+  //
+  // 权威留痕在服务端 ai_runs（那里才有完整 prompt 与上游原始输出）。
+  // 这里只记「这台设备发起过什么、结果如何」，run_ref 指回服务端行做对账，
+  // 记录页据此在条目上叠「本机发起」标记。**单条自动提交的写**——
+  // 套事务反而踩 R41 那条 Web 落盘坑，而这里本来就只有一行、要的就是原子自提交。
+
+  /// 记一条本机 AI 调用。写失败静默（留痕不该挡住 AI 结果本身）。
+  Future<void> logAiRun({
+    required String feature,
+    required bool ok,
+    String? model,
+    int promptTokens = 0,
+    int completionTokens = 0,
+    String? runRef,
+    String? summary,
+  }) async {
+    final db = _db;
+    if (db == null) return;
+    final cols = kAiUsageTable.columnNames; // id,at,feature,model,...,run_ref,summary
+    try {
+      await db.customInsert(
+        'INSERT INTO ${kAiUsageTable.name} (${cols.join(', ')}) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        variables: [
+          Variable<String>(_ulids.next()),
+          Variable<String>(DateTime.now().toUtc().toIso8601String()),
+          Variable<String>(feature),
+          Variable<String>(model),
+          Variable<int>(promptTokens),
+          Variable<int>(completionTokens),
+          Variable<double>(0), // cost_est：本轮不算钱，列留着
+          Variable<int>(ok ? 1 : 0),
+          Variable<String>(runRef),
+          Variable<String>(summary),
+        ],
+      );
+    } catch (e) {
+      debugPrint('本机 AI 记录写入失败（忽略）：$e');
+    }
+  }
+
+  /// 本机发起过的服务端记录 id 集合（记录页标「本机发起」用）。
+  Future<Set<String>> localAiRunRefs() async {
+    final db = _db;
+    if (db == null) return const {};
+    try {
+      final rows = await db
+          .customSelect(
+            'SELECT run_ref FROM ${kAiUsageTable.name} WHERE run_ref IS NOT NULL',
+          )
+          .get();
+      return {for (final r in rows) r.read<String>('run_ref')};
+    } catch (_) {
+      return const {};
+    }
+  }
+
   /// 单调 ULID 工厂：同毫秒创建的行**字典序必须递增**——
   /// 「取自己最新一条」这类 `ORDER BY ... , id DESC` 的定序全靠它。
   /// 之前用 `_ulids.next()`（纯随机后缀），同毫秒谁新谁旧是掷硬币，
@@ -2478,6 +2536,9 @@ final TableSpec kLocalPrefTable = kTables.firstWhere(
 final TableSpec kMenuTable = kTables.firstWhere((t) => t.name == 'menu');
 final TableSpec kMenuItemTable =
     kTables.firstWhere((t) => t.name == 'menu_item');
+
+/// R44：本机视角的 AI 调用记录。localOnly —— **不走同步、不上服务端**。
+final TableSpec kAiUsageTable = kTables.firstWhere((t) => t.name == 'ai_usage');
 
 /// R23 · 内置同义词表（备菜归一 + R42 起过敏原判定共用）。
 ///

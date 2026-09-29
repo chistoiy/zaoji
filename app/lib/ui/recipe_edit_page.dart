@@ -513,6 +513,17 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
       final engine = SyncScope.of(context);
       final res =
           await engine.aiCall('/api/ai/recipe-fill', {'name': name});
+      if (!mounted) return;
+      final u = (res['usage'] as Map?)?.cast<String, Object?>() ?? const {};
+      StoreScope.of(context).logAiRun(
+        feature: 'recipe_fill',
+        ok: res['ok'] == true,
+        model: '${res['model'] ?? ''}',
+        promptTokens: (u['prompt_tokens'] as num?)?.toInt() ?? 0,
+        completionTokens: (u['completion_tokens'] as num?)?.toInt() ?? 0,
+        runRef: res['runId'] == null ? null : '${res['runId']}',
+        summary: name,
+      );
       if (res['ok'] != true) {
         if (!mounted) return;
         setState(() => _aiBusy = false);
@@ -586,6 +597,8 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
           duration: Duration(seconds: 2)));
     } catch (e) {
       if (!mounted) return;
+      StoreScope.of(context).logAiRun(
+          feature: 'recipe_fill', ok: false, summary: name);
       setState(() => _aiBusy = false);
       final s = '$e';
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

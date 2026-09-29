@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../data/sync/sync_scope.dart';
 import '../theme.dart';
+import 'ai_prompts_page.dart';
+import 'ai_runs_page.dart';
 
 /// 大模型能力配置页（R27，FR-AI-01~11）。对齐原型「大模型能力」屏。
 ///
@@ -239,6 +241,22 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                   style: TextStyle(
                       fontSize: 12.5, color: context.zj.ink2),
                 ),
+                const SizedBox(height: 22),
+                _sectionTitle('05', '提示词与执行记录', ''),
+                _navTile(
+                  keyName: 'ai-nav-prompts',
+                  icon: Icons.tune,
+                  title: '提示词管理',
+                  sub: '逐能力编辑 / 恢复默认',
+                  page: const AiPromptsPage(),
+                ),
+                _navTile(
+                  keyName: 'ai-nav-runs',
+                  icon: Icons.history,
+                  title: 'AI 执行记录',
+                  sub: '输入输出留痕 · 可查可删',
+                  page: const AiRunsPage(),
+                ),
                 const SizedBox(height: 26),
                 FilledButton(
                   onPressed: _busy ? null : _save,
@@ -337,6 +355,34 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
               style: TextStyle(
                   fontSize: 11, color: context.zj.muted)),
         ],
+      ),
+    );
+  }
+
+  /// R44：设置页里跳子页（提示词管理 / 执行记录）的一行入口。
+  Widget _navTile({
+    required String keyName,
+    required IconData icon,
+    required String title,
+    required String sub,
+    required Widget page,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: context.zj.surface,
+        borderRadius: BorderRadius.circular(ZaojiRadius.md),
+        child: ListTile(
+          key: ValueKey(keyName),
+          onTap: () => Navigator.of(context)
+              .push(MaterialPageRoute(builder: (_) => page)),
+          leading: Icon(icon, size: 20, color: context.zj.accent),
+          title: Text(title, style: const TextStyle(fontSize: 13.5)),
+          subtitle: Text(sub,
+              style: TextStyle(fontSize: 11.5, color: context.zj.muted)),
+          trailing: Icon(Icons.chevron_right, size: 18, color: context.zj.muted),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
       ),
     );
   }

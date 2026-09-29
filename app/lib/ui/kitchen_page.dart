@@ -1060,6 +1060,15 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
         ],
         'existing': [for (final r in widget.store.recipes) r.name],
       });
+      widget.store.logAiRun(
+        feature: 'recommend',
+        ok: res['ok'] == true,
+        model: '${res['model'] ?? ''}',
+        promptTokens: (((res['usage'] as Map?)?['prompt_tokens']) as num?)?.toInt() ?? 0,
+        completionTokens: (((res['usage'] as Map?)?['completion_tokens']) as num?)?.toInt() ?? 0,
+        runRef: res['runId'] == null ? null : '${res['runId']}',
+        summary: '食材 ${widget.store.pantryItems.where((p) => p.have).length} 项',
+      );
       if (res['ok'] != true) {
         if (!mounted) return;
         setState(() {
@@ -1079,6 +1088,7 @@ class _AiRecoSectionState extends State<_AiRecoSection> {
       });
     } catch (e) {
       if (!mounted) return;
+      widget.store.logAiRun(feature: 'recommend', ok: false, summary: 'AI 推荐');
       final t = '$e';
       setState(() {
         _busy = false;
