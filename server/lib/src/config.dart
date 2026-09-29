@@ -88,7 +88,12 @@ class ServerConfig {
   ///   （缺 photos/images = 保持现值，旧 apk 不断同步不清数据）；
   ///   孤儿回收引用面扩到 photos ∪ step.images ∪ 旧单列；
   ///   v6 再叠 `shopping_item` 纯增表（R30 购物清单，旧客户端拉不到该表也不报错）。
-  static const String version = '0.15.0';
+  /// 0.16.0：R44 AI 提示词管理 + AI 执行记录。schema v8 纯增 serverOnly 的
+  ///   `ai_prompts` / `ai_runs`（提示词模板·权威全量留痕），`ai_usage` 补
+  ///   `run_ref`/`summary`（客户端本机视角·迁移两端共用 shared 的 kSchemaV8AlterSql）；
+  ///   `/api/ai/runs*` 删查 + `/api/ai/prompts*` 读写与回落默认；
+  ///   AI 月度用量改读 ai_runs 聚合，废弃 server_setting 里的 kv 计数。
+  static const String version = '0.16.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
