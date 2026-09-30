@@ -12,11 +12,13 @@ import 'file_log.dart';
 import 'media.dart';
 import 'sync.dart';
 
-/// 服务端已实现与规划中的端点。
+/// 服务端对外提供的端点清单——状态页表格与 `/api/health` 都读它。
 ///
-/// 提前把"规划中"的也列出来，是为了让打开首页的人一眼知道
-/// 这个服务**现在能干什么、将来会有什么**——
+/// 这份清单存在的意义是「打开首页的人一眼知道这个服务现在能干什么」，
 /// 而不是面对一个只有 `{"ok":true}` 的地址发愣。
+/// ⚠️ 它是**手写的**，真实路由表在 `server.dart` 的 `buildHandler` 里；
+/// 两边曾经漂移过（R44 的七条接口压根没进清单），
+/// 一致性由 `test/endpoint_registry_r46_test.dart` 钉住：加/删接口时必须同改这里。
 const List<Map<String, Object?>> kEndpoints = [
   {'path': '/', 'method': 'GET', 'title': '服务状态页', 'status': 'ready'},
   {
@@ -139,10 +141,70 @@ const List<Map<String, Object?>> kEndpoints = [
     'title': 'AI 连通测试（区分 Key 错 / 模型错 / 网络不通）',
     'status': 'ready'
   },
+    {
+    'path': '/status',
+    'method': 'GET',
+    'title': '服务状态页（服务端本机地址：管理后台）',
+    'status': 'ready'
+  },
   {
-    'path': '/api/ai/{feature}',
+    'path': '/api/ai/calories',
     'method': 'POST',
-    'title': '大模型代理：calories / recipe_fill（Web 与 App 同一通道）',
+    'title': '大模型代理：按食材与步骤估算热量',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/recommend',
+    'method': 'POST',
+    'title': '大模型代理：按现有库存推荐菜谱',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/recipe-fill',
+    'method': 'POST',
+    'title': '大模型代理：把菜名补全成草稿',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/prompts',
+    'method': 'GET',
+    'title': 'AI 提示词：逐能力查看（含默认模板）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/prompts',
+    'method': 'POST',
+    'title': 'AI 提示词：保存自定义模板',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/prompts/reset',
+    'method': 'POST',
+    'title': 'AI 提示词：恢复某能力的默认模板',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/runs',
+    'method': 'GET',
+    'title': 'AI 执行记录：分页列表（可按能力/成败筛）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/runs/{id}',
+    'method': 'GET',
+    'title': 'AI 执行记录：单条详情（含提示词与回复）',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/runs/{id}',
+    'method': 'DELETE',
+    'title': 'AI 执行记录：删一条',
+    'status': 'ready'
+  },
+  {
+    'path': '/api/ai/runs',
+    'method': 'DELETE',
+    'title': 'AI 执行记录：清空（只清本机可见的）',
     'status': 'ready'
   },
 ];

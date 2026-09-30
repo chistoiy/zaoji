@@ -20,8 +20,9 @@ import 'web_pages.dart';
 
 /// 灶记服务端。
 ///
-/// 当前进度：骨架 + HTTPS + 数据底座（M1）+ 同步接口（配对 / 拉取 / 推送）。
-/// 图片管线与 AI 代理还没做（见 [kEndpoints] 里的 planned 项）。
+/// 数据底座（配对 / 拉取 / 推送 / 冲突 / 永久删除）+ 媒体与缩略图 + AI 代理
+/// + 备份 均已落地，对外接口以 [kEndpoints] 为准（那份清单由
+/// `test/endpoint_registry_r46_test.dart` 与下面的路由表比对钉住）。
 class ZaojiServer {
   final ServerState state;
   final HttpServer _http;
