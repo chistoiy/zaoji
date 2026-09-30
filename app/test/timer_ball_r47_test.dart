@@ -10,7 +10,7 @@ import 'package:zaoji/widgets/time_capsule_text.dart';
 
 import 'fss_stub.dart';
 
-/// R47 第八段 · 悬浮球的两态、占场互斥与「全屏含通知栏」。
+/// R47 第八段 · 悬浮球的两态、占场互斥与「全屏盖掉通知栏」。
 ///
 /// 五件事都是**决策**，不是算术，所以各有用例钉着：
 /// ① 靠边松手才吸边并收成耳朵（停在中间不该自动收起来——用户会找不到球）；
@@ -20,8 +20,9 @@ import 'fss_stub.dart';
 ///    不能因为中途隐藏过一次就弹回默认右下角、耳朵也自己展开；
 /// ④ 计时面板开着时球同样要让位——面板就是球的展开态，
 ///    球继续浮在上面会把面板里的「全屏/关闭」按钮吃掉（这条就是被吃掉时撞出来的）；
-/// ⑤ 全屏页**含通知栏**：深色底从 y=0 铺起、状态栏图标转浅色（需求原话：
-///    「全屏要包含通知栏的，当前没有」）。
+/// ⑤ 全屏页**把通知栏整条盖掉**（`immersiveSticky`）、退出设回 `edgeToEdge`，
+///    并给"栏被划回来那一刻"留一套对的配色。需求两轮：「全屏要包含通知栏的，当前没有」
+///    → 装机后「顶部还是没有全屏」——要的是**没有**，不是"铺在它底下换浅色图标"。
 void main() {
   setUpAll(stubSecureStorageForTest);
 
@@ -224,14 +225,39 @@ void main() {
     });
   });
 
-  // 需求原话：「全屏要包含通知栏的，当前没有」。
-  // 这条不是配色审美：状态栏那 40 多像素要是没被这一屏接管，
-  // 深色页顶上就是一条与页面无关的系统带，看着像"没铺满"。
-  group('全屏含通知栏', () {
+  // 需求原话两轮：「全屏要包含通知栏的，当前没有」→ 装机后「顶部还是没有全屏」。
+  // 第二句才是真相：要的不是"铺到状态栏底下 + 换浅色图标"，而是**这一屏把通知栏盖掉**。
+  // 所以下面这组同时钉两件事：① 进全屏推 immersiveSticky、退出推回 edgeToEdge；
+  // ② 万一用户从边缘把栏划回来（sticky 允许短暂露出），那一刻的配色仍要是对的。
+  group('全屏盖掉通知栏', () {
     /// 造一台"有状态栏/导航栏"的机器。
     Future<void> pumpWithBars(WidgetTester tester) async {
       await pumpApp(tester, bars: const FakeViewPadding(top: 44, bottom: 24));
     }
+
+    /// 录 `SystemChannels.platform` 上的调用序列。
+    /// ★ 为什么要录调用而不是比最终值：系统栏这一路**不止一个写家**
+    ///   （`MaterialApp._themeBuilder` 每次构建都按主题推一记默认样式，
+    ///   `RenderView` 在有注解时也会推），比 `latestStyle` 测到的是"谁最后写"的竞态。
+    ///   录下来才认得出那一记是不是我们自己推的。
+    List<MethodCall> recordPlatform(WidgetTester tester) {
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+              SystemChannels.platform, (call) async {
+        calls.add(call);
+        return null;
+      });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      return calls;
+    }
+
+    bool pushedMode(List<MethodCall> calls, SystemUiMode m) => calls.any((c) =>
+        c.method == 'SystemChrome.setEnabledSystemUIMode' &&
+        c.arguments == m.toString());
 
     testWidgets('★ 面板开着时球让位：面板里的「全屏」按钮点得到（球压上去就吃点击）',
         (tester) async {
@@ -248,19 +274,50 @@ void main() {
       expect(find.byType(TimerFullPage), findsOneWidget);
     });
 
-    testWidgets('★ 深色底顶到 y=0（状态栏那一条在这屏里，不是让出来的空白）', (tester) async {
+    testWidgets('★ 进全屏：通知栏整条盖掉（immersiveSticky，不是"铺在它底下"）',
+        (tester) async {
+      final calls = recordPlatform(tester);
+      await pumpWithBars(tester);
+      await startTimer(tester);
+      await openFull(tester);
+      expect(pushedMode(calls, SystemUiMode.immersiveSticky), isTrue,
+          reason: '用户第二句「顶部还是没有全屏」要的就是这一记；只铺底色不算全屏');
+      // sticky 而不是 immersive：灶台上不该因为手划一下就把栏常驻回来
+      expect(
+        calls.any((c) =>
+            c.method == 'SystemChrome.setEnabledSystemUIMode' &&
+            c.arguments == SystemUiMode.immersive.toString()),
+        isFalse,
+        reason: '选错模式会让划出来的栏常驻，把手势也吃掉',
+      );
+    });
+
+    testWidgets('★ 退出全屏：系统栏模式设回 edgeToEdge（不然整个 App 停在沉浸态）',
+        (tester) async {
+      final calls = recordPlatform(tester);
+      await pumpWithBars(tester);
+      await startTimer(tester);
+      await openFull(tester);
+      calls.clear();
+      await tester.tap(find.byKey(const ValueKey('timer-full-min')));
+      await tester.pumpAndSettle();
+      expect(pushedMode(calls, SystemUiMode.edgeToEdge), isTrue,
+          reason: '框架不会替我们还原模式；不收尾就是"退出全屏后别的页也没状态栏"');
+    });
+
+    testWidgets('★ 深色底顶到 y=0（这一屏占满整块屏，不留系统带）', (tester) async {
       await pumpWithBars(tester);
       await startTimer(tester);
       await openFull(tester);
       final bg = tester.getRect(find.byKey(const ValueKey('timer-full-bg')));
       expect(bg.top, closeTo(0, 0.5), reason: '页面本体从屏幕最上沿开始');
       expect(bg.bottom, closeTo(2200, 1));
-      // 内容仍要让开状态栏，否则第一行会被系统时钟压住
+      // 栏被划回来那一刻，内容仍要让开状态栏，否则第一行会被系统时钟压住
       expect(tester.getRect(find.byKey(const ValueKey('timer-full-top'))).top,
           greaterThanOrEqualTo(44));
     });
 
-    testWidgets('★ 这一屏声明浅色状态栏图标（深色底上才看得见）', (tester) async {
+    testWidgets('★ 这一屏声明浅色状态栏图标（栏被划回来时深色底才读得清）', (tester) async {
       await pumpWithBars(tester);
       await startTimer(tester);
       await openFull(tester);
@@ -275,23 +332,14 @@ void main() {
     });
 
     testWidgets('收成悬浮窗后这屏消失：系统栏样式**显式**设回底下那屏的', (tester) async {
-      // 这一路不止我们一个写家：`MaterialApp._themeBuilder` 每次构建都按主题推一记默认
-      // 样式（`material/app.dart:1003`，那份的导航栏是**实心黑**），`RenderView` 在有注解时也会推。
-      // 所以只比 `latestStyle` 测到的是"谁最后写"的竞态。这里改成**看推给系统的调用记录**：
-      // 我们那一记的指纹是「深色图标 + 两套栏都透明」，别人冒充不了。
-      final pushed = <Map<Object?, Object?>>[];
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-        if (call.method == 'SystemChrome.setSystemUIOverlayStyle' &&
-            call.arguments != null) {
-          pushed.add(Map<Object?, Object?>.from(call.arguments! as Map));
-        }
-        return null;
-      });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(SystemChannels.platform, null),
-      );
+      final calls = recordPlatform(tester);
+      // 我们那一记的指纹是「深色图标 + 两套栏都透明」，MaterialApp 那份冒充不了（实心黑导航栏）。
+      List<Map<Object?, Object?>> stylePushes() => [
+            for (final c in calls)
+              if (c.method == 'SystemChrome.setSystemUIOverlayStyle' &&
+                  c.arguments != null)
+                Map<Object?, Object?>.from(c.arguments! as Map),
+          ];
 
       await pumpWithBars(tester);
       await startTimer(tester);
@@ -306,12 +354,12 @@ void main() {
       // ★ 框架在读不到注解时是直接 return（`RenderView._updateSystemChrome`），
       //   不会替我们还原；靠 MaterialApp 兜底会留一条实心黑导航栏。所以收尾自己推。
       expect(
-        pushed.any((m) =>
+        stylePushes().any((m) =>
             m['statusBarIconBrightness'] == 'Brightness.dark' &&
             m['systemNavigationBarColor'] == 0 &&
             m['statusBarColor'] == 0),
         isTrue,
-        reason: '退出这屏要显式推一记「深色图标 + 透明栏」，$pushed',
+        reason: '退出这屏要显式推一记「深色图标 + 透明栏」，${stylePushes()}',
       );
       // 底线也单独钉一条：离开深色页之后，浅色页上的图标必须是深色
       expect(SystemChrome.latestStyle?.statusBarIconBrightness, Brightness.dark,

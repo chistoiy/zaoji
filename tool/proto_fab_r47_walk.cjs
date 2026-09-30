@@ -176,21 +176,25 @@ const ok = (name, cond, extra) => {
   ok('全屏页在', (await has('.timer-full')) === 1);
   ok('完整球不出现', (await has('#timerFab')) === 0);
   ok('耳朵也不出现', (await has('#timerEar')) === 0);
-  // ★ 全屏页**从状态栏那一层开始画**：这一屏里要自带一条状态栏（浅色浮在深色底上）。
-  //   判据取自状态与配色声明，不是「DOM 里刚好有个 div」。
-  const sb = await page.evaluate(() => {
-    const el = document.querySelector('.timer-full .statusbar');
-    if (!el) return null;
-    const cs = getComputedStyle(el);
-    const full = document.querySelector('.timer-full').getBoundingClientRect();
-    const me = el.getBoundingClientRect();
-    return { color: cs.color, topGap: Math.round(me.top - full.top), h: Math.round(me.height) };
+  // ★ 全屏是**真全屏**（R47 第八段补正）：这一屏把通知栏整条盖掉，
+  //   所以判据反过来——屏内**不该有**状态栏节点，而深色底要顶到手机框的最上沿。
+  const tf = await page.evaluate(() => {
+    const full = document.querySelector('.timer-full');
+    if (!full) return null;
+    const phone = document.getElementById('phone').getBoundingClientRect();
+    const r = full.getBoundingClientRect();
+    return {
+      hasBar: !!full.querySelector('.statusbar'),
+      topGap: Math.round(r.top - phone.top),
+      h: Math.round(r.height),
+      phoneH: Math.round(phone.height),
+    };
   });
-  ok('全屏页里画了状态栏', sb !== null, JSON.stringify(sb));
-  ok('状态栏文字转浅色（深色底上可读）',
-    sb && /255,\s*243,\s*232/.test(sb.color), sb && sb.color);
-  ok('状态栏顶到这一屏的最上沿（页面含通知栏，不是让出来的一条空白）',
-    sb && sb.topGap <= 1 && sb.h > 30, sb && JSON.stringify(sb));
+  ok('全屏页在（拿得到矩形）', tf !== null, JSON.stringify(tf));
+  ok('屏内没有状态栏节点（通知栏被盖掉，不是铺在它底下）',
+    tf && tf.hasBar === false, tf && JSON.stringify(tf));
+  ok('深色底顶到手机框最上沿且铺满整屏',
+    tf && tf.topGap <= 1 && tf.h >= tf.phoneH - 1, tf && JSON.stringify(tf));
   await page.screenshot({ path: path.join(OUT, '07_full.png') });
   await page.locator('[data-act="timer-min"]').click();
   await page.waitForTimeout(300);

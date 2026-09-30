@@ -61,10 +61,32 @@ const MUTS = {
     from: '  statusBarIconBrightness: Brightness.light,',
     to: '  // ★ 变异：不转浅色 → 深色页顶上是深色状态栏图标，通知栏看着不归这页管\n' +
         '  statusBarIconBrightness: Brightness.dark,',
-    mustKeep: ['appOverlayStyle', '_kTimerFullOverlay', '_underlying'],
+    mustKeep: ['appOverlayStyle', '_kTimerFullOverlay', '_underlying', 'immersiveSticky'],
     test: 'test/timer_ball_r47_test.dart',
     name: '浅色状态栏图标',
     expect: '这一屏声明浅色状态栏图标',
+  },
+  // ★ 第六刀：「顶部还是没有全屏」的那一记——进全屏要把通知栏整条盖掉。
+  immersive: {
+    file: rel('lib', 'ui', 'timer_full_page.dart'),
+    snap: path.join(SNAPDIR, 'timer_full_page_pristine_r47tf.dart'),
+    mustKeep: ['appOverlayStyle', '_kTimerFullOverlay', '_underlying', 'immersiveSticky'],
+    from: '    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);',
+    to: '    // ★ 变异：不盖通知栏（上一版的理解就停在这儿：只铺底色 + 换浅色图标）',
+    test: 'test/timer_ball_r47_test.dart',
+    name: '通知栏整条盖掉',
+    expect: 'immersiveSticky',
+  },
+  // ★ 第七刀：盖了要记得收——不设回 edgeToEdge，退出全屏后整个 App 都停在沉浸态。
+  immersiveRestore: {
+    file: rel('lib', 'ui', 'timer_full_page.dart'),
+    snap: path.join(SNAPDIR, 'timer_full_page_pristine_r47tf.dart'),
+    mustKeep: ['appOverlayStyle', '_kTimerFullOverlay', '_underlying', 'immersiveSticky'],
+    from: '    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);',
+    to: '    // ★ 变异：不收尾，别的页跟着一起没状态栏',
+    test: 'test/timer_ball_r47_test.dart',
+    name: '系统栏模式设回',
+    expect: '框架不会替我们还原模式',
   },
   // ★ 这一刀验的是**收尾**：框架在读不到注解时直接 return，不会替你把样式还原，
   //   所以退出全屏必须显式设回"底下那屏该有的"。摘掉它（这里改成"设回自己那套"，
@@ -76,7 +98,7 @@ const MUTS = {
     from: '    SystemChrome.setSystemUIOverlayStyle(appOverlayStyle(_underlying));',
     to: '    // ★ 变异：收尾设成了"这一屏自己那套"，等于没恢复\n' +
         '    SystemChrome.setSystemUIOverlayStyle(_kTimerFullOverlay);',
-    mustKeep: ['appOverlayStyle', '_kTimerFullOverlay', '_underlying'],
+    mustKeep: ['appOverlayStyle', '_kTimerFullOverlay', '_underlying', 'immersiveSticky'],
     test: 'test/timer_ball_r47_test.dart',
     name: '系统栏样式',
     expect: '退出这屏要显式推一记',

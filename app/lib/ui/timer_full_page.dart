@@ -5,7 +5,12 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 import '../data/timer_board.dart';
 import '../theme.dart';
 
-/// 全屏计时页的系统栏配色（R47 第八段 · 「这一屏要含通知栏」）。
+/// 全屏计时页的系统栏配色（R47 第八段）。
+///
+/// ★ 「全屏」在这轮被纠正过一次：用户要的是**把通知栏整条盖掉**（immersive），
+///   不是「铺到状态栏底下 + 换浅色图标」。见 `push` 里的 `immersiveSticky`。
+///   那这套配色还有用吗？有——`immersiveSticky` 下用户从边缘划一下仍会把栏**临时**召回来，
+///   那一刻是这套配色决定图标深浅（深色页必须是浅色图标）。
 ///
 /// 本版本（Flutter 3.38）里 `SystemUiOverlayStyle.light` / `.dark` 指的是**图标**的颜色
 /// （`light` = 浅色图标，配深色背景；`material/app.dart` 给深色主题推的就是 `.light`）。
@@ -69,6 +74,11 @@ class TimerFullPage extends StatefulWidget {
     String timerId,
   ) {
     board.occupyScreen('full');
+    // ★ 真全屏：把通知栏与导航栏**整条盖掉**（用户原话「顶部还是没有全屏」——
+    //   上一版只做到"铺到状态栏底下 + 浅色图标"，栏还在，那就还不是全屏）。
+    //   选 `immersiveSticky` 而不是 `immersive`：灶台上不该因为手划了一下就把栏常驻回来，
+    //   sticky 那套是"划一下短暂露出、随即再收起"。
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     return nav.push(
       MaterialPageRoute<void>(
         builder: (_) => TimerFullPage(board: board, timerId: timerId),
@@ -99,7 +109,11 @@ class _TimerFullPageState extends State<TimerFullPage> {
     // 与 `push` 里的占场登记配对。中途被上层路由盖住不算退出
     // （那还是同一个全屏页在栈里），只有真的离场才撤手。
     widget.board.releaseScreen('full');
-    // ★ 见 `appOverlayStyle` 的头注：框架不会替我们恢复，收尾必须自己来。
+    // ★ 三件收尾一件都不能省，而且都**不会自动恢复**：
+    //   · 系统栏模式：不显式设回 `edgeToEdge`，整个 App 会一直停在沉浸态，
+    //     用户退出全屏后连时间都看不见（症状：「怎么别的页也没有状态栏了」）。
+    //   · 系统栏样式：`RenderView._updateSystemChrome` 读不到注解时直接 return。
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(appOverlayStyle(_underlying));
     super.dispose();
   }

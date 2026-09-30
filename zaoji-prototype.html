@@ -1053,10 +1053,8 @@ img{display:block;max-width:100%}
     radial-gradient(22rem 18rem at 12% 96%, rgba(224,163,46,.16), transparent 62%);
 }
 .timer-full-inner{position:relative;z-index:2;flex:1;display:flex;flex-direction:column;padding:16px 24px 30px}
-/* R47：全屏计时页**从状态栏那一层开始画**——深色底顶到屏幕最上沿，
-   时间/信号/电量以浅色浮在上面（对应 Flutter 侧 SystemUiOverlayStyle.light）。
-   状态栏本体复用别的屏那一条 markup，只在这里换配色与层级。 */
-.timer-full .statusbar{position:relative;z-index:2;color:#FFF3E8;opacity:.92}
+/* R47 第八段补正：全屏计时页**盖掉**通知栏（Flutter 侧 immersiveSticky），
+   所以这一屏里没有 .statusbar 节点；深色底顶到 inset:0 的最上沿就是"整屏都是它"。 */
 
 /* R47 · 并行计时器列表（FR-COOK-04）：全屏态里除主环以外，其余各占一行，能各自暂停/关闭/切焦点 */
 .tf-others{margin-top:18px;display:flex;flex-direction:column;gap:7px}
@@ -6170,8 +6168,9 @@ function timerFullHTML() {
   const others = S.timers.filter(function (x) { return x.id !== t.id; });
   const pct = t.total ? (1 - t.left / t.total) : 0;
   const R = 118, C = 2 * Math.PI * R;
+  /* 这一屏是**真全屏**（R47 第八段补正）：把通知栏整条盖掉，所以这里**不画**状态栏。
+     上一轮理解成「铺到状态栏底下 + 换浅色图标」，那是「含住」，用户要的是「没有」。 */
   return '<div class="timer-full">' +
-    statusBar() +
     '<div class="timer-full-inner">' +
       '<div class="tf-top">' +
         '<button type="button" class="iconbtn" data-act="timer-min" data-id="' + t.id + '" aria-label="收起为悬浮窗">' + ic('minimize', 21) + '</button>' +
