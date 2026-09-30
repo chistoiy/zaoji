@@ -4,6 +4,7 @@ import '../data/recipe_store.dart';
 import '../data/store_scope.dart';
 import '../theme.dart';
 import 'menu_detail_page.dart';
+import 'timeline_page.dart';
 
 /// 菜单（R23）：按餐次安排「哪天哪一餐吃什么」。
 ///
@@ -45,6 +46,14 @@ class MenusPage extends StatelessWidget {
         title: const Text('菜单'),
         backgroundColor: context.zj.paper,
         actions: [
+          // 原型「菜单」这一屏的 appbar 就有这一枚：排完菜单顺手想看"最近都发生过什么"。
+          IconButton(
+            key: const ValueKey('menu-timeline'),
+            icon: const Icon(Icons.timeline_outlined),
+            tooltip: '时间线',
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const TimelinePage())),
+          ),
           IconButton(
             key: const ValueKey('menu-add'),
             icon: const Icon(Icons.add),

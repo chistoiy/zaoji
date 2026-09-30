@@ -2546,6 +2546,7 @@ const RECIPES = [
     id:'r3', name:'蒜蓉粉丝蒸虾', sub:'十五分钟上桌的宴客菜',
     art:'plate', pal:['#F0D6C0','#C4795E','#E8623F','#F5EBD8','#4B7A3F'],
     diff:2, selfTime:25, autoTime:22, cooked:4, lastCook:'2026-09-15',
+    created:'2026-09-16T20:15',   // R48：入册时刻（App = recipe.created_at；★ 老菜没这字段）
     fav:false,
     tags:{ cuisine:['粤菜'], ingredient:['虾'], taste:['咸鲜'], method:['清蒸'] },
     ings:[
@@ -2655,6 +2656,7 @@ const RECIPES = [
     id:'r8', name:'蚝油生菜', sub:'三分钟，脆到响',
     art:'plate', pal:['#D8E3B8','#7FA54E','#5E8C36','#A8C46A','#F0F5E0'],
     diff:1, selfTime:8, autoTime:7, cooked:15, lastCook:'2026-09-15',
+    created:'2026-09-08T09:40',    // R48：入册时刻（App = recipe.created_at）
     fav:false,
     tags:{ cuisine:['粤菜','家常'], ingredient:['绿叶菜'], taste:['咸鲜','清淡'], method:['水煮'] },
     ings:[
@@ -2674,15 +2676,18 @@ const RECIPES = [
 const R_MAP = {}; RECIPES.forEach(r => R_MAP[r.id] = r);
 
 /* 烹饪历史（用于详情页"每次时间"） */
+/* R48：每条 = [日期, 那顿的名字, 完成时刻 HH:MM, 实际耗时分钟]。
+   后两项是**给时间线用的**（App 侧对应 cook_session.finished_at 与 started→finished 的差）。
+   ★ 详情页那处只读 l[0]/l[1]，加字段不动它。 */
 const COOK_LOG = {
-  r1: [['2026-09-14','晚餐'],['2026-09-07','晚餐'],['2026-08-30','午餐'],['2026-08-21','晚餐'],['2026-08-12','午餐']],
-  r2: [['2026-09-11','周末晚餐'],['2026-08-16','宴客'],['2026-07-28','周末晚餐']],
-  r3: [['2026-09-15','晚餐'],['2026-08-30','宴客'],['2026-08-09','晚餐']],
-  r4: [['2026-09-08','晚餐'],['2026-08-24','晚餐'],['2026-08-05','午餐']],
-  r5: [['2026-09-16','夜宵'],['2026-09-02','夜宵'],['2026-08-19','夜宵']],
-  r6: [['2026-09-17','夜宵'],['2026-09-10','夜宵'],['2026-09-03','晚餐'],['2026-08-27','夜宵']],
-  r7: [['2026-09-06','周末'],['2026-08-02','周末']],
-  r8: [['2026-09-15','晚餐'],['2026-09-08','晚餐'],['2026-08-30','午餐']]
+  r1: [['2026-09-14','晚餐','19:20',12],['2026-09-07','晚餐','18:50',13],['2026-08-30','午餐','12:30',11],['2026-08-21','晚餐','19:05',14],['2026-08-12','午餐','12:10',10]],
+  r2: [['2026-09-11','周末晚餐','19:40',95],['2026-08-16','宴客','18:20',110],['2026-07-28','周末晚餐','19:00',88]],
+  r3: [['2026-09-15','晚餐','18:45',22],['2026-08-30','宴客','13:00',26],['2026-08-09','晚餐','19:10',24]],
+  r4: [['2026-09-08','晚餐','18:30',90],['2026-08-24','晚餐','19:15',86],['2026-08-05','午餐','12:40',80]],
+  r5: [['2026-09-16','夜宵','22:40',62],['2026-09-02','夜宵','23:05',58],['2026-08-19','夜宵','22:20',60]],
+  r6: [['2026-09-17','夜宵','21:30',14],['2026-09-10','夜宵','21:15',13],['2026-09-03','晚餐','18:55',15],['2026-08-27','夜宵','22:00',12]],
+  r7: [['2026-09-06','周末','12:20',45],['2026-08-02','周末','12:00',48]],
+  r8: [['2026-09-15','晚餐','18:47',7],['2026-09-08','晚餐','18:32',6],['2026-08-30','午餐','12:32',8]]
 };
 
 /* ─────────── 菜单（餐次） ─────────── */
@@ -2734,26 +2739,68 @@ const PREP = [
   { id:'p6', group:'已完成', title:'银耳提前泡发', sub:'银耳莲子羹 · 昨晚 21:20 完成', done:true, kind:'食材准备' }
 ];
 
-/* ─────────── 时间线事件 ─────────── */
-const EVENTS = [
-  { date:'2026-09-17', time:'19:05', kind:'cook', title:'做了 <b>葱油拌面</b>', desc:'夜宵 · 实际耗时 14 分钟 · 第 18 次' },
-  { date:'2026-09-17', time:'09:12', kind:'menu', title:'新建菜单 <b>今天 · 晚餐</b>', desc:'3 道菜：番茄炒蛋 / 蒜蓉粉丝蒸虾 / 蚝油生菜' },
-  { date:'2026-09-16', time:'22:40', kind:'cook', title:'做了 <b>银耳莲子羹</b>', desc:'夜宵 · 实际耗时 62 分钟 · 第 6 次' },
-  { date:'2026-09-16', time:'20:15', kind:'recipe', title:'新增菜品 <b>蒜蓉粉丝蒸虾</b>', desc:'补充了 4 个步骤、6 张成品图' },
-  { date:'2026-09-15', time:'18:52', kind:'cook', title:'做了 <b>蒜蓉粉丝蒸虾 + 蚝油生菜</b>', desc:'晚餐 · 实际耗时 22 / 7 分钟' },
-  { date:'2026-09-14', time:'19:20', kind:'cook', title:'做了 <b>番茄炒蛋</b>', desc:'晚餐 · 实际耗时 12 分钟 · 第 23 次' },
-  { date:'2026-09-14', time:'08:00', kind:'menu', title:'新建菜单 <b>周六 · 午餐</b>', desc:'3 道菜，已生成备菜清单 9 项' }
-];
+/* ─────────── R48 · 时间线（FR-LOG-01）：事件从三份数据现推 ───────────
+   和 App 的取数一一对应，**一份口径两处吃**（日历的点与时间线的行同出一源）：
+     · cook   ← COOK_LOG            （App：cook_session.finished_at，有时刻、有耗时）
+     · menu   ← MENUS               （App：menu.day —— ★ 只有"哪一天"这个事实，
+                                       menu 表没有创建时刻列，所以行上给「全天」而不是编一个 09:12）
+     · recipe ← RECIPES[].created   （App：recipe.created_at，schema v7 起才有；
+                                       ★ 没这个字段的老菜就是"不知道哪天入的册"——
+                                       不出现，也不拿 updated_at / ULID 前缀猜一个日子） */
+const TODAY = '2026-09-17';   // 原型的演示"今天"（与 S.calSel 同一天）
 
-/* ─────────── 日历标记 ─────────── */
-const CAL_MARKS = {
-  '2026-08-24':['cook'], '2026-08-27':['cook'], '2026-08-30':['cook','menu'],
-  '2026-09-02':['cook'], '2026-09-03':['cook'], '2026-09-06':['cook','menu'],
-  '2026-09-07':['cook'], '2026-09-08':['cook','menu','recipe'], '2026-09-10':['cook'],
-  '2026-09-11':['cook'], '2026-09-14':['cook','menu'], '2026-09-15':['cook'],
-  '2026-09-16':['cook','recipe'], '2026-09-17':['cook','menu'],
-  '2026-09-19':['menu'], '2026-09-20':['menu']
-};
+function timelineEvents(kind) {
+  const out = [];
+  Object.keys(COOK_LOG).forEach(function (rid) {
+    const r = R_MAP[rid], logs = COOK_LOG[rid];
+    if (!r) return;
+    logs.forEach(function (l, i) {
+      out.push({
+        date: l[0], time: l[2] || '', kind: 'cook', rid: rid,
+        title: '做了 <b>' + esc(r.name) + '</b>',
+        desc: l[1] + ' · 实际耗时 ' + l[3] + ' 分钟 · 第 ' + (logs.length - i) + ' 次'
+      });
+    });
+  });
+  MENUS.forEach(function (m) {
+    out.push({
+      date: m.date, time: '', kind: 'menu', menuId: m.id,
+      title: '排了菜单 <b>' + esc(m.meal) + '</b>',
+      desc: m.time + ' 开饭 · ' + m.dishes.length + ' 道菜'
+    });
+  });
+  RECIPES.forEach(function (r) {
+    if (!r.created) return;              // ★ 不知道入册时刻 = 不出现，不猜
+    out.push({
+      date: r.created.slice(0, 10), time: r.created.slice(11, 16), kind: 'recipe', rid: r.id,
+      title: '新增菜品 <b>' + esc(r.name) + '</b>',
+      desc: r.steps ? ('入册时带 ' + r.steps.length + ' 个步骤') : '入册'
+    });
+  });
+  const k = kind || 'all';
+  return out.filter(function (e) { return k === 'all' || e.kind === k; })
+    .sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;   // 日期倒序
+      const at = a.time || '00:00', bt = b.time || '00:00';      // 同日按时刻倒序；无时刻的落在那天最后
+      return at < bt ? 1 : (at > bt ? -1 : 0);
+    });
+}
+
+/* 日历的点由同一份事件派生（原来这里另手写一份 CAL_MARKS，两屏各维护一份迟早对不上）。 */
+function calMarksFromEvents() {
+  const m = {};
+  timelineEvents('all').forEach(function (e) {
+    if (!m[e.date]) m[e.date] = [];
+    if (m[e.date].indexOf(e.kind) < 0) m[e.date].push(e.kind);
+  });
+  Object.keys(m).forEach(function (k) { m[k].sort(); });
+  return m;
+}
+
+/* ─────────── 日历标记（R48 起改为派生） ───────────
+   ★ 以前这里手写一份日期表，时间线又手写一份 EVENTS——两屏各维护一份，
+   改一处忘一处是迟早的事；现在同出一源：日历画的点 == 时间线有的行。 */
+const CAL_MARKS = calMarksFromEvents();
 
 /* ─────────── 同步 / 备份 / 服务端 ─────────── */
 const SYNC_LOG = [
@@ -2973,6 +3020,7 @@ const S = {
   mealForm:null,       // 新建/编辑餐次的表单草稿 {day, meal, custom, editId}
   ingOpen:{},          // 合并食材的「来源」展开态
   calSel:'2026-09-17',
+  tlKind:'all',          // R48：时间线的分段过滤器（all/cook/menu/recipe），是真的在筛
   calMonth:{ y:2026, m:8 },
   editorTags:{},
   connectState:'idle', // idle | testing | ok | err
@@ -4356,30 +4404,36 @@ SCREENS.calendar = function () {
 /* ═══════════════════ 11 · 时间线 ═══════════════════ */
 SCREENS.timeline = function () {
   const kinds = { cook:'做菜', menu:'菜单', recipe:'菜品' };
+  const list = timelineEvents(S.tlKind);
   let cur = '', out = '';
-  EVENTS.forEach(function (e) {
+  list.forEach(function (e) {
     if (e.date !== cur) {
       cur = e.date;
-      out += '<div class="sec-head"><span class="sec-num">' + e.date.slice(5).replace('-', '/') + '</span>' +
-        '<span class="sec-title">' + (e.date === '2026-09-17' ? '今天' : '') + '</span></div>';
+      out += '<div class="sec-head" data-day="' + e.date + '"><span class="sec-num">' + e.date.slice(5).replace('-', '/') + '</span>' +
+        '<span class="sec-title">' + (e.date === TODAY ? '今天' : '') + '</span></div>';
     }
-    out += '<div class="tl-item" data-kind="' + e.kind + '"><span class="tl-dot"></span>' +
+    out += '<div class="tl-item" data-kind="' + e.kind + '" data-date="' + e.date + '"><span class="tl-dot"></span>' +
       '<div style="display:flex;align-items:center;gap:8px">' +
-        '<span class="tl-time" style="margin-left:0">' + e.time + '</span>' +
+        // ★ 菜单事件没有"创建时刻"这个事实 → 时间位写「全天」，不编钟点
+        '<span class="tl-time" style="margin-left:0">' + (e.time || '全天') + '</span>' +
         '<span class="badge ' + (e.kind === 'cook' ? 'badge-err' : e.kind === 'menu' ? 'badge-idle' : 'badge-ok') + '">' + kinds[e.kind] + '</span></div>' +
       '<div class="tl-title">' + e.title + '</div><div class="tl-desc">' + e.desc + '</div></div>';
   });
 
+  const segs = [['all','全部'], ['cook','做菜'], ['menu','菜单'], ['recipe','菜品']];
   return '<div class="screen">' +
     appbar('时间线', '这台家里的灶，什么时候开过火', { act:'back' },
       '<button type="button" class="iconbtn" data-act="nav" data-screen="calendar" aria-label="日历">' + ic('calendar', 20) + '</button>') +
-    '<div class="px" style="margin-bottom:6px"><div class="segmented">' +
-      '<button type="button" class="seg" data-act="seg" aria-pressed="true">全部</button>' +
-      '<button type="button" class="seg" data-act="seg" aria-pressed="false">做菜</button>' +
-      '<button type="button" class="seg" data-act="seg" aria-pressed="false">菜单</button>' +
-      '<button type="button" class="seg" data-act="seg" aria-pressed="false">菜品</button>' +
+    '<div class="px" style="margin-bottom:6px"><div class="segmented" id="tlSeg">' +
+      segs.map(function (s) {
+        return '<button type="button" class="seg" data-act="tl-kind" data-kind="' + s[0] +
+          '" aria-pressed="' + (S.tlKind === s[0]) + '">' + s[1] + '</button>';
+      }).join('') +
     '</div></div>' +
-    '<div class="px"><div class="card pad-lg">' + out + '</div></div>' +
+    '<div class="px">' + (list.length
+      ? '<div class="card pad-lg" id="tlList">' + out + '</div>'
+      : '<div class="card pad" id="tlEmpty" style="text-align:center;color:var(--muted);font-size:12.5px;padding:28px 16px;line-height:1.8">这一类还没有记录<br>换个类型看看</div>') +
+    '</div>' +
   '</div>';
 };
 
@@ -7103,6 +7157,13 @@ document.addEventListener('click', function (e) {
     renderScreen(false); renderOverlays(); toast('已重置筛选条件'); return;
   }
 
+  /* —— 时间线分段过滤：切的是数据源，不是按钮样式 —— */
+  if (act === 'tl-kind') {
+    S.tlKind = el.dataset.kind || 'all';
+    renderScreen(true);
+    return;
+  }
+
   /* —— 分段控件 —— */
   if (act === 'seg') {
     const grp = el.parentElement;
@@ -7876,6 +7937,10 @@ window.__zaoji = {
   // R47 第六段：投待办的判定与摘要要能被走查「按同一份数据算期望」与「造空数据」，
   // 拿 DOM 读数反推 DOM 是假绿，所以交出去的是数据本体和算法，不是渲染结果。
   MENUS: MENUS, mealTodoTargets: mealTodoTargets, mealDigest: mealDigest,
+  // R48：时间线的三份源数据与派生函数一起交出去——
+  // 走查的期望值必须从数据现算，拿 DOM 反推 DOM 是假绿。
+  COOK_LOG: COOK_LOG, RECIPES: RECIPES, timelineEvents: timelineEvents,
+  calMarksFromEvents: calMarksFromEvents, TODAY: TODAY,
   // R47 第八段：吸边的期望值是「屏宽 - 球宽」，所以屏宽要能拿到（不从 DOM 反推）。
   deviceSize: deviceSize,
   phoneScale: phoneScale,

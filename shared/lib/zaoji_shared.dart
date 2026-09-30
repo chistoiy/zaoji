@@ -18,6 +18,7 @@ export 'src/pantry_match.dart';
 export 'src/schema.dart';
 export 'src/step_time.dart';
 export 'src/sync_access.dart';
+export 'src/timeline.dart';
 export 'src/timer_clock.dart';
 export 'src/ulid.dart';
 export 'src/units.dart';

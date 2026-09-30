@@ -2538,6 +2538,101 @@ class RecipeStore extends ChangeNotifier {
     ];
   }
 
+  // ═══════════════════ R48 · 时间线（FR-LOG-01） ═══════════════════
+  //
+  /// `[fromDay, toDay)` 这段窗口里的全部事件（做菜 / 菜单 / 菜品），已按 shared 的口径排好序。
+  ///
+  /// 三条口径本体写在 `shared/lib/src/timeline.dart`（两端各写一份必然漂），这里只管取数：
+  /// · **做菜** ← `cook_session.finished_at`（有时刻、有耗时）；
+  /// · **菜单** ← `menu.day`——★ 这张表**没有创建时刻这一列**，所以事件的 `time` 是空串，
+  ///   UI 上显示「全天」。不拿 `updated_at`（HLC，只当同步元数据）或行 id 的 ULID 前缀
+  ///   倒推一个钟点出来，那是编的；
+  /// · **菜品** ← `recipe.created_at`（schema v7 起才有）。★ 老行是 NULL → [timelineDayOf]
+  ///   给 null → 这条事件**根本不出现**，而不是猜一个日子。
+  ///
+  /// 时间比较用**字符串区间**：这三列都是 ISO8601 / `YYYY-MM-DD` 原文，
+  /// 字典序 == 时间序（与 R24 日历的 LIKE 前缀同一手法），SQLite 侧不注册任何函数。
+  Future<List<TimelineItem>> timelineEvents({
+    required String fromDay,
+    required String toDay,
+  }) async {
+    final db = _db;
+    if (db == null) return const [];
+    final rows = await db.customSelect(
+      'SELECT recipe_id, started_at, finished_at FROM cook_session '
+      'WHERE finished_at >= ? AND finished_at < ? AND deleted_at IS NULL '
+      'ORDER BY finished_at',
+      variables: [Variable<String>(fromDay), Variable<String>(toDay)],
+    ).get();
+    // 「第几次」按该菜**全部**完成会话排名。只数窗口内的那几趟的话，
+    // 翻到更早一页时同一个"第 N 次"会跟着页码变——那是假账。
+    final rankRows = await db.customSelect(
+      'SELECT recipe_id, finished_at FROM cook_session '
+      'WHERE finished_at IS NOT NULL AND deleted_at IS NULL ORDER BY finished_at',
+    ).get();
+    final seen = <String, int>{};
+    final nth = <String, int>{};
+    for (final r in rankRows) {
+      final rid = '${r.data['recipe_id']}';
+      final n = (seen[rid] ?? 0) + 1;
+      seen[rid] = n;
+      nth['$rid|${r.data['finished_at']}'] = n;
+    }
+
+    final items = <TimelineItem>[];
+    for (final r in rows) {
+      final rid = '${r.data['recipe_id']}';
+      final fin = '${r.data['finished_at']}';
+      final day = timelineDayOf(fin);
+      if (day == null) continue; // 理论上到不了这里（区间已按日期筛），兜底不猜
+      final n = nth['$rid|$fin'] ?? 0;
+      final mins = _minutesBetween('${r.data['started_at']}', fin);
+      items.add(TimelineItem(
+        day: day,
+        time: timelineTimeOf(fin),
+        kind: TimelineKind.cook,
+        // 菜被删了也要留这一行：那是"那天做过"的事实，不该跟着菜谱一起消失
+        title: _byId[rid]?.name ?? '（已删除的菜）',
+        detail: n > 0 ? '实际耗时 $mins 分钟 · 第 $n 次' : '实际耗时 $mins 分钟',
+        refId: rid,
+      ));
+    }
+
+    // 菜单与菜品两份都在内存里（页面本来就跟着 store 的通知重画），
+    // 不再各发一条 SQL——同一份数据在同一屏里出现两种读法是漂移的开始。
+    for (final m in menus) {
+      final day = timelineDayOf(m.day);
+      if (day == null || day.compareTo(fromDay) < 0 || day.compareTo(toDay) >= 0) {
+        continue;
+      }
+      items.add(TimelineItem(
+        day: day,
+        // ★ 没有时刻：菜单表只有"哪一天"，time 留空 → UI 写「全天」
+        kind: TimelineKind.menu,
+        title: m.meal,
+        detail: m.serveAt.isEmpty
+            ? '${m.recipeIds.length} 道菜'
+            : '${m.serveAt} 开饭 · ${m.recipeIds.length} 道菜',
+        refId: m.id,
+      ));
+    }
+    for (final r in recipes) {
+      final day = timelineDayOf(r.createdAt);
+      if (day == null || day.compareTo(fromDay) < 0 || day.compareTo(toDay) >= 0) {
+        continue; // ★ v7 之前入册的老菜：不知道哪天，不出现
+      }
+      items.add(TimelineItem(
+        day: day,
+        time: timelineTimeOf(r.createdAt),
+        kind: TimelineKind.recipe,
+        title: r.name,
+        detail: '${r.steps.length} 个步骤 · ${r.ingredients.length} 样食材',
+        refId: r.id,
+      ));
+    }
+    return timelineSorted(items);
+  }
+
   // ═══════════════════ R33 · 数据体检的两份原始料 ═══════════════════
 
   /// 全设备、全家的**未完成**会话（体检页拿去配菜谱名）。
