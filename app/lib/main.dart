@@ -8,6 +8,7 @@ import 'package:zaoji_shared/zaoji_shared.dart';
 
 import 'data/alert_scope.dart';
 import 'data/meal_reminder.dart';
+import 'data/net_wake.dart';
 import 'data/timer_alert.dart';
 import 'data/pantry_watch.dart';
 import 'data/recipe_store.dart';
@@ -51,6 +52,7 @@ class ZaojiApp extends StatefulWidget {
     this.alert,
     this.pantry,
     this.meal,
+    this.net,
   });
 
   /// 测试注入完整的 store。生产为 null。
@@ -93,6 +95,14 @@ class ZaojiApp extends StatefulWidget {
   /// 与 [pantry] 同一个理由：真要断的是「进窗口才投、一天每餐一次、开关关掉就不投」
   /// 这几条口径，用假 menus/假戳就能测，不必把真菜单灌进用例。
   final MealReminderWatch? meal;
+
+  /// R47 · 测试注入的网络恢复监听（需求书 §9.2 S1）。
+  ///
+  /// 为什么必须能注入：`Connectivity()` 依赖平台通道，测试区构造订阅就会抛
+  /// `MissingPluginException`；而这一路真正要断的是**边沿判定与合并**
+  /// （首事件不算恢复、没断过不算恢复、窗口内多次上升沿只同步一次），
+  /// 那些用一条假流就能测（与 [pantry] / [alert] 同一个理由）。
+  final NetWake? net;
 
   @override
   State<ZaojiApp> createState() => _ZaojiAppState();
@@ -189,6 +199,17 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
         markNotified: _store.markMealReminderNotified,
       );
 
+  /// R47 · 网络恢复即同步（需求书 §9.2 S1「飞行模式新增 → 恢复网络自动同步」）。
+  ///
+  /// 写同步的四条触发线（防抖 3s / 退避 ≤8 次 / 15 分钟兜底 / 启动一次）里没有一条
+  /// 听得见「网通了」这个事件：飞行模式里退避几分钟就烧完，之后只能等兜底或手动。
+  /// 这一路补上那只耳朵，恢复时走的是同一个 `syncIfPaired`（未配对仍是安静 no-op）。
+  late final NetWake _net = widget.net ??
+      NetWake(
+        streamOf: connectivityStream,
+        onOnline: () => _sync?.syncIfPaired(),
+      );
+
   void _syncWake() {
     if (_timers.hasRunning) {
       _wake.need('timer');
@@ -258,6 +279,8 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
     _wake.releaseAll();
     // 计时台里有周期 Timer：自己创建的才自己关（注入的归测试管，同 store 那条口径）。
     if (widget.timers == null) _timers.dispose();
+    // 网络监听：自己创建的才自己关（去抖那个一次性 Timer 也在它自己手里收）。
+    if (widget.net == null) unawaited(_net.dispose());
     if (widget.wake == null) _wake.dispose();
     if (widget.alert == null) _alert.dispose();
     super.dispose();
@@ -304,6 +327,10 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
 
     // R15：兜底与退避都挂在这一根线上（见 _onSyncPhaseChanged）。
     sync.addListener(_onSyncPhaseChanged);
+
+    // R47 · S1：引擎有了才开网络监听的耳朵（恢复时喊的就是它的 syncIfPaired）。
+    // start 是幂等的，_ensureSync 只会走到这里一次。
+    _net.start();
 
     return sync;
   }
