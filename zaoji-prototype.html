@@ -1030,6 +1030,13 @@ img{display:block;max-width:100%}
 .fab-btn{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:rgba(251,246,236,.8);transition:all var(--dur-fast) var(--ease)}
 .fab-btn:hover{background:rgba(255,255,255,.14);color:#fff}
 .timer-fab.is-paused .fab-ring{opacity:.5}
+/* R47 第八段：拖到左/右边缘松手就吸边收成「耳朵」——挡内容的面积从 148px 缩到 26px，
+   点一下耳朵回到完整球。收起态不丢计时（耳朵上带 ×N 徽标），也不自动弹回去。 */
+.timer-fab.is-ear{width:26px;height:66px;padding:0;gap:0;border-radius:0 13px 13px 0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:visible}
+.timer-fab.is-ear.on-left{border-radius:13px 0 0 13px}
+.timer-fab.is-ear .ear-ico{display:grid;place-items:center;color:rgba(251,246,236,.86)}
+.timer-fab.is-ear .fab-ring,.timer-fab.is-ear .fab-info,.timer-fab.is-ear .fab-act{display:none}
 .timer-fab.is-done{background:linear-gradient(140deg,var(--accent),#8E2F0C)}
 
 /* —— 全屏计时器 —— */
@@ -1046,6 +1053,10 @@ img{display:block;max-width:100%}
     radial-gradient(22rem 18rem at 12% 96%, rgba(224,163,46,.16), transparent 62%);
 }
 .timer-full-inner{position:relative;z-index:2;flex:1;display:flex;flex-direction:column;padding:16px 24px 30px}
+/* R47：全屏计时页**从状态栏那一层开始画**——深色底顶到屏幕最上沿，
+   时间/信号/电量以浅色浮在上面（对应 Flutter 侧 SystemUiOverlayStyle.light）。
+   状态栏本体复用别的屏那一条 markup，只在这里换配色与层级。 */
+.timer-full .statusbar{position:relative;z-index:2;color:#FFF3E8;opacity:.92}
 
 /* R47 · 并行计时器列表（FR-COOK-04）：全屏态里除主环以外，其余各占一行，能各自暂停/关闭/切焦点 */
 .tf-others{margin-top:18px;display:flex;flex-direction:column;gap:7px}
@@ -2987,7 +2998,7 @@ const S = {
   notifyPerm:'default',   // R47 · 系统通知授权态（'default'/'granted'/'denied'）；
                           //   真机由系统弹框决定，原型只能模拟「用户点了允许」这一种
   timerFocus:null,    // 全屏态正在看哪一个（null = 看最新的那个）
-  fab:{ x:null, y:null },
+  fab:{ x:null, y:null, side:'right', collapsed:false, snapped:false }, // = fabDefault() 的形状，改这里要一起改它
   addFab:{ x:null, y:null },   // 主页悬浮「添加菜品」按钮的位置（本机偏好，不参与同步）
   toasts:[],
   trashed:{},         // R43 · 菜谱库删掉的菜 id → 删除时刻（回收站列它，5 秒内可撤销）
@@ -6160,6 +6171,7 @@ function timerFullHTML() {
   const pct = t.total ? (1 - t.left / t.total) : 0;
   const R = 118, C = 2 * Math.PI * R;
   return '<div class="timer-full">' +
+    statusBar() +
     '<div class="timer-full-inner">' +
       '<div class="tf-top">' +
         '<button type="button" class="iconbtn" data-act="timer-min" data-id="' + t.id + '" aria-label="收起为悬浮窗">' + ic('minimize', 21) + '</button>' +
@@ -6207,8 +6219,21 @@ function timerFabHTML() {
   const t = activeTimer(); if (!t) return '';
   const pct = t.total ? (1 - t.left / t.total) : 0;
   const R = 16, C = 2 * Math.PI * R;
-  const x = S.fab.x, y = S.fab.y;
-  const style = (x !== null && y !== null) ? 'left:' + x + 'px;top:' + y + 'px;right:auto;bottom:auto;' : '';
+  const y = S.fab.y;
+  /* snapped：横向交给 right:0 / left:0（贴边），纵向仍用 top；自由态：left+top 都写。 */
+  const style = S.fab.snapped
+    ? ((S.fab.side === 'left' ? 'left:0;right:auto;' : 'right:0;left:auto;') +
+       (y !== null ? 'top:' + y + 'px;bottom:auto;' : ''))
+    : (S.fab.x !== null && y !== null ? 'left:' + S.fab.x + 'px;top:' + y + 'px;right:auto;bottom:auto;' : '');
+  /* 耳朵态：只剩一条贴边的窄耳朵 + （并行时）×N 徽标。点开回到完整球。 */
+  if (S.fab.collapsed) {
+    return '<div class="timer-fab is-ear' + (S.fab.side === 'left' ? ' on-left' : '') +
+      (t.running ? '' : ' is-paused') + (t.done ? ' is-done' : '') + '" id="timerEar" style="' + style + '" ' +
+      'data-act="fab-expand" role="button" tabindex="0" aria-label="展开计时器">' +
+      '<span class="ear-ico">' + ic('timer', 15) + '</span>' +
+      (S.timers.length > 1 ? '<span class="fab-count num">' + S.timers.length + '</span>' : '') +
+      '</div>';
+  }
   return '<div class="timer-fab' + (t.running ? '' : ' is-paused') + (t.done ? ' is-done' : '') + '" id="timerFab" style="' + style + '" ' +
     'data-act="fab-drag" role="button" tabindex="0" aria-label="计时器悬浮窗">' +
     '<span class="fab-ring">' +
@@ -6620,6 +6645,13 @@ function tabTo(id) {
 let lastTick = Date.now();
 
 /* 当前该显示哪一个：显式选过就用选的，否则用最新起的 */
+/* 悬浮球的默认状态：位置未定（用 CSS 默认右下角）、贴右、不收起。
+   ★ 只这一份：以前初始化与三处重置各写一遍形状，加字段时漏改一处就会静默丢态。 */
+/* snapped = 吸附在某一侧：贴边交给 CSS 的 right:0 / left:0，**不算任何宽度**。
+   （球宽随标签文字变，实测同一颗球量出 140 / 195 / 200，靠「屏宽减宽度」必然漂。）
+   collapsed = 收成耳朵。两者独立：贴着边也可以展开成完整球。 */
+function fabDefault() { return { x:null, y:null, side:'right', collapsed:false, snapped:false }; }
+
 function activeTimer() {
   if (!S.timers.length) return null;
   const f = S.timerFocus && S.timers.find(function (x) { return x.id === S.timerFocus; });
@@ -6658,7 +6690,7 @@ function startTimer(sec, label, float) {
   };
   S.timers.push(t);
   S.timerFocus = t.id;
-  S.fab = { x:null, y:null };
+  S.fab = fabDefault();
   renderOverlays();
   const n = S.timers.length;
   toast('已开始计时 · ' + t.label + (n > 1 ? '（并行第 ' + n + ' 个）' : '') + (float ? '（悬浮窗会一直跟着你）' : ''));
@@ -6793,17 +6825,22 @@ function phoneScale() {
   const design = deviceSize().w;
   return (w && design) ? w / design : 1;
 }
+let dragW = 148; // 完整球的宽（吸边时要把 x 钉到「屏宽 - 球宽」）
 document.addEventListener('pointerdown', function (e) {
   const fab = e.target.closest('#timerFab');
   if (!fab || e.target.closest('.fab-btn')) return;
   const sc = phoneScale();
-  if (S.fab.x === null || S.fab.y === null) {
+  if (S.fab.x === null || S.fab.y === null || S.fab.snapped) {
+    // 贴着边的元素没有横向自由坐标：起拖前按当前矩形算出来，并退出吸附态，
+    // 否则第一下就会从 right:0 跳到 left:x 上（手感是「球弹走了」）。
     const pr = document.getElementById('phone').getBoundingClientRect();
     const fr = fab.getBoundingClientRect();
     S.fab.x = (fr.left - pr.left) / sc;
     S.fab.y = (fr.top - pr.top) / sc;
+    S.fab.snapped = false;
   }
   dragCtx = { sx:e.clientX, sy:e.clientY, ox:S.fab.x, oy:S.fab.y, w:fab.getBoundingClientRect().width / sc, h:fab.getBoundingClientRect().height / sc };
+  dragW = dragCtx.w; // 只用于「离边多远」的判定，不参与定位
   fab.classList.add('dragging');
   try { fab.setPointerCapture(e.pointerId); } catch (err) {}
   e.preventDefault();
@@ -6827,6 +6864,15 @@ document.addEventListener('pointerup', function () {
   dragCtx = null;
   const fab = document.getElementById('timerFab');
   if (fab) fab.classList.remove('dragging');
+  /* 松手时离哪条边不到 40px 就吸到那条边，并收成耳朵；停在中间则保持完整球。 */
+  const PW = deviceSize().w;
+  const nearLeft = S.fab.x <= 40;
+  const nearRight = S.fab.x + dragW >= PW - 40;
+  if (!nearLeft && !nearRight) return;
+  S.fab.side = nearLeft ? 'left' : 'right';
+  S.fab.snapped = true; // 贴边交给 CSS：耳朵和展开后的球都自动贴住同一条边
+  S.fab.collapsed = true;
+  renderOverlays();
 });
 
 /* —— 主页悬浮按钮：长按 380ms 进入拖动 —— */
@@ -6936,7 +6982,7 @@ document.addEventListener('click', function (e) {
   if (act === 'mode') {
     S.mode = el.dataset.mode;
     /* 换设备形态等于换画布尺寸，之前记住的悬浮坐标不再成立 */
-    S.fab = { x:null, y:null };
+    S.fab = fabDefault();
     S.addFab = { x:null, y:null };
     renderDevice(); renderNav();
     return;
@@ -6953,7 +6999,7 @@ document.addEventListener('click', function (e) {
     if (S.mode === 'server' || S.mode === 'grid') { toast('这个视图没有横竖屏之分'); return; }
     S.land = !S.land;
     /* 转向后画布尺寸变了，之前记住的悬浮坐标不再成立，回默认位置最不容易出错 */
-    S.fab = { x:null, y:null };
+    S.fab = fabDefault();
     S.addFab = { x:null, y:null };
     syncOrient();
     fitDevice();
@@ -7155,6 +7201,12 @@ document.addEventListener('click', function (e) {
     return;
   }
   if (act === 'fab-drag') return;
+  if (act === 'fab-expand') {
+    // 只切形态：贴哪一边由 snapped/side 决定，CSS 自己会把它贴回去（不需要重算宽度）。
+    S.fab.collapsed = false;
+    renderOverlays();
+    return;
+  }
 
   /* —— 备菜 —— */
   if (act === 'prep-pick') {
@@ -7825,6 +7877,10 @@ window.__zaoji = {
   // R47 第六段：投待办的判定与摘要要能被走查「按同一份数据算期望」与「造空数据」，
   // 拿 DOM 读数反推 DOM 是假绿，所以交出去的是数据本体和算法，不是渲染结果。
   MENUS: MENUS, mealTodoTargets: mealTodoTargets, mealDigest: mealDigest,
+  // R47 第八段：吸边的期望值是「屏宽 - 球宽」，所以屏宽要能拿到（不从 DOM 反推）。
+  deviceSize: deviceSize,
+  phoneScale: phoneScale,
+  fabDefault: fabDefault,
   setTheme: function (id) { setTheme(id); },
   goto: function (screen, theme, mode) {
     location.hash = 'mode=' + (mode || S.mode) + '&theme=' + (theme || S.theme) +

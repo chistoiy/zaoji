@@ -146,7 +146,10 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
   /// 再过 `TimerAlert` 里的授权闸门——两道门各管各的，任何一道关着都不该发出去。
   void _onTimersFired(List<KitchenTimer> fired) {
     if (!_store.kitchenPrefs.notifyOn) return;
-    unawaited(_alert.fire(fired, sound: _store.kitchenPrefs.soundOn));
+    // 震动与声音各自跟着自己的开关走：通知的振动是 `vibrateOn` 的第二条腿
+    // （第一条是 HapticFeedback，它在系统「触摸反馈」关掉时会被静默吞掉）。
+    unawaited(_alert.fire(fired,
+        sound: _store.kitchenPrefs.soundOn, vibrate: _store.kitchenPrefs.vibrateOn));
   }
 
   /// 插件初始化 + 读授权态。失败只留痕不响：通知发不出去不该让 App 起不来。

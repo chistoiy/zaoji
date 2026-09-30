@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
@@ -27,9 +28,9 @@ class TimerBoard extends ChangeNotifier {
     UlidFactory? ulids,
     bool Function()? vibrate,
     this.onFired,
-  })  : _clock = clock ?? _systemClock,
-        _ulids = ulids ?? UlidFactory(),
-        _vibrate = vibrate ?? _defaultVibrate;
+  }) : _clock = clock ?? _systemClock,
+       _ulids = ulids ?? UlidFactory(),
+       _vibrate = vibrate ?? _defaultVibrate;
 
   static int _systemClock() => DateTime.now().millisecondsSinceEpoch;
   static bool _defaultVibrate() {
@@ -57,12 +58,66 @@ class TimerBoard extends ChangeNotifier {
 
   List<KitchenTimer> _timers = const [];
   Timer? _ticker;
+  bool _disposed = false;
 
   /// 测试与悬浮球用得到：本台当前有没有在走的表。
   bool get hasRunning => _timers.any((t) => t.running);
   int get count => _timers.length;
   List<KitchenTimer> get timers => _timers;
   int get nowMs => _clock();
+
+  // ── 计时界面占场（R47 第八段）──────────────────────────────────────
+  //
+  /// 悬浮球在**计时界面自己占场**时必须消失。现在有两种：
+  ///  · 全屏计时页——原型从第一版就是互斥渲染（`at.float` 与全屏二选一），
+  ///    实现却把 `OverlayEntry` 一直挂在 root overlay 上，于是全屏页右下角还压着一颗球；
+  ///  · 计时面板——球点开的就是它。面板列着每张表的「全屏/关闭」按钮，
+  ///    球浮在它们上面会把按钮吃掉（414×844 上必撞，测试里加一条状态栏 padding 就复现了）。
+  ///
+  /// 记在板上而不是记在 overlay 里：板是这一族唯一的事实源，且它已经会被通知。
+  /// 用**按来源计数的表**而不是 bool：
+  ///  · 「全屏页里再 push 一层、退回来时球不该提前回来」→ 计数；
+  ///  · 「面板 pop 与全屏 push 交错完成」→ 必须分得清是谁在占场。
+  ///    面板那条 future 的 `whenComplete` 会在全屏登记**之后**才回调，
+  ///    共用一个计数就会被它把全屏的登记一起减掉（球又冒出来），所以按来源分账。
+  final Map<String, int> _occupants = {};
+  bool get screenOccupied => _occupants.isNotEmpty;
+
+  /// ★ 置位/撤手都会通知，但**不能在当前 build 帧里通知**：
+  ///   悬浮球那层是 `ListenableBuilder`，在 build 中被 markNeedsBuild 会直接抛
+  ///   （第一版把 `enterFullScreen()` 放在全屏页的 `initState` 里就是这么炸的）。
+  ///   所以：调用点尽量放在 build 之外（`TimerFullPage.push` 是点击回调），
+  ///   这里再兜一道——处在回调阶段就推到本帧结束后。
+  void occupyScreen(String who) {
+    _occupants[who] = (_occupants[who] ?? 0) + 1;
+    _notifySafe();
+  }
+
+  void releaseScreen(String who) {
+    final left = (_occupants[who] ?? 0) - 1;
+    if (left > 0) {
+      _occupants[who] = left;
+    } else {
+      _occupants.remove(who);
+    }
+    _notifySafe();
+  }
+
+  void _notifySafe() {
+    if (_disposed) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      // 推到本帧结束后再通知：那一帧可能正好把板子拆了（app 卸载 / 测试收尾），
+      // 所以这里必须再确认一次还活着，否则就是「TimerBoard was used after being disposed」。
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed) notifyListeners();
+      });
+      // 延后就要保证真有一帧会来，否则监听者永远等不到这次通知
+      SchedulerBinding.instance.scheduleFrame();
+    } else {
+      notifyListeners();
+    }
+  }
 
   /// 起一个表。**已存在的表不受影响**（并行口径）。
   KitchenTimer start(String label, int seconds) {
@@ -81,11 +136,13 @@ class TimerBoard extends ChangeNotifier {
   void toggle(String id) {
     final t = _find(id);
     if (t == null) return;
-    _replace(t.done
-        ? timerRestart(t, nowMs: _clock())
-        : t.running
-            ? timerPause(t, nowMs: _clock())
-            : timerResume(t, nowMs: _clock()));
+    _replace(
+      t.done
+          ? timerRestart(t, nowMs: _clock())
+          : t.running
+          ? timerPause(t, nowMs: _clock())
+          : timerResume(t, nowMs: _clock()),
+    );
   }
 
   void pause(String id) {
@@ -95,7 +152,9 @@ class TimerBoard extends ChangeNotifier {
 
   void resume(String id) {
     final t = _find(id);
-    if (t != null && !t.running && !t.done) _replace(timerResume(t, nowMs: _clock()));
+    if (t != null && !t.running && !t.done) {
+      _replace(timerResume(t, nowMs: _clock()));
+    }
   }
 
   void reset(String id) {
@@ -157,7 +216,10 @@ class TimerBoard extends ChangeNotifier {
   }
 
   void _replace(KitchenTimer next) {
-    _timers = [for (final t in _timers) if (t.id == next.id) next else t];
+    _timers = [
+      for (final t in _timers)
+        if (t.id == next.id) next else t,
+    ];
     _ensureTicker();
     notifyListeners();
   }
@@ -177,6 +239,7 @@ class TimerBoard extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _ticker?.cancel();
     _ticker = null;
     super.dispose();

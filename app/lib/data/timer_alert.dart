@@ -104,13 +104,21 @@ class TimerAlert extends ChangeNotifier {
   /// 计时器到点那一批（FR-COOK-14）。文案与 id 在这里拼，发送统一走 [send]。
   ///
   /// [sound] 是「通知带声音」这一路（FR-SET-03）：关掉仍是发通知，只是静默落一条横幅。
-  Future<int> fire(List<KitchenTimer> fired, {required bool sound}) => send([
+  /// [vibrate] 是「计时结束震动」那一路（FR-SET-03）——★ 它走**通知自己的振动**，
+  /// 不再只靠 `HapticFeedback.vibrate()`：后者在系统「触摸反馈」关掉时会被静默吞掉
+  /// （真机实测：`settings get system haptic_feedback_enabled` = 0 时完全没感觉），
+  /// 而渠道级 `enableVibration` 一直是 false（那是为了不让它变成「设置里关不掉的震动」）。
+  /// 两者一叠加，用户得到的就是「到点既不响也不震」——所以这里按每条通知传，
+  /// 开关仍然只管这一路：`vibrateOn` 关 → 传 false → 真的不振。
+  Future<int> fire(List<KitchenTimer> fired, {required bool sound, bool vibrate = false}) =>
+      send([
         for (final t in fired)
           AlertNotice(
             id: noticeIdOf(t.id),
             title: '「${t.label}」时间到',
             body: t.done ? '该起锅了' : '还剩一点，别忘了',
             sound: sound,
+            vibrate: vibrate,
           ),
       ]);
 
@@ -190,9 +198,10 @@ class TimerAlert extends ChangeNotifier {
             priority: Priority.high,
             category: AndroidNotificationCategory.reminder,
             playSound: n.sound,
-            // 震动这一路归 KitchenPrefs.vibrateOn 管（TimerBoard 的闸门），
-            // 渠道这边不再自己振一次，否则关掉设置还在震 = 假开关。
-            enableVibration: false,
+            // ★ 振动按**每条通知**决定：渠道那一层一直是 false（否则变成「设置里关不掉的震动」），
+            //   而 App 侧的 HapticFeedback 会被系统「触摸反馈」开关静默吞掉——
+            //   两头都不振 = 用户以为功能没做。这里传 vibrateOn，开关仍然说一不二。
+            enableVibration: n.vibrate,
           ),
           web: WebNotificationDetails(
             isSilent: !n.sound,
@@ -237,12 +246,16 @@ class AlertNotice {
     required this.title,
     required this.body,
     required this.sound,
+    this.vibrate = false, // 静默是默认：只有灶上到点那一路会传 true
   });
 
   final int id;
   final String title;
   final String body;
   final bool sound;
+
+  /// 这条通知要不要振动（FR-SET-03 的震动那一路）。
+  final bool vibrate;
 }
 
 /// 发一条通知（默认走插件；测试里换成记录用的假实现）。

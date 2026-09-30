@@ -50,6 +50,7 @@ void main() {
       expect(sent[0].body, '生菜、番茄', reason: '到期日早的先看（前天那样更危险）');
       expect(sent[1].title, '1 样三天内到期');
       expect(sent.every((n) => n.sound == false), isTrue, reason: '到期提醒不该响');
+      expect(sent.every((n) => n.vibrate == false), isTrue, reason: '同上：振动只归计时结束那一路');
       expect(watch.lastBad, 2);
       expect(watch.lastSoon, 1);
     });

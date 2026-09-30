@@ -46,6 +46,21 @@ void main() {
       expect(sent.single.sound, isFalse, reason: '关掉「通知带声音」就该是静默横幅');
     });
 
+    test('★ 振动是**每条**的参数：灶上传 true 才振，默认不振', () async {
+      final sent = <AlertNotice>[];
+      final alert = TimerAlert(sender: (n) async => sent.add(n))
+        ..permission = NotifyPermission.granted;
+
+      await alert.fire([firedTimer('a', '炖', 60)], sound: true, vibrate: true);
+      expect(sent.single.vibrate, isTrue,
+          reason: '到点这一路要通知自己振——HapticFeedback 会被系统「触摸反馈」开关吞掉');
+
+      sent.clear();
+      await alert.fire([firedTimer('b', '炖', 60)], sound: true);
+      expect(sent.single.vibrate, isFalse,
+          reason: '不传就是不振：开关关掉必须真的关，别的路也不该顺手振');
+    });
+
     test('requestAccess：同意算 granted，系统说不行就 denied（不假装成功）', () async {
       var asked = 0;
       final ok = TimerAlert(requestPermission: () async {
@@ -211,6 +226,21 @@ void main() {
       store.setKitchenPrefs(store.kitchenPrefs.copyWith(soundOn: false));
       await fireOverdue(tester, '蒸蛋');
       expect(sent.single.sound, isFalse);
+    });
+
+    testWidgets('★ 振动那一路：开关跟着 vibrateOn 传到**通知本身**（不是只靠 HapticFeedback）',
+        (tester) async {
+      await boot(tester, grant: true);
+      await fireOverdue(tester, '炖牛肉');
+      expect(sent.single.vibrate, isTrue, reason: '默认开 → 这条通知要自己振');
+
+      sent.clear();
+      store.setKitchenPrefs(store.kitchenPrefs.copyWith(vibrateOn: false));
+      await fireOverdue(tester, '炖排骨');
+      expect(sent.single.vibrate, isFalse, reason: '关掉还振就是假开关');
+      // ★ 真机踩过的坑：HapticFeedback 在系统「触摸反馈」关掉时被静默吞掉，
+      //   而渠道级 enableVibration 一直是 false，两头都不振 = 用户以为功能没做。
+      //   所以振动必须挂在通知上，而不是只挂在震动调用上。
     });
 
     testWidgets('「我的」页：没授权时声音行不出现，但给能点的授权入口', (tester) async {

@@ -7,6 +7,9 @@
 # ── 构建产物 ──
 app/build/
 server/build/
+# `shared` 跑测试时也会生成一个 build/（native_assets / test_cache，4 MB 量级），
+# 与上面两个同理：能重新生成就不进仓库。
+shared/build/
 dist/
 # 构建时的日志重定向文件（build_web.ps1 / flutter build apk 的输出留档）
 **/build_*.log

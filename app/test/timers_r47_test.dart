@@ -265,6 +265,8 @@ void main() {
     });
 
     testWidgets('悬浮球可拖动且不越界（FR-COOK-03）', (tester) async {
+      // R47 第八段之后，这条要连着新形态一起看：猛拖到**边上**会吸边收成耳朵，
+      // 所以判"越界"要看耳朵的矩形，展开后再看球的矩形——两态都得在界内。
       await pumpApp(tester);
       await backToDetail(tester);
       await tester.tap(find.byType(TimeCapsule).first);
@@ -274,21 +276,30 @@ void main() {
       // 往左上角猛拖，超出安全区的那一段必须被钳住
       await tester.drag(find.byKey(const ValueKey('timer-ball')), const Offset(-4000, -4000));
       await tester.pumpAndSettle();
-      final after = tester.getRect(find.byKey(const ValueKey('timer-ball')));
+      final ear = tester.getRect(find.byKey(const ValueKey('timer-ear')));
+      expect(ear.left, closeTo(0, 1), reason: '贴左吸边（钳位不会把它推出左缘）');
+      expect(ear.top, greaterThanOrEqualTo(0), reason: '不能拖进状态栏上面');
+      expect(ear.right, lessThanOrEqualTo(414));
+      expect(ear.bottom, lessThanOrEqualTo(2200));
+      expect(ear.top, lessThan(before.top), reason: '往上拖要真的动');
 
-      expect(after.left, lessThan(before.left), reason: '往左拖要真的动');
-      expect(after.left, greaterThanOrEqualTo(0), reason: '不能拖出屏幕左缘');
-      expect(after.top, greaterThanOrEqualTo(0), reason: '不能拖进状态栏上面');
+      // 展开：完整球留在左上角，同样在界内
+      await tester.tap(find.byKey(const ValueKey('timer-ear')));
+      await tester.pumpAndSettle();
+      final after = tester.getRect(find.byKey(const ValueKey('timer-ball')));
+      expect(after.left, closeTo(0, 1));
       expect(after.right, lessThanOrEqualTo(414));
       expect(after.bottom, lessThanOrEqualTo(2200));
 
       // 往右下角猛拖同样钳得住
       await tester.drag(find.byKey(const ValueKey('timer-ball')), const Offset(4000, 4000));
       await tester.pumpAndSettle();
-      final again = tester.getRect(find.byKey(const ValueKey('timer-ball')));
-      expect(again.right, lessThanOrEqualTo(414));
+      final again = tester.getRect(find.byKey(const ValueKey('timer-ear')));
+      expect(again.right, closeTo(414, 1), reason: '贴右吸边');
       expect(again.bottom, lessThanOrEqualTo(2200));
 
+      await tester.tap(find.byKey(const ValueKey('timer-ear')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('timer-ball')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('timer-close-all')));

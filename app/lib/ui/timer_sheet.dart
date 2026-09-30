@@ -32,7 +32,14 @@ void startKitchenTimer(BuildContext context, {
 }
 
 /// 打开计时面板（悬浮球点它）。已存在的表全部列出，各自可暂停/加时/关闭。
+///
+/// ★ 面板开着时悬浮球必须让位：面板就是球的展开态，球继续浮在上面会
+///   压住面板里的「全屏/关闭」按钮（414×844 上必撞——测试里给一条状态栏
+///   padding 就复现了：点「全屏」命中的是球）。登记走 board 的按来源占场，
+///   与全屏页各记各的账：面板 pop 的 `whenComplete` 会在全屏登记之后才回调，
+///   共用一个计数就会把全屏的登记一起减掉。
 Future<void> showTimerPanel(BuildContext context, {required TimerBoard board}) {
+  board.occupyScreen('panel');
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -41,7 +48,7 @@ Future<void> showTimerPanel(BuildContext context, {required TimerBoard board}) {
       borderRadius: BorderRadius.vertical(top: Radius.circular(ZaojiRadius.xl)),
     ),
     builder: (_) => _TimerBoardSheet(board: board),
-  );
+  ).whenComplete(() => board.releaseScreen('panel'));
 }
 
 class _TimerBoardSheet extends StatelessWidget {

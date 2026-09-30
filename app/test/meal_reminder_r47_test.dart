@@ -27,6 +27,18 @@ void main() {
   final now = DateTime(2026, 12, 25, 17, 30);
   final dayStamp = mealDay(now);
 
+  /// 接真动线那两条用不了假时钟（app 内部读的是真 now），所以种子必须**钉在今天**：
+  /// ★ 早先写的是 `DateTime.now().add(Duration(hours: 6))`——晚上跑就跨到明天，
+  ///   而设置页只列**今天**的餐次、投待办也只认今天，于是那一行根本不存在，
+  ///   表现为「白天绿、晚上红」的时间炸弹（本仓库记过这类账）。
+  /// 现在取「now + lead」与「今天 23:59」里较早的那个：永远还是今天，且尽量还在未来。
+  DateTime laterToday(Duration lead) {
+    final t = DateTime.now();
+    final endOfDay = DateTime(t.year, t.month, t.day, 23, 59);
+    final want = t.add(lead);
+    return want.isAfter(endOfDay) ? endOfDay : want;
+  }
+
   MenuPlan menu(
     String meal,
     String serveAt, {
@@ -90,6 +102,7 @@ void main() {
       expect(sent.single.body, '3 道菜 · 备菜 5 样 · 步骤 9 步',
           reason: '正文就是设置页那一行说的话（同一个 summary，不各写一遍）');
       expect(sent.single.sound, isFalse, reason: '这是「有空看一眼」，响的该是灶上的计时器');
+      expect(sent.single.vibrate, isFalse, reason: '振动只归计时结束那一路，别的路不能顺手振');
       expect(stamped, { '$dayStamp#晚餐' });
       expect(w.lastEligible, 1);
     });
@@ -393,7 +406,7 @@ void main() {
     });
 
     testWidgets('★ 今日那一行的文字 == 通知正文要用的那句（一份口径两处吃）', (tester) async {
-      final serve = DateTime.now().add(const Duration(hours: 6));
+      final serve = laterToday(const Duration(hours: 6));
       final store = RecipeStore(executor: NativeDatabase.memory());
       await store.ready();
       addTearDown(store.dispose);
@@ -443,7 +456,7 @@ void main() {
 
   group('接到真动线', () {
     testWidgets('★ 打开 App 就投：进窗口 + 已授权 → 一条通知并落本机戳', (tester) async {
-      final serve = DateTime.now().add(const Duration(minutes: 40));
+      final serve = laterToday(const Duration(minutes: 40));
       final store = RecipeStore(executor: NativeDatabase.memory());
       await store.ready();
       addTearDown(store.dispose);
