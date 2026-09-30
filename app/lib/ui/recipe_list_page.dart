@@ -81,6 +81,10 @@ class _RecipeListPageState extends State<RecipeListPage> {
   }
 
   /// 原型 `visibleRecipes()` 的直译。
+  ///
+  /// FR-REC-10 的四个搜索面：菜名 / 副标题 / 食材 / **标签**。
+  /// 标签这一路是 R46 补的——用户自己贴的「红烧」「清淡」搜不到，
+  /// 筛选项里点同一个标签却筛得出，两条路口径不一致。
   List<Recipe> _visible(RecipeStore store) {
     var list = store.recipes.toList();
     final q = _query.trim().toLowerCase();
@@ -90,7 +94,10 @@ class _RecipeListPageState extends State<RecipeListPage> {
             (r) =>
                 r.name.toLowerCase().contains(q) ||
                 r.sub.toLowerCase().contains(q) ||
-                r.ingredients.any((i) => i.name.toLowerCase().contains(q)),
+                r.ingredients.any((i) => i.name.toLowerCase().contains(q)) ||
+                r.tags.values
+                    .expand((ts) => ts)
+                    .any((t) => t.toLowerCase().contains(q)),
           )
           .toList();
     }
@@ -546,7 +553,7 @@ class _SearchBar extends StatelessWidget {
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
-                hintText: '搜菜名、食材，如「番茄」「虾」',
+                hintText: '搜菜名、食材、标签',
                 hintStyle: TextStyle(fontSize: 14, color: context.zj.muted),
               ),
             ),

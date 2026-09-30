@@ -39,7 +39,7 @@ void main() {
     expect(find.text('菜谱'), findsWidgets); // 顶栏 + 标签栏各一处
     expect(find.text('共 9 道 · 收藏 4 道'), findsOneWidget);
     // 搜索条
-    expect(find.text('搜菜名、食材，如「番茄」「虾」'), findsOneWidget);
+    expect(find.text('搜菜名、食材、标签'), findsOneWidget);
     // 快捷筛选轨
     expect(find.text('只看收藏'), findsOneWidget);
     expect(find.text('红烧'), findsOneWidget);
@@ -196,7 +196,7 @@ void main() {
     expect(find.byType(TimeCapsule), findsWidgets);
   });
 
-  testWidgets('点胶囊能弹出计时器，并且真的会走', (tester) async {
+  testWidgets('点胶囊起表：悬浮球上屏，点球开面板（R47 计时台）', (tester) async {
     await pumpApp(tester);
     await tester.tap(find.text('番茄炒蛋'));
     await tester.pumpAndSettle();
@@ -204,16 +204,20 @@ void main() {
     await tester.tap(find.byType(TimeCapsule).first);
     await tester.pumpAndSettle();
 
-    expect(find.text('开始'), findsOneWidget);
+    // R47 的口径与原型一致：**点胶囊 = 起表 + 悬浮球跟着你**，不再弹模态面板
+    // （面板一开就吃掉其余胶囊，「再起第二个」做不到——timers_r47_test 钉这条）。
+    expect(find.byKey(const ValueKey('timer-ball')), findsOneWidget);
 
-    await tester.tap(find.text('开始'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.text('20:00'), findsNothing);
-
-    // 收尾：暂停，别把周期计时器留给下一个测试
-    await tester.tap(find.text('暂停'));
+    await tester.tap(find.byKey(const ValueKey('timer-ball')));
     await tester.pumpAndSettle();
+    expect(find.text('暂停'), findsOneWidget, reason: '起表即在走，不该还要点一次「开始」');
+
+    // 读数随时间变小这件事在 `timers_r47_test.dart` 里用**假时钟**钉。
+    // 这里不能试：FakeAsync 推 Timer 但**不推 DateTime.now()**，
+    // 所以 `pump(1s)` 之后读数当然不变——把它当 bug 修就修错了地方。
+    await tester.tap(find.byKey(const ValueKey('timer-close-all')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('timer-ball')), findsNothing);
   });
 
   testWidgets('★ 清空筛选会把搜索框与排序档一起复位（R12 修的界面自相矛盾 bug）', (tester) async {
@@ -240,7 +244,7 @@ void main() {
     // 修复前：_query 清了但 _searchCtrl 没清——输入框还写着「不存在的菜」，
     // 列表却回到全部，界面自相矛盾；排序档也不会复位。
     expect(
-      find.text('搜菜名、食材，如「番茄」「虾」'),
+      find.text('搜菜名、食材、标签'),
       findsOneWidget,
       reason: '搜索框必须清空（hint 重新出现）',
     );

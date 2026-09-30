@@ -4,10 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import '../data/alert_scope.dart';
+import '../data/meal_reminder.dart';
 import '../data/recipe_store.dart';
+import '../data/timer_alert.dart';
 import '../data/sync/sync_engine.dart';
 import '../data/sync/sync_scope.dart';
 import '../data/store_scope.dart';
+import '../models.dart';
 import '../theme.dart';
 import 'ai_settings_page.dart';
 import 'conflict_box_page.dart';
@@ -19,8 +23,10 @@ import 'trash_page.dart';
 /// 「我的」页（R13 最小可用版）：设备信息 + 同步配对与状态。
 ///
 /// 这是从 `_ComingSoon` 占位升级来的第一块真实内容——
-/// 同步引擎需要一个入口（填地址、输配对码、看状态、手动同步），
-/// 完整的设置页（FR-SET-01~09）等 M2+ 再扩。
+/// 同步引擎需要一个入口（填地址、输配对码、看状态、手动同步）。
+/// R47 起再加一段「提醒与计时」偏好（FR-SET-02/03，落 local_pref 只影响本机）；
+/// 剩下的 FR-SET-01（开饭前提醒）与 FR-SET-04~09 随各自的落点补齐，
+/// **不提前摆死开关**（口径见 `_KitchenPrefsCard` 头注）。
 class MePage extends StatefulWidget {
   const MePage({super.key, this.defaultServerUrl = kDefaultServerUrl});
 
@@ -411,6 +417,13 @@ class _MePageState extends State<MePage> {
                     builder: (context, _) => _AiEntryCard(engine: engine),
                   ),
                 ),
+                const SizedBox(height: 20),
+                _sectionTitle('提醒与计时'),
+                // R47 · 这里只放**真接线**的几路（FR-SET-01/02/03）：
+                // 悬浮窗那行控制计时球上不上屏，震动那行进 TimerBoard 的提醒闸门，
+                // 开饭前提醒那行进 MealReminderWatch 的投递闸门（FR-PLAN-09：派生摘要投一条通知）。
+                // 语音提醒（FR-SET-03 第三路）还没有落点，继续不上死开关。
+                _KitchenPrefsCard(),
                 const SizedBox(height: 20),
                 Text(
                   '备份能力在服务端状态页（http://127.0.0.1:8666/）配置。',
@@ -965,6 +978,208 @@ class _ConflictBadgeState extends State<_ConflictBadge> {
           color: context.zj.accent,
         ),
       ),
+    );
+  }
+}
+
+/// 提醒与计时开关（R47 · 悬浮窗 FR-SET-02、震动与声音 FR-SET-03、通知 FR-COOK-14）。
+///
+/// 落 `local_pref`：**只影响这台设备**（同主题、同备菜板口径）。
+///
+/// ★ **通知这一行的措辞跟着系统授权态走**（unknown / granted / denied 三样），
+/// 而且「通知带声音」只在**通知开着且已授权**时才出现——
+/// 没授权就摆一枚能点的声音开关，等于又造一个「能打开但什么都不发生」的控件。
+/// 授权入口（`prefs-notify-access`）拿到之后就自己收掉，不反复劝。
+///
+/// ★ **FR-SET-01「开饭前提醒」在 R47 第六段接上了**：投递去处是通知（`MealReminderWatch`），
+/// 摘要与那一行列出的内容吃同一个 `digestOfMenu`，所以这一行不是装饰——
+/// 打开这页就能看见今天会投给哪一餐、投出去是几个字，或者为什么一趟都不投。
+/// 档位**就地一排**（六颗 chip），不做「点一下→再弹一层」的两段式。
+class _KitchenPrefsCard extends StatelessWidget {
+  const _KitchenPrefsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final store = StoreScope.of(context);
+    final alert = AlertScope.of(context);
+    return ListenableBuilder(
+      // 两个事实源都要听：偏好翻转改文案，授权态回来也要改文案（不重进页面就该看见）。
+      listenable: Listenable.merge([store, alert]),
+      builder: (context, _) {
+        final p = store.kitchenPrefs;
+        final granted = alert.permission == NotifyPermission.granted;
+        final denied = alert.permission == NotifyPermission.denied;
+        return _SyncCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── 开饭前投待办（FR-SET-01 + FR-PLAN-09）──
+              _prefSwitch(
+                context,
+                key: 'prefs-meal-reminder',
+                title: '开饭前提醒',
+                sub: p.mealReminderOn
+                    ? '提前 ${mealLeadLabel(p.leadMinutesClamped)}把备菜与制作投进待办'
+                    : '不开待办，只在菜单里看',
+                value: p.mealReminderOn,
+                onChanged: (v) => store
+                    .updateKitchenPrefs((x) => x.copyWith(mealReminderOn: v)),
+              ),
+              if (p.mealReminderOn) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 8),
+                  child: Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: [
+                      for (final m in KitchenPrefs.leadSteps)
+                        FilterChip(
+                          key: ValueKey('prefs-lead-$m'),
+                          label: Text(mealLeadLabel(m),
+                              style: const TextStyle(fontSize: 12)),
+                          selected: p.leadMinutesClamped == m,
+                          onSelected: (_) => store.updateKitchenPrefs(
+                              (x) => x.copyWith(mealLeadMinutes: m)),
+                        ),
+                    ],
+                  ),
+                ),
+                ..._mealTodoLines(context, store),
+              ],
+              Divider(height: 22, color: context.zj.lineSoft),
+              _prefSwitch(
+                context,
+                key: 'prefs-timer-float',
+                title: '计时器悬浮窗',
+                sub: '离开菜谱页后继续显示，可拖动',
+                value: p.timerFloatOn,
+                onChanged: (v) =>
+                    store.updateKitchenPrefs((x) => x.copyWith(timerFloatOn: v)),
+              ),
+              Divider(height: 22, color: context.zj.lineSoft),
+              _prefSwitch(
+                context,
+                key: 'prefs-vibrate',
+                title: '计时结束震动',
+                sub: '静音时只剩视觉提示',
+                value: p.vibrateOn,
+                onChanged: (v) =>
+                    store.updateKitchenPrefs((x) => x.copyWith(vibrateOn: v)),
+              ),
+              Divider(height: 22, color: context.zj.lineSoft),
+              _prefSwitch(
+                context,
+                key: 'prefs-notify',
+                title: '计时结束通知',
+                sub: !p.notifyOn
+                    ? '不开通知，只剩震动与视觉'
+                    : granted
+                        ? '到点在通知栏提醒一次'
+                        : denied
+                            ? '系统已拒绝，去系统设置里开'
+                            : '还没拿到系统授权',
+                value: p.notifyOn,
+                onChanged: (v) =>
+                    store.updateKitchenPrefs((x) => x.copyWith(notifyOn: v)),
+              ),
+              if (p.notifyOn && !granted)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      key: const ValueKey('prefs-notify-access'),
+                      onPressed: () => denied
+                          ? alert.openSystemSettings()
+                          : alert.requestAccess(),
+                      child: Text(denied ? '去系统设置里改' : '开启系统通知授权'),
+                    ),
+                  ),
+                ),
+              if (p.notifyOn && granted) ...[
+                Divider(height: 22, color: context.zj.lineSoft),
+                _prefSwitch(
+                  context,
+                  key: 'prefs-sound',
+                  title: '通知带声音',
+                  sub: p.soundOn ? '跟着系统的音量与静音档走' : '静音：通知栏只落一条横幅',
+                  value: p.soundOn,
+                  onChanged: (v) =>
+                      store.updateKitchenPrefs((x) => x.copyWith(soundOn: v)),
+                ),
+              ],
+              Divider(height: 22, color: context.zj.lineSoft),
+              // 库存到期这一路与计时器那两枚开关各管各的（FR-PAN-04）：
+              // 想关的是「别提醒我菜过期」，不该把灶上的到点提醒一起掐掉。
+              _prefSwitch(
+                context,
+                key: 'prefs-expiry',
+                title: '库存到期提醒',
+                sub: '打开 App 时提醒一次，同一天不重复',
+                value: p.expiryNotifyOn,
+                onChanged: (v) =>
+                    store.updateKitchenPrefs((x) => x.copyWith(expiryNotifyOn: v)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// 今天会投给谁、投出去多长（与通知正文同一个 [MealDigest.summary]）。
+  ///
+  /// 列在这里有两个用处：一是开关不是装饰（点完能看见它会投什么）；
+  /// 二是今天压根没有定了开饭时间的餐次时，**如实说出来**，
+  /// 而不是留一枚看起来坏掉的开关。数据是实况——菜单一改这几行当场跟着变。
+  List<Widget> _mealTodoLines(BuildContext context, RecipeStore store) {
+    final today = mealDay(DateTime.now());
+    final targets = store.menus
+        .where((m) => m.day == today && mealServeTime(m) != null)
+        .toList();
+    if (targets.isEmpty) {
+      return [
+        Text(
+          kMealNoTargetText,
+          key: const ValueKey('prefs-meal-none'),
+          style: TextStyle(fontSize: 12, color: context.zj.muted),
+        ),
+      ];
+    }
+    return [
+      for (final m in targets)
+        Padding(
+          key: ValueKey('prefs-meal-today-${m.id}'),
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Text(
+            '${m.serveAt} ${m.meal} · ${digestOfMenu(store, m).summary}',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.6,
+              color: m.recipeIds.isEmpty ? context.zj.muted : context.zj.ink2,
+            ),
+          ),
+        ),
+    ];
+  }
+
+  Widget _prefSwitch(
+    BuildContext context, {
+    required String key,
+    required String title,
+    required String sub,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile(
+      key: ValueKey(key),
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      value: value,
+      onChanged: onChanged,
+      activeThumbColor: context.zj.accent,
+      title: Text(title, style: const TextStyle(fontSize: 14)),
+      subtitle: Text(sub, style: TextStyle(fontSize: 12, color: context.zj.muted)),
     );
   }
 }

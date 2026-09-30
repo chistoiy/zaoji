@@ -230,7 +230,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
                     _flagNutrition, (v) => setState(() => _flagNutrition = v)),
                 _switchRow('AI 生成菜谱', '输入菜名自动填好整份菜谱',
                     _flagRecipe, (v) => setState(() => _flagRecipe = v)),
-                _switchRow('AI 推荐菜品', '按库存推荐（下一轮接入）',
+                _switchRow('AI 推荐菜品', '按库存推荐（厨房页）',
                     _flagRecommend,
                     (v) => setState(() => _flagRecommend = v)),
                 const SizedBox(height: 22),

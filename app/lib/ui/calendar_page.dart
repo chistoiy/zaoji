@@ -7,11 +7,12 @@ import 'menu_detail_page.dart';
 import 'recipe_detail_page.dart';
 import 'stats_page.dart';
 
-/// 日历（R24）：做过什么、排了什么，一眼看全。
+/// 日历（R24）：做过什么、排了什么、什么时候新增，一眼看全。
 ///
-/// 点只有两种：做过菜（cook_session 完成记录）与排了菜单（menu.day）。
-/// 刻意没有「新增菜品」第三种点——recipe 表没有创建时间列，
-/// 用 updated_at 猜会漂；要它得先给 schema 加列，单独开轮次。
+/// 三种点：做过菜（cook_session 完成记录）、排了菜单（menu.day）、
+/// 新增菜品（recipe.created_at，schema v7 · FR-LOG-01）。
+/// 第三种只在 `created_at` 非空时出现——v7 之前的老行**故意不回填**，
+/// 拿 updated_at 冒充创建时刻会把「改过老菜谱」画成「今天新学一道菜」。
 class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
 

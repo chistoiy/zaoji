@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/pantry_watch.dart';
 import '../data/recipe_store.dart';
 import '../data/store_scope.dart';
 import '../data/sync/sync_scope.dart';
@@ -43,38 +44,44 @@ class _KitchenPageState extends State<KitchenPage> {
           ],
         ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 0, label: Text('库存')),
-                ButtonSegment(value: 1, label: Text('能做什么')),
-                ButtonSegment(value: 2, label: Text('购物清单')),
-              ],
-              selected: {_segment},
-              onSelectionChanged: (s) =>
-                  setState(() => _segment = s.first),
-              style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: context.zj.accent,
-                selectedForegroundColor: context.zj.onAccent,
+      body: ListenableBuilder(
+        // 卡与内容区吃同一次通知：步进 / 添加 / 同步引擎拉回的新库存都要即时改数
+        // （R20 同类教训：页面只 build 一次 = 数据是照片不是实况）
+        listenable: store,
+        builder: (context, _) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('库存')),
+                  ButtonSegment(value: 1, label: Text('能做什么')),
+                  ButtonSegment(value: 2, label: Text('购物清单')),
+                ],
+                selected: {_segment},
+                onSelectionChanged: (s) =>
+                    setState(() => _segment = s.first),
+                style: SegmentedButton.styleFrom(
+                  selectedBackgroundColor: context.zj.accent,
+                  selectedForegroundColor: context.zj.onAccent,
+                ),
               ),
             ),
-          ),
-          Expanded(
-            // 监听 store：步进/添加/同步引擎拉回的新库存都要即时现身
-            // （R20 同类教训：页面只 build 一次 = 数据是照片不是实况）
-            child: ListenableBuilder(
-              listenable: store,
-              builder: (context, _) => switch (_segment) {
+            // 库存告警卡（FR-PAN-06）：三组都空时整块不占位
+            _PantryWatchCard(
+              store: store,
+              segment: _segment,
+              onGoRecommend: () => setState(() => _segment = 1),
+            ),
+            Expanded(
+              child: switch (_segment) {
                 0 => _PantryTab(store: store),
                 1 => _RecommendTab(store: store),
                 _ => _ShoppingTab(store: store),
               },
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       floatingActionButton: _segment == 0
           ? FloatingActionButton(
@@ -144,6 +151,114 @@ class _KitchenPageState extends State<KitchenPage> {
 
 // ────────────────────────────── 库存 ──────────────────────────────
 
+/// 厨房 tab 顶部的库存告警卡（R47 · FR-PAN-06）。
+///
+/// **落点是用户拍的**：挂厨房 tab 顶部，不挂菜谱那屏——
+/// 「打开 App 时告诉你」已经由通知那一路负责（`PantryWatch`），
+/// 这张卡管的是「人已经在厨房页了，一眼看到该先处理谁」，域一致、零新增导航。
+///
+/// 口径与通知共用 [pantryAlertOf]：三组都空 → 整卡不渲染（FR-PAN-06 的验收判据
+/// 就是「有数据时出现」）；名字只列前三个，多的写成「等 N 样」。
+/// 「按库存找菜」只在**不是**「能做什么」那一段时出现——已经在目的地了，
+/// 按钮就是假的（库存段头部另有同一颗入口，那是 R28 就有的）。
+class _PantryWatchCard extends StatelessWidget {
+  const _PantryWatchCard({
+    required this.store,
+    required this.segment,
+    required this.onGoRecommend,
+  });
+
+  final RecipeStore store;
+  final int segment;
+  final VoidCallback onGoRecommend;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = pantryAlertOf(store.pantryItems, DateTime.now());
+    if (a.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      key: const ValueKey('pantry-watch-card'),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+      child: Container(
+        padding: const EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: context.zj.surface,
+          borderRadius: BorderRadius.circular(ZaojiRadius.lg),
+          border: Border.all(color: context.zj.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.error_outline, size: 16, color: context.zj.ink2),
+                const SizedBox(width: 6),
+                Text('食材要处理',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: context.zj.ink2)),
+              ],
+            ),
+            // 三行的用词与库存头部那组徽标**逐字相同**（已过期 / 快到期 / 快没了），
+            // 同一屏不该出现第三种说法。
+            if (a.bad.isNotEmpty)
+              _row(context, 'pwc-bad', '已过期', a.bad, context.zj.accent),
+            if (a.soon.isNotEmpty)
+              _row(context, 'pwc-soon', '快到期', a.soon, context.zj.amber),
+            if (a.low.isNotEmpty)
+              _row(context, 'pwc-low', '快没了', a.low, context.zj.muted),
+            // 「没有」不发通知（家里没有不是紧急事件），但它是头部那组徽标
+            // 原有的第四个数，卡取代徽标时得把它一起接住。
+            if (a.out.isNotEmpty)
+              _row(context, 'pwc-out', '没有', a.out, context.zj.muted),
+            if (segment != 1)
+              Padding(
+                padding: const EdgeInsets.only(top: 11),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('pwc-reco'),
+                    onPressed: onGoRecommend,
+                    icon: const Icon(Icons.auto_awesome, size: 15),
+                    label: const Text('按库存找菜'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: context.zj.ink2,
+                      side: BorderSide(color: context.zj.line),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(ZaojiRadius.pill),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(
+          BuildContext context, String key, String label, List<PantryItem> xs, Color color) =>
+      Padding(
+        key: ValueKey(key),
+        padding: const EdgeInsets.only(top: 9),
+        child: Row(
+          children: [
+            _watchBadge('${xs.length} $label', color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(PantryAlert.names(xs),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: context.zj.muted)),
+            ),
+          ],
+        ),
+      );
+}
+
 class _PantryTab extends StatefulWidget {
   const _PantryTab({required this.store});
 
@@ -169,19 +284,8 @@ class _PantryTabState extends State<_PantryTab> {
   Widget build(BuildContext context) {
     final items = widget.store.pantryItems;
     final q = _searchCtrl.text.trim();
-    final now = DateTime.now();
-
-    final bad = items
-        .where((p) => p.have && p.expState(now) == 'bad')
-        .length;
-    final soon = items
-        .where((p) => p.have && p.expState(now) == 'soon')
-        .length;
-    // v7：「快没了」从**猜**变成**记**。
-    // 之前是 `qtyValue <= 1` 的启发式，一瓶 500ml 的油和一把剩两根的粉丝
-    // 会被同一行代码判成同一种东西；现在三态是用户在库存表上自己标的。
-    final low = items.where((p) => p.status == PantryStock.low).length;
-    final out = items.where((p) => p.status == PantryStock.none).length;
+    // 到期/临期/快没/没有 四个计数原本在这里算、画成头部徽标；
+    // R47 起由厨房顶部的告警卡统一给（同一份口径见 `pantryAlertOf`）。
 
     var shown = items.where((p) {
       if (_cat != 'all' && (p.category ?? '') != _cat) return false;
@@ -226,12 +330,9 @@ class _PantryTabState extends State<_PantryTab> {
                   Text('样食材在家里',
                       style:
                           TextStyle(fontSize: 12.5, color: context.zj.muted)),
-                  if (bad > 0)
-                    _statBadge('$bad 今天到期', context.zj.accent),
-                  if (soon > 0)
-                    _statBadge('$soon 快到期', context.zj.amber),
-                  if (low > 0) _statBadge('$low 快没了', context.zj.muted),
-                  if (out > 0) _statBadge('$out 没有', context.zj.muted),
+                  // ★ 原来这里挂着「N 已过期 / N 快到期 / N 快没了 / N 没有」四枚徽标，
+                  // R47 顶部卡把它们整组吃掉了：同一屏两份计数（一份还少了名字）
+                  // 就是两份要维护的说法。去重前按场景查过覆盖——四个数在卡里都在。
                 ],
               ),
               const SizedBox(height: 12),
@@ -307,18 +408,20 @@ class _PantryTabState extends State<_PantryTab> {
       ],
     );
   }
-
-  Widget _statBadge(String text, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: .1),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Text(text,
-            style: TextStyle(
-                fontSize: 10.5, fontWeight: FontWeight.w600, color: color)),
-      );
 }
+
+/// 小圆角计数徽标（库存告警卡那三行用）。原来是 `_PantryTabState` 的私有方法，
+/// 头部那组徽标被卡取代后搬到了顶层，免得为一份样式留两个实现。
+Widget _watchBadge(String text, Color color) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .1),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(text,
+          style:
+              TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: color)),
+    );
 
 /// 库存行下面那行小字里的一段（状态 / 保质期 / 存储 / 购入 / 备注）。
 Widget _meta(String text, Color color, BuildContext context) => Text(
@@ -402,7 +505,17 @@ class _PantryRow extends StatelessWidget {
                               : context.zj.amber,
                           context));
                     } else if (exp == 'bad') {
-                      bits.add(_meta('今天到期', context.zj.accent, context));
+                      // 单行分得清就说准话：到期日正好今天 = 「今天到期」，更早 = 「已过期」。
+                      // 卡片与头部徽标说的是总数，一律「已过期」（宁可说重不说轻）。
+                      final d = DateTime.tryParse(item.expireAt ?? '');
+                      final isToday = d != null &&
+                          d.year == now.year &&
+                          d.month == now.month &&
+                          d.day == now.day;
+                      bits.add(_meta(
+                          isToday ? '今天到期' : '已过期',
+                          context.zj.accent,
+                          context));
                     } else if (exp == 'soon') {
                       bits.add(_meta(
                           '${item.expireAt!.substring(5).replaceFirst('-', '/')} 到期',

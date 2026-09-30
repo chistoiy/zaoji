@@ -106,10 +106,31 @@ class RecipeStore extends ChangeNotifier {
     recipes = await _loadAll(db);
     await _loadFavs(db);
     await _loadTheme(db); // R39：主题只在启动时读一次（同步重载不该改这台设备的皮肤）
+    // ★ R47：本机厨房偏好同样必须在 _doInit 里读，不能只挂在 reload()。
+    //   R45 那个洞就是这么来的：冷启动没有增量 → 内存里的偏好全是默认值，
+    //   用户昨天关掉的悬浮窗今天又冒出来。
+    await _loadKitchenPrefs(db);
+    // ★ R47：库存到期提醒的「本机已提醒日」也必须在 _doInit 读——
+    //   它是这台设备的作息事实，冷启动后如果回落到空串，用户会一天里被提醒两次。
+    await _loadExpiryStamp(db);
+    // ★ 同一颗坑第三次：开饭前投待办的「今天已投过的餐次」也要在 _doInit 读。
+    //   只挂在 reload() 的话，冷启动后戳是空的 → 同一天回前台一次就多投一次。
+    await _loadMealStamps(db);
     await _loadMembers(db);
     await _loadAllergenPrefs(db);
     await _loadMenus(db);
     await _loadPrepBoards(db);
+    // ★ R45：这三张表以前**只在 reload() 里被填**，而 reload() 生产路径上只有
+    //   同步引擎在「本轮真有增量」时才调一次（sync_engine.dart 末尾那段）。
+    //   于是冷启动后如果没有增量可同步，_nutritionByRecipe / pantryItems /
+    //   shoppingItems 三张内存表恒空 → 详情页热量卡回落按钮态、列表徽标消失、
+    //   厨房页库存与购物清单显示空态，**而 sqlite 与服务端的数据一行都没丢**。
+    //   症状当时被报成「AI 白算一次」（R45），实际影响面是三条 UI。
+    //   判据见 app/test/cold_start_load_r46_test.dart —— 必须真开第二个 store 实例，
+    //   只断言「库里有行」会假绿（这条已反向验证：摘掉下面三行，测试立刻红）。
+    await _loadNutrition(db);
+    await _loadPantry(db);
+    await _loadShopping(db);
     _reindex();
     notifyListeners();
   }
@@ -908,6 +929,13 @@ class RecipeStore extends ChangeNotifier {
   /// 当前主题 id。默认那套 = [ZaojiTokens.fallback]，读库前也能安全取。
   String themeId = ZaojiTokens.fallback.id;
 
+  /// R47 · 厨房现场偏好（FR-SET-01/02/03）：开饭前提醒与提前量、悬浮窗、震动/声音。
+  /// 与主题同一条立场——**只在启动时读一次**，同步增量不该改这台设备的开关。
+  KitchenPrefs kitchenPrefs = const KitchenPrefs();
+
+  /// 提前量（已夹到合法档）。设置页与开饭前的待办投递都读这个。
+  int get mealLeadMinutes => kitchenPrefs.leadMinutesClamped;
+
   /// 页面取色一律走这个（`StoreScope.of(context).tokens` / `context.zj`）。
   ///
   /// 认不出来的 id 落回默认那套而不是崩：这一列是用户可写的偏好，
@@ -962,6 +990,182 @@ class RecipeStore extends ChangeNotifier {
       'VALUES (?, ?) ON CONFLICT(${cols[0]}) DO UPDATE SET ${cols[1]} = excluded.${cols[1]}',
       variables: [Variable(_themeKey), Variable(jsonEncode(themeId))],
     );
+  }
+
+  // ── R47 · 厨房现场偏好（FR-SET-01/02/03）──────────────────────────────
+  //
+  // 与主题、备菜板同一条立场：**本机偏好、不同步**。
+  // 「这台设备的屏幕该不该亮、该不该震」是两台机器各自的采光与音量环境，
+  // 客厅平板不该把灶台手机的开关顶掉。
+
+  static const _kitchenPrefsKey = 'kitchen_prefs';
+
+  Future<void> _loadKitchenPrefs(ZaojiDb db) async {
+    final cols = kLocalPrefTable.columnNames;
+    final rows = await db
+        .customSelect(
+          'SELECT ${cols[1]} FROM ${kLocalPrefTable.name} WHERE ${cols[0]} = ?',
+          variables: [Variable(_kitchenPrefsKey)],
+        )
+        .get();
+    if (rows.isEmpty) return;
+    kitchenPrefs = KitchenPrefs.decode(rows.first.data[cols[1]]) ?? kitchenPrefs;
+  }
+
+  /// 改厨房偏好：内存态立即生效并通知（开关要有当场反馈），落库异步。
+  ///
+  /// 写库失败静默——最坏是下次启动回到旧值；而「拨了没反应」是当场就能感觉到的。
+  void setKitchenPrefs(KitchenPrefs next) {
+    if (next == kitchenPrefs) return;
+    kitchenPrefs = next;
+    notifyListeners();
+    final db = _db;
+    if (db == null) return;
+    unawaited(_persistKitchenPrefs(db).then((_) {},
+        onError: (Object e) => debugPrint('厨房偏好写库失败：$e')));
+  }
+
+  /// 只改其中一路的便捷入口（设置页每行一个开关）。
+  void updateKitchenPrefs(KitchenPrefs Function(KitchenPrefs) change) =>
+      setKitchenPrefs(change(kitchenPrefs));
+
+  Future<void> _persistKitchenPrefs(ZaojiDb db) {
+    final cols = kLocalPrefTable.columnNames;
+    return db.customInsert(
+      'INSERT INTO ${kLocalPrefTable.name} (${cols.join(', ')}) '
+      'VALUES (?, ?) ON CONFLICT(${cols[0]}) DO UPDATE SET ${cols[1]} = excluded.${cols[1]}',
+      variables: [
+        Variable(_kitchenPrefsKey),
+        Variable(jsonEncode(kitchenPrefs.toJson())),
+      ],
+    );
+  }
+
+  // ── R47 · 库存到期提醒的本机去重戳（FR-PAN-04）──────────────────
+  //
+  // 存的是「这台设备上一次为过期/临期发通知是哪天」（YYYY-MM-DD）。
+  // 为什么算本机事实：提醒的作息是每根设备自己的（平板在客厅、手机在灶台边），
+  // 同步过去只会让一台的打开动作把另一台的提醒机会吃掉——
+  // 与主题、悬浮窗、备菜板同一条立场：落 local_pref、不进同步流。
+  static const _expiryStampKey = 'pantry_expiry_notified_day';
+
+  /// 已提醒日。空串 = 这台设备还没提醒过（新装、或清过数据）。
+  String expiryNotifiedDay = '';
+
+  Future<void> _loadExpiryStamp(ZaojiDb db) async {
+    final cols = kLocalPrefTable.columnNames;
+    final rows = await db
+        .customSelect(
+          'SELECT ${cols[1]} FROM ${kLocalPrefTable.name} WHERE ${cols[0]} = ?',
+          variables: [Variable(_expiryStampKey)],
+        )
+        .get();
+    if (rows.isEmpty) return;
+    // 只认形如 YYYY-MM-DD 的值：手改过或旧包塞了别的东西时保持空（不猜）。
+    final s = '${rows.first.data[cols[1]]}'.trim();
+    if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(s)) expiryNotifiedDay = s;
+  }
+
+  /// 记「这天已经提醒过了」。写失败静默——最坏是明天多提醒一次，
+  /// 而把 App 启动动线挂住是不可接受的（与收藏/主题同款处理）。
+  Future<void> markExpiryNotified(String day) async {
+    expiryNotifiedDay = day;
+    final db = _db;
+    if (db == null) return;
+    final cols = kLocalPrefTable.columnNames;
+    try {
+      await db.customInsert(
+        'INSERT INTO ${kLocalPrefTable.name} (${cols.join(', ')}) '
+        'VALUES (?, ?) ON CONFLICT(${cols[0]}) DO UPDATE SET ${cols[1]} = excluded.${cols[1]}',
+        variables: [Variable(_expiryStampKey), Variable(day)],
+      );
+    } catch (_) {
+      // 本机去重只是「少打扰一次」，不是数据正确性；写不进去就不写。
+    }
+  }
+
+  // ── R47 · 开饭前投待办的本机去重戳（FR-PLAN-09 + FR-SET-01）──────────
+  //
+  // 存的是「这台设备今天为哪几餐投过待办了」，形如 `2026-09-30#晚餐` 的一组键。
+  // 为什么按「餐次」而不是按「天」（与上面那枚库存戳唯一的差别）：
+  // 一天有早中晚三餐，只记一天的话，提醒完早餐就把晚餐的机会也吃掉了。
+  // 为什么仍是本机事实、不进同步流：投不投得出去取决于**这台设备什么时候被打开**，
+  // 与主题、悬浮窗、库存戳同一条立场。
+  static const _mealStampKey = 'meal_reminder_notified';
+
+  /// 只认 `YYYY-MM-DD#非空餐名`：脏值（手改过、旧包写过别的形状）当没有，不猜。
+  static final RegExp _mealStampRe = RegExp(r'^\d{4}-\d{2}-\d{2}#.+$');
+
+  /// 形状对还要**日期真存在**：`2026-13-99#晚餐` 是手改坏的特征，
+  /// 认下来就是往集合里塞一个永远不会再匹配的垃圾键——它不会造成误投，
+  /// 但会把「这台设备到底投过什么」这份取证读数弄脏。
+  /// ★ 不能交给 `DateTime.tryParse`：Dart 的解析器**会把越界分量归一**
+  ///   （`2026-13-99` → 2027-04-09，实测），它不是校验器。所以这里自己按月卡天数。
+  static bool _mealStampValid(String key) {
+    if (!_mealStampRe.hasMatch(key)) return false;
+    final mo = int.parse(key.substring(5, 7));
+    final d = int.parse(key.substring(8, 10));
+    if (mo < 1 || mo > 12 || d < 1) return false;
+    // 「下个月 0 号」= 本月最后一天，让 DateTime 自己去算闰年与大小月。
+    return d <= DateTime(int.parse(key.substring(0, 4)), mo + 1, 0).day;
+  }
+
+  /// 今天已投过的餐次键。空集 = 这台设备还没投过。
+  Set<String> mealReminderNotifiedKeys = {};
+
+  Future<void> _loadMealStamps(ZaojiDb db) async {
+    final cols = kLocalPrefTable.columnNames;
+    final rows = await db
+        .customSelect(
+          'SELECT ${cols[1]} FROM ${kLocalPrefTable.name} WHERE ${cols[0]} = ?',
+          variables: [Variable(_mealStampKey)],
+        )
+        .get();
+    if (rows.isEmpty) return;
+    Object? decoded;
+    try {
+      decoded = jsonDecode('${rows.first.data[cols[1]]}');
+    } catch (_) {
+      return; // 解不开就当没投过（宁可多提醒一次，不要永久静音）
+    }
+    if (decoded is! List) return;
+    mealReminderNotifiedKeys = {
+      for (final e in decoded.map((x) => '$x'))
+        if (_mealStampValid(e)) e,
+    };
+  }
+
+  /// 这一餐今天已经投过了吗。键里带着日期，所以昨天的戳天然不会挡住今天。
+  bool mealReminderNotified(String key) => mealReminderNotifiedKeys.contains(key);
+
+  /// 记「这一餐今天投过了」。
+  ///
+  /// 每次写都只保留与**新键同一天**的旧键：过期的戳留着没有意义，
+  /// 而这样就不用在这里读时钟（日期已经在键里了），也不会一天一天无限涨。
+  /// 写失败静默——本机去重只是「少打扰一次」，不是数据正确性（与库存戳同款处理）。
+  Future<void> markMealReminderNotified(String key) async {
+    if (!_mealStampValid(key)) return;
+    final day = key.substring(0, 10);
+    mealReminderNotifiedKeys = {
+      for (final k in mealReminderNotifiedKeys)
+        if (k.startsWith(day)) k,
+      key,
+    };
+    final db = _db;
+    if (db == null) return;
+    final cols = kLocalPrefTable.columnNames;
+    try {
+      await db.customInsert(
+        'INSERT INTO ${kLocalPrefTable.name} (${cols.join(', ')}) '
+        'VALUES (?, ?) ON CONFLICT(${cols[0]}) DO UPDATE SET ${cols[1]} = excluded.${cols[1]}',
+        variables: [
+          Variable(_mealStampKey),
+          Variable(jsonEncode(mealReminderNotifiedKeys.toList())),
+        ],
+      );
+    } catch (_) {
+      // 落不下去最坏是同一餐多投一次；把 App 的提醒动线挂住才是真问题。
+    }
   }
 
   // ── R44 · AI 执行记录的本机视角（localOnly ai_usage，不走同步）────────

@@ -10,11 +10,12 @@ import 'recipe_list_page.dart';
 /// 主页外壳：底部 5 标签 + 页面栈。
 ///
 /// 结构与原型一致（`TABS` + `.tabbar`）：
-/// 菜谱 / 菜单 / 备菜 / 日历 / 我的。
+/// 菜谱 / 菜单 / 厨房 / 日历 / 我的。
 ///
 /// **R13：「我的」升级为同步设置页**（配对 / 立即同步 / 设备身份），
-/// **R23：「菜单」做实**（餐次卡 / 详情 / 一键备菜），**R24：「日历」做实**（月视图 + 当日记录）；
-/// 备菜 tab 仍是占位（备菜清单挂在每一餐里，从菜单详情进），
+/// **R23：「菜单」做实**（餐次卡 / 详情 / 一键备菜），**R24：「日历」做实**（月视图 + 当日记录），
+/// **R28：第三个标签由「备菜」兑现为「厨房」**（库存 CRUD / 步进器 / 保质期徽标），
+/// **R31：AI 推荐接进厨房页**；备菜板仍挂在每一餐里、从菜单详情进，
 /// 导航结构先立起来（否则主页就缺一块，和高保真对不上），
 /// 又不至于用半成品假数据冒充已实现。
 /// 用 `IndexedStack` 而不是切换路由，是为了**保住列表页的筛选/收藏/滚动位置**——
@@ -31,7 +32,7 @@ class HomeShell extends StatefulWidget {
 
 typedef _TabData = ({IconData icon, IconData activeIcon, String label});
 
-/// 五个标签（原型 `TABS`）。菜谱 / 菜单 / 备菜 / 日历 / 我的。
+/// 五个标签（原型 `TABS`）。菜谱 / 菜单 / 厨房 / 日历 / 我的。
 const List<_TabData> _kTabs = [
   (icon: Icons.menu_book_outlined, activeIcon: Icons.menu_book, label: '菜谱'),
   (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: '菜单'),

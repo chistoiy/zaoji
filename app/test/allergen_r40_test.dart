@@ -2,7 +2,9 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zaoji/data/recipe_store.dart';
+import 'package:zaoji/data/screen_wake.dart';
 import 'package:zaoji/data/store_scope.dart';
+import 'package:zaoji/data/wake_scope.dart';
 import 'package:zaoji/models.dart';
 import 'package:zaoji/ui/cooking_page.dart';
 import 'package:zaoji/ui/members_page.dart';
@@ -38,7 +40,13 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(StoreScope(
       store: store,
-      child: MaterialApp(home: page),
+      // 做菜模式现在要登记屏幕常亮（FR-COOK-09），所以这棵树里必须有 WakeScope。
+      // 这是「页面直挂」的窄 harness，给一个空拨锁的记账本就行——
+      // 两路引用计数那条真逻辑在 wake_r47_test.dart 里从 App 根走。
+      child: WakeScope(
+        wake: ScreenWake(toggle: (_) {}),
+        child: MaterialApp(home: page),
+      ),
     ));
   }
 

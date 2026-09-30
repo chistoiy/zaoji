@@ -6,6 +6,11 @@
          本 App 的同步/媒体/AI 全走网络，这条是发布硬门槛——
          由 test/manifest_guard_test.dart 钉住，发版前再用 aapt dump badging 复核。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- ★ 计时结束要往通知栏发一条（R47 · FR-COOK-14）。Android 13+ 这是**运行时**权限：
+         清单里声明了还不够，得在用户手势里调 requestNotificationsPermission() 才弹系统框。
+         所以界面上「计时结束通知」那一行的措辞跟着授权态走（unknown/granted/denied），
+         由 test/notification_guard_r47_test.dart 钉住「清单里有这条声明」。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="zaoji"
         android:name="${applicationName}"

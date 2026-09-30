@@ -60,6 +60,8 @@ dependencies:
   # 分享存 .txt（R34）：Web 端用 Blob + <a download> 落地文本文件。
   # 只在条件导入的 web 分支里用到，Android 编译路径不带它。
   web: ^1.1.1
+  wakelock_plus: ^1.5.2
+  flutter_local_notifications: ^22.3.1
 
 dev_dependencies:
   flutter_test:

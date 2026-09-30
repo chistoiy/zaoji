@@ -3,13 +3,24 @@ import 'dart:async';
 import 'package:drift/drift.dart' show QueryExecutor;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
+import 'data/alert_scope.dart';
+import 'data/meal_reminder.dart';
+import 'data/timer_alert.dart';
+import 'data/pantry_watch.dart';
 import 'data/recipe_store.dart';
+import 'data/screen_wake.dart';
 import 'data/store_scope.dart';
 import 'data/sync/sync_engine.dart';
 import 'data/sync/sync_prefs.dart';
 import 'data/sync/sync_scope.dart';
 import 'data/sync/token_vault.dart';
+import 'data/timer_board.dart';
+import 'data/timer_scope.dart';
+import 'data/wake_scope.dart';
+import 'ui/timer_overlay.dart';
 import 'theme.dart';
 import 'ui/home_shell.dart';
 import 'ui/members_page.dart';
@@ -31,13 +42,57 @@ void main() {
 }
 
 class ZaojiApp extends StatefulWidget {
-  const ZaojiApp({super.key, this.store, this.executor});
+  const ZaojiApp({
+    super.key,
+    this.store,
+    this.executor,
+    this.timers,
+    this.wake,
+    this.alert,
+    this.pantry,
+    this.meal,
+  });
 
   /// 测试注入完整的 store。生产为 null。
   final RecipeStore? store;
 
   /// 测试注入执行器（常配 `NativeDatabase.memory()`）。生产为 null。
   final QueryExecutor? executor;
+
+  /// R47 · 测试注入**带假时钟的计时台**。
+  ///
+  /// 为什么它要能注入：`testWidgets` 的 FakeAsync 只推 Timer 与 Future，
+  /// **不推 `DateTime.now()`**。所以「球上的读数会随时间变小」这件事
+  /// 在默认注入下永远验不了（`pump(1s)` 后读数是原样的，看着像 bug）。
+  /// 把时钟做成可注入，测试就能真的「拨快 10 分钟」再推一帧。
+  final TimerBoard? timers;
+
+  /// R47 · 测试注入**假拨锁**的常亮记账本（FR-COOK-09）。
+  ///
+  /// 为什么它要能注入：`wakelock_plus` 是静态方法通道调用，widget 测试区里
+  /// 没有插件实现，真调会 `MissingPluginException` 把不相干的用例炸掉；
+  /// 而这一路真正要断的是**命令序列**（谁登记了、第几次真的拨锁）。
+  /// 生产为 null，走真实插件。
+  final ScreenWake? wake;
+
+  /// R47 · 测试注入**假发送**的通知闸门（FR-COOK-14）。
+  ///
+  /// 与 `wake` 同一个理由：插件在测试区没有通道实现，而这一段真正要断的是
+  /// 「没授权一条都不发 / 关掉通知不发 / 声音关掉时 sound=false」这三道闸门。
+  final TimerAlert? alert;
+
+  /// R47 · 测试注入的库存提醒检查器（FR-PAN-04）。
+  ///
+  /// 不注入的话它自己从 store 取库存、从 [alert] 取闸门——真要断的是
+  /// 「同一天第二次打开不再发」「本机通知开关关掉就不发」这两条口径，
+  /// 而那些用假 items/假戳就能测，不必把真库存灌进用例。
+  final PantryWatch? pantry;
+
+  /// R47 · 测试注入的开饭前投待办检查器（FR-PLAN-09 + FR-SET-01）。
+  ///
+  /// 与 [pantry] 同一个理由：真要断的是「进窗口才投、一天每餐一次、开关关掉就不投」
+  /// 这几条口径，用假 menus/假戳就能测，不必把真菜单灌进用例。
+  final MealReminderWatch? meal;
 
   @override
   State<ZaojiApp> createState() => _ZaojiAppState();
@@ -51,6 +106,108 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
   /// 测试注入的 store 走同一条路径。
   SyncEngine? _sync;
   bool _autoSyncScheduled = false;
+
+  /// R47 · 厨房计时台：跨页面活着的多计时器。
+  /// 跟着这棵树创建、跟着这棵树销毁（不做全局单例，理由见 `timer_scope.dart`）；
+  /// 测试可注入带假时钟的板子（理由见 [ZaojiApp.timers] 的头注）。
+  ///
+  /// **震动闸门走 FR-SET-03 的偏好**：用户在设置页关掉「计时结束震动」，
+  /// 到点就真的不震——开关必须是开关，不能只是个装饰。
+  late final TimerBoard _timers = widget.timers ??
+      TimerBoard(vibrate: () {
+        if (!_store.kitchenPrefs.vibrateOn) return false;
+        HapticFeedback.vibrate();
+        return true;
+      });
+
+  /// R47 · 屏幕常亮的记账本（FR-COOK-09）。两路各登记一次：
+  /// `cook` 由做菜模式自己管（进屏 need / 离屏 done），
+  /// `timer` 由这里跟着计时台的状态走——**有在走的表就亮，全停/全关就撤**。
+  /// 为什么不在 UI 里两头拨：那会出现「计时器跑完把灯关了，人还在做菜模式」，
+  /// 引用计数正是为了让谁都不能替对方决定灭屏（见 `screen_wake.dart` 头注）。
+  late final ScreenWake _wake = widget.wake ?? ScreenWake();
+
+  /// R47 · 计时结束的通知闸门（FR-COOK-14）。
+  /// 授权态由它自己管：Android 启动时读得到真值，Web 读不到就保持 unknown，
+  /// 设置页那一行「开启系统通知授权」只在 unknown/denied 时出现（`me_page.dart`）。
+  late final TimerAlert _alert = widget.alert ?? TimerAlert();
+
+  /// 到点的那一批往通知栏发。**先过本机开关**（FR-SET-03 的通知/声音两路），
+  /// 再过 `TimerAlert` 里的授权闸门——两道门各管各的，任何一道关着都不该发出去。
+  void _onTimersFired(List<KitchenTimer> fired) {
+    if (!_store.kitchenPrefs.notifyOn) return;
+    unawaited(_alert.fire(fired, sound: _store.kitchenPrefs.soundOn));
+  }
+
+  /// 插件初始化 + 读授权态。失败只留痕不响：通知发不出去不该让 App 起不来。
+  Future<void> _initAlert() async {
+    try {
+      await TimerAlert.setupPlugin();
+    } catch (_) {
+      // 桌面预览、测试区、以及个别没通道的运行环境都走这里。
+    }
+    await _alert.init();
+    // ★ 库存提醒（FR-PAN-04）等库存表读到位再跑：`_loadPantry` 在 `_doInit` 末尾，
+    //   抢跑的话 pantryItems 还是空的，等于每次冷启动都"没东西可提醒"。
+    try {
+      await _store.ready();
+    } catch (_) {
+      // 库起不来时启动流程自己会报错，这里不该再叠一条异常。
+      return;
+    }
+    await _pantry.checkAndNotify();
+    // ★ 开饭前投待办（FR-PLAN-09）与库存提醒同一个时机：菜单表也已经在 `_doInit` 里读完了。
+    //   两条各管各的闸门，一条被挡不影响另一条。
+    await _meal.checkAndNotify();
+  }
+
+  /// R47 · 库存到期与临期的提醒（FR-PAN-04 的推送时机）。
+  /// 触发点是「打开 App / 回前台」，同一天只发一次（去重戳在 local_pref）。
+  late final PantryWatch _pantry = widget.pantry ??
+      PantryWatch(
+        items: () => _store.pantryItems,
+        alert: _alert,
+        notifyEnabled: () => _store.kitchenPrefs.expiryNotifyOn,
+        lastNotifiedDay: () => _store.expiryNotifiedDay,
+        markNotified: _store.markExpiryNotified,
+      );
+
+  /// R47 · 开饭前把当餐的备菜与制作投进待办（FR-PLAN-09 + FR-SET-01）。
+  ///
+  /// **派生、不建表**（用户拍定的方向）：摘要现算自 `mergeForPrep` 与各道菜的步骤，
+  /// 所以这里一行 schema 都没动，也就不欠「apk 与 exe 同发」。
+  /// 触发点与库存提醒同两处（打开 App / 回前台），后台排程是 M3 的架构账。
+  late final MealReminderWatch _meal = widget.meal ??
+      MealReminderWatch(
+        menus: () => _store.menus,
+        digestOf: (m) => digestOfMenu(_store, m),
+        alert: _alert,
+        // 本机那枚开关（FR-SET-01）；系统授权闸门在 TimerAlert.send 里再过一道。
+        enabled: () => _store.kitchenPrefs.mealReminderOn,
+        leadMinutes: () => _store.kitchenPrefs.mealLeadMinutes,
+        alreadyNotified: _store.mealReminderNotified,
+        markNotified: _store.markMealReminderNotified,
+      );
+
+  void _syncWake() {
+    if (_timers.hasRunning) {
+      _wake.need('timer');
+    } else {
+      _wake.done('timer');
+    }
+  }
+
+  /// 导航器钥匙：悬浮计时球要插在 **root Overlay** 上才能跨路由活着，
+  /// 而 root Overlay 只有拿着这个钥匙才摸得到（`TimerOverlay` 用）。
+  final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
+  late final TimerOverlay _timerOverlay = TimerOverlay(
+    board: _timers,
+    navigatorKey: _navKey,
+    // FR-SET-02：关掉悬浮窗就真的不插 entry（不是「看得见但点不动」的假关闭）。
+    // 监听 store：偏好翻转时球要立刻出现/收掉。
+    visible: () => _store.kitchenPrefs.timerFloatOn,
+    visibilityListenable: _store,
+  );
 
   /// 写入后的 3 秒防抖 timer——连续写入时不打断，而是重置倒计时。
   Timer? _writeDebounce;
@@ -70,6 +227,13 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
     // init 在测试的 FakeAsync 区里被调用并完成——这是刻意的，
     // 在真实区（比如 setUpAll）完成的话，测试区永远等不到它（见 store_scope.dart）。
     _store.init();
+    // 计时台一起步就把「有没有在走的表」翻译成常亮登记（FR-COOK-09 的第二路）。
+    _timers.addListener(_syncWake);
+    _syncWake();
+    // 到点提醒接通知那一路（FR-COOK-14）。写在 initState 而不是构造函数里：
+    // 板子可能是测试注入的（那时它的构造早跑完了），只能事后接。
+    _timers.onFired = _onTimersFired;
+    unawaited(_initAlert());
   }
 
   @override
@@ -85,14 +249,32 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
       _sync?.dispose();
       _store.dispose();
     }
+    // 先摘悬浮球（它往 root Overlay 插 entry），再停心跳。
+    _timerOverlay.detach();
+    // 常亮：先撤掉自己那一路（'timer'），再无条件收干净并关灯——
+    // App 都退了，留着一个不会自己释手的 wakelock 是耗电 bug。
+    _timers.removeListener(_syncWake);
+    _timers.onFired = null;
+    _wake.releaseAll();
+    // 计时台里有周期 Timer：自己创建的才自己关（注入的归测试管，同 store 那条口径）。
+    if (widget.timers == null) _timers.dispose();
+    if (widget.wake == null) _wake.dispose();
+    if (widget.alert == null) _alert.dispose();
     super.dispose();
   }
 
   /// 回前台时拉一次（用户可能在后台期间被别的设备推了数据）。
+  ///
+  /// 顺带把库存提醒也过一遍（FR-PAN-04）：厨房里「切出去看购物 App 再回来」很常见，
+  /// 这一路不重发也是安全的——同一天已经提醒过会被 local_pref 戳挡掉。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _sync != null) {
-      _sync!.syncIfPaired();
+    if (state == AppLifecycleState.resumed) {
+      if (_sync != null) _sync!.syncIfPaired();
+      unawaited(_pantry.checkAndNotify());
+      // 切出去看一眼购物 App 再回来，正好可能已经进了开饭前的窗口。
+      // 会不会重发由本机戳决定（每餐一次），所以这一路是安全的。
+      unawaited(_meal.checkAndNotify());
     }
   }
 
@@ -196,19 +378,35 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
           _autoSyncScheduled = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             sync.syncIfPaired();
+            // 悬浮球挂在 navigator 的 root Overlay 上，第一次 build 之后才存在。
+            // 它自己会跟着计时台开关：没表的时候树上根本不多一个 entry。
+            _timerOverlay.attach();
           });
         }
         return SyncScope(
           engine: sync,
-          child: StoreScope(
-            store: _store,
-            // R39：主题是本机偏好，换它要重建整棵 MaterialApp 才能传到每一页。
-            // 监听 store 而不是另起一个 ValueNotifier——偏好只有一个事实源。
-            child: ListenableBuilder(
-              listenable: _store,
-              builder: (context, _) => MaterialApp(
+          // ★ 计时台挂在 MaterialApp **外面**：弹层与悬浮球都是从 navigator 推出来的路由，
+          //   挂在页面里它们取不到 board（R46 同一条教训）。
+          child: TimerScope(
+            board: _timers,
+            // 常亮记账本与计时台同层：做菜模式是从 navigator 推上来的一屏，
+            // 挂在页面里它取不到（同 TimerScope 那条 R46 教训）。
+            child: WakeScope(
+              wake: _wake,
+              // 通知闸门同样挂 MaterialApp 之上：设置页要点「开启系统通知授权」，
+              // 那是从 navigator 里推出来的页面上做的事。
+              child: AlertScope(
+                alert: _alert,
+                child: StoreScope(
+              store: _store,
+              // R39：主题是本机偏好，换它要重建整棵 MaterialApp 才能传到每一页。
+              // 监听 store 而不是另起一个 ValueNotifier——偏好只有一个事实源。
+              child: ListenableBuilder(
+                listenable: _store,
+                builder: (context, _) => MaterialApp(
               title: '灶记',
               debugShowCheckedModeBanner: false,
+              navigatorKey: _navKey,
               theme: buildZaojiTheme(_store.tokens),
               initialRoute: initialRouteFromUrl(),
               routes: {
@@ -220,6 +418,9 @@ class _ZaojiAppState extends State<ZaojiApp> with WidgetsBindingObserver {
               onGenerateRoute: _generateRoute,
             ),
             ),
+          ),
+          ),
+          ),
           ),
         );
       },

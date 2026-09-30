@@ -1,8 +1,10 @@
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zaoji/data/alert_scope.dart';
 import 'package:zaoji/data/recipe_store.dart';
 import 'package:zaoji/data/store_scope.dart';
+import 'package:zaoji/data/timer_alert.dart';
 import 'package:zaoji/data/sync/sync_engine.dart';
 import 'package:zaoji/data/sync/sync_prefs.dart';
 import 'package:zaoji/data/sync/sync_scope.dart';
@@ -86,9 +88,14 @@ void main() {
         home: SyncScope(
           engine: engine,
           // R22：MePage 多了冲突数徽标（读 store），入口版式要两个 scope 都在。
+          // R47 又多一枚「计时结束通知」开关（读 AlertScope），三个 scope 都得在场——
+          // 少挂一个是响亮报错，不是静默不生效（这条口径见 §7.10）。
           child: StoreScope(
             store: store,
-            child: MePage(defaultServerUrl: presetUrl ?? kDefaultServerUrl),
+            child: AlertScope(
+              alert: TimerAlert(sender: (_) async {}),
+              child: MePage(defaultServerUrl: presetUrl ?? kDefaultServerUrl),
+            ),
           ),
         ),
       ),

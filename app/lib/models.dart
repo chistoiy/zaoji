@@ -224,6 +224,13 @@ class Nutrition {
 
   int get perServingKcalRounded => perServingKcal.round();
   int get totalKcalRounded => totalKcal.round();
+
+  /// R46：来源只有 `ai` / `manual` 两态（需求书 §4.5.7 口径 2）。
+  /// 「手改过的 AI 值」= manual + [NutritionBasis.ai] 里留着原值，**不加第三种枚举**。
+  bool get isManual => source == 'manual';
+
+  /// 手动态卡的副标题来源：份数基数（Q6：默认跟菜谱份数，手改后自己记住）。
+  int get servingsBasisOrFallback => servingsBasis ?? 4;
 }
 
 /// 库存条目（R28，schema 的 pantry_item 表）。
@@ -469,4 +476,112 @@ class NutritionDraft {
         'low' => 0.3,
         _ => null,
       };
+}
+
+/// R47 · 厨房现场偏好（FR-SET-01/02/03）。
+///
+/// 落 local_pref 一行 JSON，**不参与同步**——和主题、备菜板同一立场：
+/// 「这台设备的屏幕该不该亮、该不该震」是每台机器各自的采光与音量环境，
+/// 客厅平板不该把灶台手机的开关顶掉。
+///
+/// 只有真接了线的能力才在这里占一个字段：语音提醒（FR-SET-03 第三路）要 TTS，
+/// 还没实现，所以**故意不留字段**，免得多一个「能打开但什么都不发生」的摆设开关。
+class KitchenPrefs {
+  const KitchenPrefs({
+    this.mealReminderOn = true,
+    this.mealLeadMinutes = 90,
+    this.timerFloatOn = true,
+    this.vibrateOn = true,
+    this.notifyOn = true,
+    this.expiryNotifyOn = true,
+    this.soundOn = true,
+  });
+
+  /// 开饭前提醒总开关（FR-SET-01）。
+  final bool mealReminderOn;
+
+  /// 提前量（分钟）。需求写「1–2 小时」，默认 90 分钟。
+  final int mealLeadMinutes;
+
+  /// 计时器悬浮窗（FR-SET-02）：关掉后点胶囊只起表、不再有跟着走的球。
+  final bool timerFloatOn;
+
+  /// 计时结束震动（FR-SET-03 的一路）。
+  final bool vibrateOn;
+
+  /// 计时结束通知（FR-COOK-14 的那一路）：关掉就不再往通知栏发。
+  final bool notifyOn;
+
+  /// 库存到期与临期的提醒（FR-PAN-04）：关掉后打开 App 不再扫库存发通知。
+  /// 这一路单独有开关是刻意的——它是“不打扰也要能彻底静音”那一类，
+  /// 借计时器那枚开关会串味（用户想关的是到期提醒，不是灶上的到点提醒）。
+  final bool expiryNotifyOn;
+
+  /// 计时结束声音（FR-SET-03 的第二路）：由通知渠道发声。
+  final bool soundOn;
+
+  static const int minLead = 15;
+  static const int maxLead = 240;
+
+  /// 可选的提前量档位（就地一排档，不是「点一下再弹一层」的老规矩）。
+  static const List<int> leadSteps = [30, 45, 60, 90, 120, 180];
+
+  /// 越界一律夹回来而不是抛：这一行是用户可写的偏好，
+  /// 手改过或来自更新版本的旧包，都不该让设置页打不开。
+  int get leadMinutesClamped => mealLeadMinutes.clamp(minLead, maxLead);
+
+  KitchenPrefs copyWith({
+    bool? mealReminderOn,
+    int? mealLeadMinutes,
+    bool? timerFloatOn,
+    bool? vibrateOn,
+    bool? notifyOn,
+    bool? expiryNotifyOn,
+    bool? soundOn,
+  }) =>
+      KitchenPrefs(
+        mealReminderOn: mealReminderOn ?? this.mealReminderOn,
+        mealLeadMinutes: mealLeadMinutes ?? this.mealLeadMinutes,
+        timerFloatOn: timerFloatOn ?? this.timerFloatOn,
+        vibrateOn: vibrateOn ?? this.vibrateOn,
+        notifyOn: notifyOn ?? this.notifyOn,
+        expiryNotifyOn: expiryNotifyOn ?? this.expiryNotifyOn,
+        soundOn: soundOn ?? this.soundOn,
+      );
+
+  Map<String, Object?> toJson() => {
+        'mealReminderOn': mealReminderOn,
+        'mealLeadMinutes': mealLeadMinutes,
+        'timerFloatOn': timerFloatOn,
+        'vibrateOn': vibrateOn,
+        'notifyOn': notifyOn,
+        'expiryNotifyOn': expiryNotifyOn,
+        'soundOn': soundOn,
+      };
+
+  /// 解不出来返回 null，调用方保持原值（与主题同一口径：不猜）。
+  static KitchenPrefs? decode(Object? raw) {
+    if (raw is! String) return null;
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+    Object? d;
+    try {
+      d = jsonDecode(s);
+    } catch (_) {
+      return null;
+    }
+    if (d is! Map) return null;
+    bool b(Object? v, bool fallback) => v is bool ? v : fallback;
+    final lead = d["mealLeadMinutes"];
+    const def = KitchenPrefs();
+    return KitchenPrefs(
+      mealReminderOn: b(d["mealReminderOn"], def.mealReminderOn),
+      mealLeadMinutes: lead is num ? lead.toInt() : def.mealLeadMinutes,
+      timerFloatOn: b(d["timerFloatOn"], def.timerFloatOn),
+      vibrateOn: b(d["vibrateOn"], def.vibrateOn),
+      notifyOn: b(d["notifyOn"], def.notifyOn),
+      expiryNotifyOn: b(d["expiryNotifyOn"], def.expiryNotifyOn),
+      soundOn: b(d["soundOn"], def.soundOn),
+    );
+  }
 }

@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
@@ -44,6 +42,7 @@ class RecipeDetailPage extends StatefulWidget {
 
 class _RecipeDetailPageState extends State<RecipeDetailPage> {
   CookSession? _active;
+  List<CookSession> _history = const [];
   bool _sessionLoadedOnce = false;
 
   @override
@@ -58,8 +57,18 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
   }
 
   Future<void> _loadSession() async {
-    final s = await StoreScope.of(context).activeCookingSession(widget.recipe.id);
-    if (mounted) setState(() => _active = s);
+    final store = StoreScope.of(context);
+    // 做过记录（FR-REC-13）与续做横幅同源：都在这一次刷新里取，
+    // 做完菜回到详情页时两者一起变新，不各刷一次。
+    final both = await Future.wait([
+      store.activeCookingSession(widget.recipe.id),
+      store.cookSessions(widget.recipe.id),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _active = both[0] as CookSession?;
+      _history = both[1] as List<CookSession>;
+    });
   }
 
   Future<void> _cook(Recipe recipe) async {
@@ -265,9 +274,19 @@ class _RecipeDetailPageState extends State<RecipeDetailPage> {
                   text: recipe.steps[i].text,
                   images: recipe.steps[i].images,
                 ),
+              const SizedBox(height: 26),
+              // FR-REC-13 · 原型 sec 05「每次做的时间」：次数之外还要看得见每次的时刻，
+              // 不然「上周做过一次」这种判断只能靠记忆。
+              _SectionTitle(
+                num: '03',
+                title: '每次做的时间',
+                trailing: _history.isEmpty ? null : '最近 ${_history.length} 次',
+              ),
+              const SizedBox(height: 10),
+              _CookHistory(sessions: _history),
               if (recipe.notes.trim().isNotEmpty) ...[
                 const SizedBox(height: 26),
-                const _SectionTitle(num: '03', title: '注意'),
+                const _SectionTitle(num: '04', title: '注意'),
                 const SizedBox(height: 10),
                 _Notes(text: recipe.notes),
               ],
@@ -405,9 +424,18 @@ class _ResumeBanner extends StatelessWidget {
 
 /// R27 · 热量区（FR-AI-20~28 + FR-REC-22/23）。
 ///
-/// 三种形态：**有数据** → 结果卡（AI 估算，仅供参考 + 模型 + 把握度 + 免责）；
-/// **没数据** → 「估算热量」入口按钮——入口**恒定显示**，配没配 AI 都在，
-/// 未配置时点它引导去配置页（一个默认隐藏的能力等于不存在）。
+/// **R46 补上的是「手」——数据层从 R27 起就能写任意草稿，但入口只有一个：
+/// AI 回调里的那次 `saveNutrition`。** 于是 FR-AI-24（结果可手动编辑）与
+/// 验收 A6 一直不成立：数值没处填、AI 结果改不动、份数改了不折算。现在：
+///
+/// - **没数据**：两枚入口并排——「估算热量」+「手动填写热量」。手填入口**恒在**，
+///   未配置 AI、能力关着、服务端不在线都能填（FR-AI-69）。估算那枚仍按 FR-AI-10
+///   带「未配置」徽记，配与不配布局不跳版。
+/// - **有数据**：AI 与手动态是**同一张卡的两种状态**，只换来源标、副标题、免责行
+///   与第三枚按钮；手动态不挂「AI 估算，仅供参考」——数值是你自己填的，
+///   再挂 AI 免责反而误导（Q4）。
+/// - **看依据**：逐食材贡献 + 手改过的那版留着的 **AI 原值两段对照**（FR-AI-71）。
+///   这一段以前只在 models 注释里被提到过，UI 从来没做。
 class _NutritionBlock extends StatefulWidget {
   const _NutritionBlock({required this.recipe});
 
@@ -419,6 +447,26 @@ class _NutritionBlock extends StatefulWidget {
 
 class _NutritionBlockState extends State<_NutritionBlock> {
   bool _busy = false;
+
+  /// R46：打开手填/二次编辑弹层。保存动作在弹层里直接写库，
+  /// 提示条**等弹层关掉之后**再挂——模态弹层压着页面 Scaffold，
+  /// 在弹层里 showSnackBar 是看不见的（R44 那批记过这条框架陷阱）。
+  Future<void> _openEdit() async {
+    final saved = await _NutritionEditSheet.show(context, widget.recipe);
+    if (saved != true || !mounted) return;
+    final n = StoreScope.of(context).nutritionFor(widget.recipe.id);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(n == null
+          ? '已保存'
+          : '已保存 · 每份 ≈ ${n.perServingKcalRounded} 千卡，来源：${n.isManual ? '手动填写' : 'AI 估算'}'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  /// R46：看依据（逐食材贡献 + AI 原值对照）。
+  Future<void> _openBasis(Nutrition n) async {
+    await _NutritionBasisSheet.show(context, widget.recipe, n);
+  }
 
   Future<void> _estimate() async {
     final store = StoreScope.of(context);
@@ -485,7 +533,14 @@ class _NutritionBlockState extends State<_NutritionBlock> {
           proteinG: d(n['protein_g']).toDouble(),
           fatG: d(n['fat_g']).toDouble(),
           carbG: d(n['carb_g']).toDouble(),
-          basisJson: jsonEncode(n['per_ingredient'] ?? const []),
+          // R46：依据统一走 NutritionBasis 编码（对象形状 {items, ai}），
+          // 解码兼容 R27 那代存下来的**纯数组**老行——同步过来的数据不用迁。
+          basisJson: NutritionBasis(
+            items: [
+              for (final e in (n['per_ingredient'] as List? ?? const []))
+                if (e is Map) e.cast<String, Object?>()
+            ],
+          ).encode(),
           confidence:
               NutritionDraft.confidenceFromWire('${n['confidence']}'),
           source: 'ai',
@@ -528,55 +583,86 @@ class _NutritionBlockState extends State<_NutritionBlock> {
     if (n == null) {
       final unconfigured =
           engine?.aiStatusCache != null && engine!.aiStatusCache!['configured'] != true;
-      return OutlinedButton.icon(
-        key: const ValueKey('ai-calories-entry'),
-        onPressed: _busy ? null : _estimate,
-        icon: _busy
-            ? SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: context.zj.ai))
-            : Icon(Icons.auto_awesome, size: 16, color: context.zj.ai),
-        label: Text(
-          _busy
-              ? '正在估算…'
-              : unconfigured
-                  ? '估算热量（未配置）'
-                  : '估算热量',
-          style: TextStyle(fontSize: 13, color: context.zj.ai),
-        ),
-        style: OutlinedButton.styleFrom(
-          side: BorderSide(color: context.zj.aiBg),
-          backgroundColor: context.zj.aiBg,
-        ),
+      // 没算过：只显示入口，绝不画灰色占位数字（FR-AI-27）。
+      // 但手填入口**恒在**——FR-AI-69：没配 AI 的人不该被挡在热量之外。
+      return Wrap(
+        key: const ValueKey('nutrition-entries'),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton.icon(
+            key: const ValueKey('ai-calories-entry'),
+            onPressed: _busy ? null : _estimate,
+            icon: _busy
+                ? SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: context.zj.ai))
+                : Icon(Icons.auto_awesome, size: 16, color: context.zj.ai),
+            label: Text(
+              _busy
+                  ? '正在估算…'
+                  : unconfigured
+                      ? '估算热量（未配置）'
+                      : '估算热量',
+              style: TextStyle(fontSize: 13, color: context.zj.ai),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: context.zj.aiBg),
+              backgroundColor: context.zj.aiBg,
+            ),
+          ),
+          OutlinedButton.icon(
+            key: const ValueKey('nutri-manual-entry'),
+            onPressed: _busy ? null : _openEdit,
+            icon: Icon(Icons.edit_outlined, size: 16, color: context.zj.ink2),
+            label: Text('手动填写热量',
+                style: TextStyle(fontSize: 13, color: context.zj.ink2)),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: context.zj.line),
+            ),
+          ),
+        ],
       );
     }
 
+    final basis = NutritionBasis.decode(n.basisJson);
+    final echo = basis.ai;
+
     return Container(
-      key: const ValueKey('nutrition-card'),
+      key: ValueKey(n.isManual ? 'nutrition-card-manual' : 'nutrition-card'),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: context.zj.surface,
         borderRadius: BorderRadius.circular(ZaojiRadius.lg),
-        border: Border.all(color: context.zj.aiBg),
+        border: Border.all(color: n.isManual ? context.zj.line : context.zj.aiBg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.auto_awesome, size: 14, color: context.zj.ai),
+              Icon(
+                  n.isManual
+                      ? Icons.edit_outlined
+                      : Icons.auto_awesome, // 手动态用笔，不用星星（NFR-UX-03：不只靠颜色）
+                  size: 14,
+                  color: n.isManual ? context.zj.ink2 : context.zj.ai),
               const SizedBox(width: 6),
-              Text('AI 估算',
+              Text(n.isManual ? '手动填写' : 'AI 估算',
                   style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                      color: context.zj.ai)),
+                      color: n.isManual ? context.zj.ink2 : context.zj.ai)),
               const Spacer(),
-              Text('把握度 ${n.confidenceLabel}',
-                  style: TextStyle(
-                      fontSize: 11, color: context.zj.muted)),
+              // 手动态没有「把握度」这个概念——它是我们自己的数；改成写清按几人份算的
+              Text(
+                  n.isManual
+                      ? '按 ${n.servingsBasisOrFallback} 人份'
+                      : '把握度 ${n.confidenceLabel}',
+                  key: const ValueKey('nutri-source-sub'),
+                  style: TextStyle(fontSize: 11, color: context.zj.muted)),
             ],
           ),
           const SizedBox(height: 8),
@@ -587,7 +673,7 @@ class _NutritionBlockState extends State<_NutritionBlock> {
                   style: TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w700,
-                      color: context.zj.ai,
+                      color: n.isManual ? context.zj.ink : context.zj.ai,
                       height: 1)),
               const SizedBox(width: 8),
               // Flexible：数字与说明文字共处一 Row，窄屏上必须让文字换行
@@ -602,6 +688,21 @@ class _NutritionBlockState extends State<_NutritionBlock> {
                   ),
                 ),
               ),
+              if (n.isManual && echo?.perServingKcal != null)
+                Flexible(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 3, left: 6),
+                    child: Text(
+                      '· AI 原估 ${echo!.perServingKcal!.round()}',
+                      key: const ValueKey('nutri-ai-echo'),
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: context.zj.muted,
+                          decoration: TextDecoration.lineThrough,
+                          decorationColor: context.zj.line),
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 10),
@@ -631,23 +732,484 @@ class _NutritionBlockState extends State<_NutritionBlock> {
             ],
           ),
           const SizedBox(height: 10),
+          // Q4 口径：手填的数不该再挂 AI 免责——数值是你自己填的，
+          // 挂着「AI 估算，仅供参考」反而把责任指错了地方。
           Text(
-            '${n.source == 'ai' && n.model != null && n.model!.isNotEmpty ? '${n.model} · ' : ''}'
-            '来源：${n.source == 'ai' ? 'AI 估算' : '手动填写'}。'
-            'AI 估算，仅供参考，不能用于医疗或饮食处方。',
+            n.isManual
+                ? (echo != null
+                    ? '来源：手动填写 · AI 原值留在「看依据」里对照'
+                    : '来源：手动填写')
+                : '${n.model != null && n.model!.isNotEmpty ? '${n.model} · ' : ''}'
+                    '来源：AI 估算。AI 估算，仅供参考，不能用于医疗或饮食处方。',
             style:
                 TextStyle(fontSize: 10.5, color: context.zj.muted, height: 1.6),
           ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: _busy ? null : _estimate,
-              child: Text(_busy ? '正在重算…' : '重新估算',
-                  style: TextStyle(
-                      fontSize: 12, color: context.zj.ai)),
-            ),
+          Wrap(
+            spacing: 4,
+            runSpacing: 0,
+            alignment: WrapAlignment.end,
+            children: [
+              TextButton(
+                key: const ValueKey('nutri-basis-btn'),
+                onPressed: () => _openBasis(n),
+                child: Text('看依据',
+                    style: TextStyle(fontSize: 12, color: context.zj.ink2)),
+              ),
+              TextButton(
+                key: const ValueKey('nutri-edit-btn'),
+                onPressed: _busy ? null : _openEdit,
+                child: Text('手动改',
+                    style: TextStyle(fontSize: 12, color: context.zj.ink2)),
+              ),
+              TextButton(
+                key: const ValueKey('nutri-calc-btn'),
+                onPressed: _busy ? null : _estimate,
+                child: Text(_busy
+                    ? '正在重算…'
+                    : n.isManual
+                        ? '用 AI 重算'
+                        : '重新估算',
+                    style: TextStyle(fontSize: 12, color: context.zj.ai)),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// R46 · 热量手填 / 二次编辑弹层（FR-AI-69~74）。
+///
+/// 三条实现约束都在这里落地：
+/// ① **换算只在 [nutriApply]（shared）里做**——三个框互相推导，Web 与 Android
+///    不可能算出两个数（NFR-MNT-01）；
+/// ② 校验不过**用弹层内的行内提示**，不用 SnackBar：模态弹层压着页面 Scaffold，
+///    那条提示挂上去看不见（R44 那批踩过的框架陷阱）；
+/// ③ 超限值是**点保存那一刻**才点亮确认条——填上就拦等于把二次确认做成一次。
+///
+/// 返回 true = 已保存；null / false = 取消或没动。
+class _NutritionEditSheet extends StatefulWidget {
+  const _NutritionEditSheet({required this.recipe, required this.initial});
+
+  final Recipe recipe;
+  final Nutrition? initial;
+
+  static Future<bool?> show(BuildContext context, Recipe recipe) async {
+    final store = StoreScope.of(context);
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: context.zj.paper,
+      shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(ZaojiRadius.xl))),
+      builder: (sheetContext) => Padding(
+        // 弹层里的输入框必须自己吃键盘高度（Flutter 3.38 起 showModalBottomSheet
+        // 不再自动抬升），否则「每份千卡」那个框在手机上被键盘盖住。
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
+        child: _NutritionEditSheet(
+            recipe: recipe, initial: store.nutritionFor(recipe.id)),
+      ),
+    );
+    return saved;
+  }
+
+  @override
+  State<_NutritionEditSheet> createState() => _NutritionEditSheetState();
+}
+
+class _NutritionEditSheetState extends State<_NutritionEditSheet> {
+  late NutritionCalc _calc;
+  late final TextEditingController _per;
+  late final TextEditingController _total;
+  late final TextEditingController _serv;
+  late final TextEditingController _p;
+  late final TextEditingController _f;
+  late final TextEditingController _c;
+
+  /// 二次确认已点亮（每份超 [kNutritionAbsurdPerServing]）。
+  bool _armed = false;
+
+  /// 校验/提示的行内文案（不用 SnackBar，见类注释②）。
+  String? _hint;
+
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final n = widget.initial;
+    // Q6：基数默认跟菜谱份数；已有行记过自己的基数就用自己的（手改后独立记住）
+    final serv = n?.servingsBasis ?? widget.recipe.servings;
+    _calc = NutritionCalc(
+      perServingKcal: n?.perServingKcal,
+      totalKcal: n?.totalKcal,
+      servings: nutriSanitizeServings(serv, fallback: 4),
+    );
+    String s(double? v) => v == null ? '' : '${v.round()}';
+    _per = TextEditingController(text: s(_calc.perServingKcal));
+    _total = TextEditingController(text: s(_calc.totalKcal));
+    _serv = TextEditingController(text: '${_calc.servings}');
+    _p = TextEditingController(text: s(n?.proteinG));
+    _f = TextEditingController(text: s(n?.fatG));
+    _c = TextEditingController(text: s(n?.carbG));
+  }
+
+  @override
+  void dispose() {
+    for (final t in [_per, _total, _serv, _p, _f, _c]) {
+      t.dispose();
+    }
+    super.dispose();
+  }
+
+  /// 把换算结果写回另外两个框。程序改 `controller.text` **不会**触发 onChanged，
+  /// 所以这里不存在回灌递归，不需要防抖标志（一开始写了个 _syncing 是多余的，已摘）。
+  void _apply(NutritionField field, String raw) {
+    final next = nutriApply(_calc, field, raw);
+    setState(() {
+      _calc = next;
+      _per.text = next.perServingKcal == null ? '' : '${next.perServingKcal!.round()}';
+      _total.text = next.totalKcal == null ? '' : '${next.totalKcal!.round()}';
+      _serv.text = '${next.servings}';
+      // 数值改回正常范围，确认条自己收回
+      if (_armed && !(next.perServingKcal != null && next.perServingKcal! > kNutritionAbsurdPerServing)) {
+        _armed = false;
+      }
+      _hint = null;
+    });
+  }
+
+  Widget _field(String label, TextEditingController t, ValueChanged<String>? onChanged,
+      {String? key, TextInputType? input}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: SizedBox(
+        height: 58,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label,
+                style: TextStyle(fontSize: 11, color: context.zj.muted)),
+            Expanded(
+              child: TextField(
+                key: key == null ? null : ValueKey(key),
+                controller: t,
+                onChanged: onChanged,
+                keyboardType: input ?? TextInputType.number,
+                textAlign: TextAlign.start,
+                style: const TextStyle(fontSize: 15),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _save() async {
+    final check = nutriCheck(_calc, armed: _armed);
+    if (check == NutritionCheck.needPerServing) {
+      setState(() => _hint = '每份千卡得填个正数');
+      return;
+    }
+    if (check == NutritionCheck.needConfirm) {
+      setState(() {
+        _armed = true;
+        _hint = null;
+      });
+      return;
+    }
+    final store = StoreScope.of(context);
+    if (_saving) return;
+    setState(() => _saving = true);
+    final prev = widget.initial;
+    final prevBasis = NutritionBasis.decode(prev?.basisJson);
+    final echo = nutriEchoFor(prevBasis,
+        prevSource: prev?.source,
+        prevPer: prev?.perServingKcal,
+        prevTotal: prev?.totalKcal,
+        prevModel: prev?.model,
+        prevConfidence: prev?.confidence);
+    double? num(TextEditingController t) {
+      final v = t.text.trim();
+      if (v.isEmpty) return null;
+      return double.tryParse(v);
+    }
+
+    await store.saveNutrition(
+      widget.recipe.id,
+      NutritionDraft(
+        perServingKcal: _calc.perServingKcal ?? 0,
+        totalKcal: _calc.totalKcal ?? _calc.perServingKcal! * _calc.servings,
+        proteinG: num(_p),
+        fatG: num(_f),
+        carbG: num(_c),
+        // 逐项依据原样带走，另存一份 AI 原值留痕（FR-AI-71）
+        basisJson: NutritionBasis(items: prevBasis.items, ai: echo).encode(),
+        confidence: null, // 手填没有「把握度」
+        source: 'manual',
+        model: prev?.model,
+        servingsBasis: _calc.servings,
+      ),
+    );
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasEcho = widget.initial != null &&
+        widget.initial!.source == 'ai';
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 6, 20, 18),
+        child: Column(
+          key: const ValueKey('nutri-edit-sheet'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.initial == null ? '手动填写热量' : '调整热量',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            // 即时预览：空值画「—」而不是 0——画 0 会让人以为已经填过了。
+            // key 挂在 Text 上（不是外壳 Container）：测试与走查都按文本取数。
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                  color: context.zj.surface,
+                  borderRadius: BorderRadius.circular(10)),
+              child: Text(
+                key: const ValueKey('nutri-preview'),
+                '每份 ≈ ${_calc.perServingKcal == null ? '—' : _calc.perServingKcal!.round()} 千卡'
+                '　·　整锅约 ${_calc.totalKcal == null ? '—' : _calc.totalKcal!.round()} 千卡'
+                '　·　按 ${_calc.servings} 人份',
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                    child: _field('每份（千卡）', _per,
+                        (v) => _apply(NutritionField.per, v),
+                        key: 'nutri-per')),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: _field('整锅（千卡）', _total,
+                        (v) => _apply(NutritionField.total, v),
+                        key: 'nutri-total')),
+              ],
+            ),
+            _field('份数基数', _serv, (v) => _apply(NutritionField.servings, v),
+                key: 'nutri-serv'),
+            Row(
+              children: [
+                Expanded(child: _field('蛋白质 g', _p, null, key: 'nutri-p')),
+                const SizedBox(width: 10),
+                Expanded(child: _field('脂肪 g', _f, null, key: 'nutri-f')),
+                const SizedBox(width: 10),
+                Expanded(child: _field('碳水 g', _c, null, key: 'nutri-c')),
+              ],
+            ),
+            if (hasEcho)
+              Text(
+                'AI 原估 每份 ${widget.initial!.perServingKcal.round()} 千卡会留在「看依据」里对照。',
+                style: TextStyle(fontSize: 11, color: context.zj.muted, height: 1.6),
+              ),
+            if (_hint != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(_hint!,
+                    key: const ValueKey('nutri-hint'),
+                    style: TextStyle(fontSize: 12, color: context.zj.warn)),
+              ),
+            if (_armed)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Container(
+                  key: const ValueKey('nutri-confirm-bar'),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                      color: context.zj.aiBg,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '每份 ${_calc.perServingKcal?.round()} 千卡，超过 ${kNutritionAbsurdPerServing.round()} 的上限线——确定是这个数？',
+                          style: TextStyle(fontSize: 11.5, color: context.zj.ink2),
+                        ),
+                      ),
+                      TextButton(
+                        // 与底部那枚主保存**分开键名**：确认条出现时两枚同时在树上，
+                        // 撞 key 会让 find.byKey 命中两个（测试直接崩）。
+                        key: const ValueKey('nutri-save-confirm'),
+                        onPressed: _saving ? null : _save,
+                        child: const Text('确定保存', style: TextStyle(fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('取消', style: TextStyle(fontSize: 13)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton(
+                    key: const ValueKey('nutri-save'),
+                    onPressed: _saving ? null : _save,
+                    child: Text(_saving ? '正在保存…' : '保存',
+                        style: const TextStyle(fontSize: 13)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// R46 · 看依据：逐食材贡献 + 手改过的那版留着的 **AI 原值两段对照**（FR-AI-71）。
+///
+/// 这一段 models 的注释里早就写了「UI 只在「看依据」里展开」，但实现层从来没做——
+/// 手改之后如果没有这里，AI 原值就真的只剩一个划线数字，对不了账。
+class _NutritionBasisSheet extends StatelessWidget {
+  const _NutritionBasisSheet({required this.recipe, required this.n});
+
+  final Recipe recipe;
+  final Nutrition n;
+
+  static Future<void> show(BuildContext context, Recipe recipe, Nutrition n) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: context.zj.paper,
+      shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(ZaojiRadius.xl))),
+      builder: (_) => _NutritionBasisSheet(recipe: recipe, n: n),
+    );
+  }
+
+  Widget _row(BuildContext context, String k, String v,
+      {bool strong = false, Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(
+              child: Text(k,
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: context.zj.muted,
+                      fontWeight: strong ? FontWeight.w700 : FontWeight.normal))),
+          Text(v,
+              style: TextStyle(
+                  fontSize: 12.5,
+                  color: color ?? context.zj.ink,
+                  fontWeight: strong ? FontWeight.w700 : FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final basis = NutritionBasis.decode(n.basisJson);
+    final echo = basis.ai;
+    return SafeArea(
+      child: SingleChildScrollView(
+        key: const ValueKey('nutri-basis-sheet'),
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('热量是怎么算出来的 · ${recipe.name}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 12),
+            if (n.isManual && echo != null && echo.perServingKcal != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: context.zj.surface,
+                    borderRadius: BorderRadius.circular(12)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _row(context, 'AI 原估 · 每份',
+                        '≈ ${echo.perServingKcal!.round()} 千卡',
+                        color: context.zj.muted),
+                    if (echo.totalKcal != null)
+                      _row(context, 'AI 原估 · 整锅', '≈ ${echo.totalKcal!.round()} 千卡',
+                          color: context.zj.muted),
+                    if (echo.model != null && echo.model!.isNotEmpty)
+                      _row(context, '出自', echo.model!),
+                    Divider(color: context.zj.line, height: 18),
+                    _row(context, '现在生效 · 每份（手填）',
+                        '≈ ${n.perServingKcalRounded} 千卡',
+                        strong: true, color: context.zj.accent),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+            if (basis.items.isEmpty)
+              Text(
+                n.isManual ? '逐食材贡献只有 AI 估的那一版才有，手填的数不带这一项。' : '这次估算没给出逐食材贡献。',
+                style: TextStyle(fontSize: 12, color: context.zj.muted, height: 1.6),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: context.zj.surface,
+                    borderRadius: BorderRadius.circular(12)),
+                child: Column(
+                  children: [
+                    for (final it in basis.items)
+                      _row(context, 
+                          [
+                            NutritionBasis.itemName(it),
+                            if (NutritionBasis.itemQty(it).isNotEmpty)
+                              NutritionBasis.itemQty(it)
+                          ].join(' · '),
+                          '≈ ${(NutritionBasis.itemKcal(it) ?? 0).round()} 千卡'),
+                    Divider(color: context.zj.line, height: 18),
+                    _row(context, '合计（整锅）', '≈ ${n.totalKcalRounded} 千卡'),
+                    _row(context, '每份（按 ${n.servingsBasisOrFallback} 人份）',
+                        '≈ ${n.perServingKcalRounded} 千卡',
+                        strong: true,
+                        color: n.isManual ? context.zj.accent : context.zj.ai),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('知道了', style: TextStyle(fontSize: 13)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1000,7 +1562,7 @@ class _StepRow extends StatelessWidget {
                     children: buildTimeCapsuleSpans(
                       text,
                       style: bodyStyle,
-                      onTap: (hit) => showTimerSheet(
+                      onTap: (hit) => startKitchenTimer(
                         context,
                         sourceText: hit.text,
                         seconds: hit.suggestedSeconds,
@@ -1051,6 +1613,71 @@ class _StepRow extends StatelessWidget {
         child: InteractiveViewer(
           child: CoverImage(sha: sha, fit: BoxFit.contain),
         ),
+      ),
+    );
+  }
+}
+
+/// 每次做的时间（FR-REC-13 · 原型 `sec 05` 的 `.spec` 行）。
+///
+/// 数据来自 `cookSessions()`：只有 `finished_at` 非空、且没进回收站的会话，
+/// 按完成时刻倒序。所以这里**不显示进行中**的那次——它归顶部续做横幅管，
+/// 两处各说各的，不会同一件事出现两行。
+class _CookHistory extends StatelessWidget {
+  const _CookHistory({required this.sessions});
+
+  final List<CookSession> sessions;
+
+  static String _two(int v) => v.toString().padLeft(2, '0');
+
+  /// `09/14 18:30` —— 年份留给日历页，这一屏只关心「什么时候做的」。
+  static String stamp(DateTime d) =>
+      '${_two(d.month)}/${_two(d.day)} ${_two(d.hour)}:${_two(d.minute)}';
+
+  @override
+  Widget build(BuildContext context) {
+    if (sessions.isEmpty) {
+      // 与原型一致的空态：不藏这一块，否则用户不知道「做过」会被记下来。
+      return Text(
+        '还没有做过这道菜，做一次后会自动记录。',
+        style: TextStyle(fontSize: 12.5, color: context.zj.muted),
+      );
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+      decoration: BoxDecoration(
+        color: context.zj.paper2,
+        borderRadius: BorderRadius.circular(ZaojiRadius.md),
+        border: Border.all(color: context.zj.lineSoft),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < sessions.length; i++)
+            Padding(
+              key: ValueKey('cook-history-${sessions[i].id}'),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      stamp(sessions[i].finishedAt ?? sessions[i].startedAt),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: context.zj.ink,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                  Text(
+                    // 倒序列表里的「第 N 次」要从末尾数回来
+                    '第 ${sessions.length - i} 次',
+                    style: TextStyle(fontSize: 12.5, color: context.zj.muted),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

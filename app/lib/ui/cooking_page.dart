@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:zaoji_shared/zaoji_shared.dart';
 
+import '../data/screen_wake.dart';
 import '../data/store_scope.dart';
 import '../data/sync/sync_engine.dart' show MediaWidth;
+import '../data/wake_scope.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/allergen_bits.dart';
@@ -71,6 +73,24 @@ class _CookingPageState extends State<CookingPage> {
   late int _step = widget.initialStep.clamp(0, _total - 1);
   late final Set<int> _checked = {...widget.initialChecked};
   bool _finishing = false;
+
+  /// FR-COOK-09：做菜模式屏幕常亮。登记与撤手都走 [ScreenWake] 的引用计数，
+  /// 所以计时器先跑完不会把正在盯步骤的屏幕关掉。
+  ScreenWake? _wake;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 不在 initState 取：InheritedWidget 要到 didChangeDependencies 才保证可读。
+    _wake ??= WakeScope.of(context)..need('cook');
+  }
+
+  @override
+  void dispose() {
+    // 离开这一屏（含返回、含做完）一定要撤手，否则锁会一直挂着耗电。
+    _wake?.done('cook');
+    super.dispose();
+  }
 
   int get _total => widget.recipe.steps.length;
   bool get _isLast => _step >= _total - 1;
@@ -165,7 +185,7 @@ class _CookingPageState extends State<CookingPage> {
                         color: context.zj.ink,
                         fontWeight: FontWeight.w500,
                       ),
-                      onTap: (hit) => showTimerSheet(
+                      onTap: (hit) => startKitchenTimer(
                         context,
                         sourceText: hit.text,
                         seconds: hit.suggestedSeconds,
