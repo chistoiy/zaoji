@@ -318,7 +318,7 @@ void main() {
       await shut();
     });
 
-    testWidgets('★ 「看更早」把窗口往前推一页，120 天前那条才现身', (tester) async {
+    testWidgets('★ 「看更早」往前追加一页，120 天前那条才现身', (tester) async {
       await boot();
       final r = await makeRecipe('时间线远古菜');
       await seedSession('c1', r.id, iso(-120, '18:00'), iso(-120, '18:10'));
@@ -334,6 +334,62 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(ValueKey('tl-day-${day(-120)}')), findsOneWidget,
           reason: '推一页之后那一天的日头要出现（日头文字是 12/31 这种格式，所以按 key 找）');
+      await shut();
+    });
+
+    testWidgets('★ 点了要有反应：翻到新的一页，底部报"已看到最近 180 天"', (tester) async {
+      // 真机走查抓到的：这一页没有更早的记录时，点「看更早」什么都不变——
+      // 控件点了必须有看得见的变化，所以覆盖范围本身要上屏。
+      await boot();
+      final r = await makeRecipe('时间线翻页读数菜');
+      await seedSession('c1', r.id, iso(-120, '18:00'), iso(-120, '18:10'));
+      await pumpApp(tester);
+      await tester.tap(find.text('菜单'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('menu-timeline')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tl-span')), findsNothing,
+          reason: '第一页不显示读数（列表本身就是近 90 天）');
+
+      await tester.tap(find.byKey(const ValueKey('tl-earlier')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tl-span')), findsOneWidget);
+      expect(find.text('已看到最近 180 天'), findsOneWidget);
+      await shut();
+    });
+
+    testWidgets('★ 往前翻没翻到东西：说实话「再往前 90 天没有记录」，按钮还在', (tester) async {
+      await boot();
+      final r = await makeRecipe('时间线只有今天菜');
+      await seedSession('c1', r.id, iso(0, '08:00'), iso(0, '08:10'));
+      await pumpApp(tester);
+      await tester.tap(find.text('菜单'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('menu-timeline')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('tl-earlier')));
+      await tester.pumpAndSettle();
+      expect(find.text('再往前 90 天没有记录'), findsOneWidget,
+          reason: '这一页确实没扫到东西——不能报"已看到最近 180 天"冒充有进展');
+      expect(find.byKey(const ValueKey('tl-earlier')), findsOneWidget,
+          reason: '更早的历史还在，只是这一页没有，按钮不许消失');
+      // 今天那条不能因为翻页而消失：窗口是**追加**，不是平移
+      expect(find.byKey(ValueKey('tl-day-${day(0)}')), findsOneWidget);
+      await shut();
+    });
+
+    testWidgets('★ 挂了一夜的会话写「16 小时 6 分」，不是 966 分钟', (tester) async {
+      await boot();
+      final r = await makeRecipe('时间线过夜菜');
+      await seedSession('c1', r.id, iso(-1, '15:14'), iso(0, '07:20'));
+      await pumpApp(tester);
+      await tester.tap(find.text('菜单'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('menu-timeline')));
+      await tester.pumpAndSettle();
+      expect(find.text('实际耗时 16 小时 6 分 · 第 1 次'), findsOneWidget,
+          reason: '数字是真的，但 966 分钟没人读得动');
       await shut();
     });
   });

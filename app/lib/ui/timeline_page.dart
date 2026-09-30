@@ -43,6 +43,13 @@ class _TimelinePageState extends State<TimelinePage> {
   RecipeStore? _listenedStore;
   bool _busy = false;
 
+  /// 有一趟查询在跑时又翻了页 / store 又通知了一次：这一趟跑完要补一趟，
+  /// 否则「看更早」点了会被静默吞掉（真机上就是这么"没反应"的）。
+  bool _pending = false;
+
+  /// 上一次往前推**没有**带来任何新记录 → 底部那行说实话，不假装到底了。
+  bool _noEarlier = false;
+
   static String _iso(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
@@ -65,9 +72,15 @@ class _TimelinePageState extends State<TimelinePage> {
   }
 
   /// 与日历页同一个"一次性闩"写法：store 每次通知都要重查，
-  /// 但查询没回来之前再通知一次不该叠第二趟。
+  /// 但查询没回来之前再通知一次不该叠第二趟——而是**记一笔，跑完补一趟**。
+  ///
+  /// ★ 窗口是**追加**不是平移：`toDay` 恒为明天，只有 `fromDay` 往前退。
+  ///   所以 `_pages` 变大 = 覆盖范围变大，已看过的那些一直留着。
   Future<void> _refresh() async {
-    if (_busy) return;
+    if (_busy) {
+      _pending = true;
+      return;
+    }
     _busy = true;
     final store = StoreScope.of(context);
     final now = DateTime.now();
@@ -83,6 +96,10 @@ class _TimelinePageState extends State<TimelinePage> {
       _items = items;
       _today = today;
     });
+    if (_pending) {
+      _pending = false;
+      await _refresh();
+    }
   }
 
   /// 当前过滤器下的分组结果（排序与分组都在 shared 里，这里不重复实现）。
@@ -172,18 +189,38 @@ class _TimelinePageState extends State<TimelinePage> {
     );
   }
 
+  /// 往前追加一页。★ 点完必须有一行看得见的读数：
+  /// 有新记录就说覆盖到多少天，没有就说"往前 90 天没有记录"——
+  /// 这句是实话，不是"到底了"：更早的历史还在，只是这一页没扫到。
   Widget _earlier() {
-    return Align(
-      alignment: Alignment.center,
-      child: TextButton(
-        key: const ValueKey('tl-earlier'),
-        onPressed: () {
-          // 窗口整体往前推一页：不是"追加"，所以 _pages 变了要重查
-          setState(() => _pages++);
-          _refresh();
-        },
-        child: const Text('看更早'),
-      ),
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.center,
+          child: TextButton(
+            key: const ValueKey('tl-earlier'),
+            onPressed: () async {
+              final before = _items.length;
+              setState(() => _pages++);
+              await _refresh();
+              if (!mounted) return;
+              setState(() => _noEarlier = _items.length == before);
+            },
+            child: const Text('看更早'),
+          ),
+        ),
+        if (_pages > 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              _noEarlier
+                  ? '再往前 $_windowDays 天没有记录'
+                  : '已看到最近 ${_windowDays * _pages} 天',
+              key: const ValueKey('tl-span'),
+              style: TextStyle(fontSize: 12, color: context.zj.muted),
+            ),
+          ),
+      ],
     );
   }
 

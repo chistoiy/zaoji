@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:zaoji_shared/zaoji_shared.dart';
 
 import '../data/recipe_store.dart';
 import '../data/store_scope.dart';
@@ -342,7 +343,7 @@ class _CalendarPageState extends State<CalendarPage> {
                   style: const TextStyle(
                       fontSize: 13.5, fontWeight: FontWeight.w600)),
             ),
-            Text('${e.minutes} 分钟',
+            Text(timelineDurationLabel(e.minutes),
                 style:
                     TextStyle(fontSize: 12, color: context.zj.muted)),
           ],

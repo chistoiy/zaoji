@@ -7,7 +7,7 @@ publish_to: 'none'
 # versionName 与服务端同号往上走；build 号只增不减——
 # app/android/local.properties 里也钉了 flutter.versionName / versionCode，
 # 改版本两处都要核，build 完用 aapt 复验进包的值（见发版流程）。
-version: 0.16.0+15
+version: 0.16.0+17
 
 environment:
   sdk: ^3.10.8

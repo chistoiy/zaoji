@@ -1,6 +1,6 @@
-// R48 · 时间线的反向验证：摘掉五条**决策**，看测试是不是真的红。
+// R48 · 时间线的反向验证：摘掉七条**决策**，看测试是不是真的红。
 //
-// 挑这五刀的理由（§7.10：摘算术谁都会红，摘决策才验得到口径）：
+// 挑这七刀的理由（§7.10：摘算术谁都会红，摘决策才验得到口径）：
 //   serveAsTime —— 「菜单事件没有创建时刻」。最容易犯的混用就是把 `serve_at`（开饭时间）
 //                  当成创建时刻填进去 —— 那一行会凭空多出一个钟点，而它说的是"几点吃饭"。
 //   guessDay    —— 「created_at 为空的老行不出现」。改成"拿今天顶上"，
@@ -10,8 +10,12 @@
 //   noFilter    —— 「分段过滤器真的筛」。摘了它按钮还在、条数不变，正是本轮在原型上刚修掉的病。
 //   clockFirst  —— 「无时刻的那条落在那天最后」。反过来就变成"排最前"，
 //                  读起来像那件事发生在一天开始之前。
+//   durNoHours  —— 补正刀（真机量到的）：挂了一夜的会话写成「966 分钟」数字是真的但读不动。
+//                  摘掉"≥60 转小时"，两屏（时间线与日历）那把共用的尺就退化成分钟堆。
+//   earlierNoFeedback —— 补正刀：点「看更早」不给任何读数 = 用户眼里"这按钮没反应"。
+//                  摘掉那行覆盖读数，翻页这条交互就没有任何可见反馈了。
 //
-// 用法：node tool/timeline_r48_mutation.cjs [serveAsTime|guessDay|nthInWindow|noFilter|clockFirst|restore]
+// 用法：node tool/timeline_r48_mutation.cjs [serveAsTime|guessDay|nthInWindow|noFilter|clockFirst|durNoHours|earlierNoFeedback|restore]
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -20,6 +24,7 @@ const ROOT = path.resolve(__dirname, '..');
 const SNAPDIR = path.join(ROOT, 'dist');
 const STORE = path.join(ROOT, 'app', 'lib', 'data', 'recipe_store.dart');
 const SHARED = path.join(ROOT, 'shared', 'lib', 'src', 'timeline.dart');
+const PAGE = path.join(ROOT, 'app', 'lib', 'ui', 'timeline_page.dart');
 
 const MUTS = {
   serveAsTime: {
@@ -91,6 +96,28 @@ const MUTS = {
     test: 'test/timeline_test.dart',
     name: '无时刻的那条排在当天最后',
     expect: '当成 00:00 就会跑到当天最前',
+  },
+  durNoHours: {
+    file: SHARED,
+    snap: path.join(SNAPDIR, 'timeline_pristine_r48.dart'),
+    mustKeep: ['timelineSorted', 'timelineFiltered', 'timelineMarks', 'timelineDurationLabel'],
+    from: "  if (m < 60) return '$m 分钟';",
+    to: "  if (m >= 0) return '$m 分钟'; // ★ 变异：过一小时也不转，966 分钟照写",
+    pkg: 'shared',
+    test: 'test/timeline_test.dart',
+    name: '966 分钟那趟',
+    expect: '≥60 要转成小时（两屏一把尺）',
+  },
+  earlierNoFeedback: {
+    file: PAGE,
+    snap: path.join(SNAPDIR, 'timeline_page_pristine_r48b.dart'),
+    mustKeep: ['_earlier', 'tl-span', '_noEarlier', '_pending'],
+    from: "        if (_pages > 1)\n          Padding(",
+    to: "        if (_pages > 99) // ★ 变异：翻页不给任何读数——用户眼里就是「点了没反应」\n          Padding(",
+    pkg: 'app',
+    test: 'test/timeline_r48_test.dart',
+    name: '点了要有反应',
+    expect: '翻页必须有可见读数',
   },
 };
 

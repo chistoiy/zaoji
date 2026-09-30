@@ -2593,7 +2593,9 @@ class RecipeStore extends ChangeNotifier {
         kind: TimelineKind.cook,
         // 菜被删了也要留这一行：那是"那天做过"的事实，不该跟着菜谱一起消失
         title: _byId[rid]?.name ?? '（已删除的菜）',
-        detail: n > 0 ? '实际耗时 $mins 分钟 · 第 $n 次' : '实际耗时 $mins 分钟',
+        detail: n > 0
+            ? '实际耗时 ${timelineDurationLabel(mins)} · 第 $n 次'
+            : '实际耗时 ${timelineDurationLabel(mins)}',
         refId: rid,
       ));
     }

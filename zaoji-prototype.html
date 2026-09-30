@@ -2749,6 +2749,21 @@ const PREP = [
                                        不出现，也不拿 updated_at / ULID 前缀猜一个日子） */
 const TODAY = '2026-09-17';   // 原型的演示"今天"（与 S.calSel 同一天）
 
+// 耗时读数：<60 只写分钟；≥60 写「H 小时 M 分」，整小时不补「0 分」。
+function durLabel(m) {
+  const n = Math.max(0, Math.round(m || 0));
+  if (n < 60) return n + ' 分钟';
+  const h = Math.floor(n / 60), r = n % 60;
+  return r ? (h + ' 小时 ' + r + ' 分') : (h + ' 小时');
+}
+// 窗口：从演示「今天」往前 90 × 页数 天。**追加**不是平移——起点退、终点始终是今天。
+function timelineWindow(kind, pages) {
+  const span = 90 * (pages || 1);
+  return timelineEvents(kind).filter(function (e) {
+    return (new Date(TODAY) - new Date(e.date)) / 86400000 < span;
+  });
+}
+
 function timelineEvents(kind) {
   const out = [];
   Object.keys(COOK_LOG).forEach(function (rid) {
@@ -2758,7 +2773,7 @@ function timelineEvents(kind) {
       out.push({
         date: l[0], time: l[2] || '', kind: 'cook', rid: rid,
         title: '做了 <b>' + esc(r.name) + '</b>',
-        desc: l[1] + ' · 实际耗时 ' + l[3] + ' 分钟 · 第 ' + (logs.length - i) + ' 次'
+        desc: l[1] + ' · 实际耗时 ' + durLabel(l[3]) + ' · 第 ' + (logs.length - i) + ' 次'
       });
     });
   });
@@ -3021,6 +3036,8 @@ const S = {
   ingOpen:{},          // 合并食材的「来源」展开态
   calSel:'2026-09-17',
   tlKind:'all',          // R48：时间线的分段过滤器（all/cook/menu/recipe），是真的在筛
+  tlPages:1,             // R48 补正：一页 90 天，「看更早」是**追加**一页（已看过的留着）
+  tlNoEarlier:'',        // 上一次往前推没带来任何新记录 → 给一行诚实读数，不假装到底了
   calMonth:{ y:2026, m:8 },
   editorTags:{},
   connectState:'idle', // idle | testing | ok | err
@@ -4404,7 +4421,7 @@ SCREENS.calendar = function () {
 /* ═══════════════════ 11 · 时间线 ═══════════════════ */
 SCREENS.timeline = function () {
   const kinds = { cook:'做菜', menu:'菜单', recipe:'菜品' };
-  const list = timelineEvents(S.tlKind);
+  const list = timelineWindow(S.tlKind, S.tlPages);
   let cur = '', out = '';
   list.forEach(function (e) {
     if (e.date !== cur) {
@@ -4432,7 +4449,15 @@ SCREENS.timeline = function () {
     '</div></div>' +
     '<div class="px">' + (list.length
       ? '<div class="card pad-lg" id="tlList">' + out + '</div>'
-      : '<div class="card pad" id="tlEmpty" style="text-align:center;color:var(--muted);font-size:12.5px;padding:28px 16px;line-height:1.8">这一类还没有记录<br>换个类型看看</div>') +
+      : '<div class="card pad" id="tlEmpty" style="text-align:center;color:var(--muted);font-size:12.5px;padding:28px 16px;line-height:1.8">这一类还没有记录</div>') +
+    '</div>' +
+    // ★ 翻页读数：点一次必有一行变化（要么覆盖天数变大，要么说实话：往前没有）
+    '<div class="px" style="text-align:center;padding:2px 0 16px">' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="tlEarlier" data-act="tl-earlier">看更早</button>' +
+      (S.tlPages > 1
+        ? '<div id="tlSpan" style="margin-top:4px;font-size:12px;color:var(--muted)">' +
+          (S.tlNoEarlier ? '再往前 90 天没有记录' : ('已看到最近 ' + (90 * S.tlPages) + ' 天')) + '</div>'
+        : '') +
     '</div>' +
   '</div>';
 };
@@ -7155,6 +7180,17 @@ document.addEventListener('click', function (e) {
     S.filters = { cuisine:[], ingredient:[], taste:[], method:[], diff:[], favOnly:false, sort:'recent' };
     if (S.sheet) S.sheet = sheetFilter();
     renderScreen(false); renderOverlays(); toast('已重置筛选条件'); return;
+  }
+
+  /* —— 时间线往前翻：追加一页 90 天，点了必须有看得见的读数变化 —— */
+  if (act === 'tl-earlier') {
+    const p = (S.tlPages || 1) + 1;
+    const grew = timelineWindow(S.tlKind, p).length >
+      timelineWindow(S.tlKind, S.tlPages || 1).length;
+    S.tlPages = p;
+    S.tlNoEarlier = grew ? '' : '1';
+    renderScreen(true);
+    return;
   }
 
   /* —— 时间线分段过滤：切的是数据源，不是按钮样式 —— */

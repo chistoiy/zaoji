@@ -116,6 +116,16 @@ void main() {
     expect(find.text('18:30'), findsOneWidget);
   });
 
+  testWidgets('★ 耗时过一小时照时间线那把尺写：2 小时，不是 120 分钟', (tester) async {
+    // 两屏读的是同一个 timelineDurationLabel，这里钉住日历这一侧没走偏。
+    final r = await makeRecipe('可乐排骨');
+    await seedSession(
+        's9', r.id, '${todayIso}T18:05:00', '${todayIso}T20:05:00');
+    await pump(tester);
+    expect(find.text('2 小时'), findsOneWidget);
+    expect(find.text('120 分钟'), findsNothing);
+  });
+
   testWidgets('点菜单卡进菜单详情', (tester) async {
     final m = await store.createMenu(day: todayIso, meal: '晚餐');
     await pump(tester);

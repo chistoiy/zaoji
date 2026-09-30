@@ -201,4 +201,30 @@ void main() {
       expect(timelineDayLabel('9-17'), '9-17');
     });
   });
+
+  group('耗时读数', () {
+    test('< 60 只写分钟，不硬凑小时', () {
+      expect(timelineDurationLabel(0), '0 分钟');
+      expect(timelineDurationLabel(1), '1 分钟');
+      expect(timelineDurationLabel(14), '14 分钟');
+      expect(timelineDurationLabel(59), '59 分钟');
+    });
+
+    test('★ ≥ 60 转小时：966 分钟那趟是 16 小时 6 分，不是 966 分钟', () {
+      // 真机走查量到的：会话挂了一夜，数字是真的但没人读得动。
+      expect(timelineDurationLabel(60), '1 小时');
+      expect(timelineDurationLabel(61), '1 小时 1 分');
+      expect(timelineDurationLabel(90), '1 小时 30 分');
+      expect(timelineDurationLabel(966), '16 小时 6 分');
+    });
+
+    test('整点不补「0 分」', () {
+      expect(timelineDurationLabel(120), '2 小时');
+      expect(timelineDurationLabel(1440), '24 小时');
+    });
+
+    test('★ 挂钟倒流（改系统时间/跨时区）画不出负数', () {
+      expect(timelineDurationLabel(-30), '0 分钟');
+    });
+  });
 }
