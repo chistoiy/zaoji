@@ -587,6 +587,17 @@ img{display:block;max-width:100%}
    需要在任何一张插画上都读得清；紫系标明它来自 AI 估算。
    注意它来自同步数据，与「本机有没有配 AI」无关：
    在 Android 上算过的热量，iOS 打开也应当看得到。 */
+/* R46 · 热量手填与二次编辑 */
+.nutri.is-manual{border-color:var(--line)}
+.nutri-entries{display:flex;gap:8px;align-items:center}
+.nutri-entries .btn{flex:1}
+.nutri-ai-echo{font-size:10.5px;color:var(--muted);align-self:flex-end;padding-bottom:5px;
+  text-decoration:line-through;text-decoration-color:var(--line)}
+.nutri-preview{font-size:12.5px;font-weight:650;color:var(--ink);background:var(--surface-2);
+  border-radius:10px;padding:9px 12px;margin-bottom:14px}
+.nutri-keep{font-size:11px;color:var(--muted);line-height:1.7;margin:2px 0 10px}
+.confirm-inline{display:flex;gap:10px;align-items:center;background:var(--amber-bg);
+  border:1px solid var(--amber-line);border-radius:12px;padding:10px 12px;font-size:11.5px;color:var(--amber)}
 .art-kcal{
   position:absolute;top:8px;left:8px;z-index:2;
   display:inline-flex;align-items:center;gap:4px;
@@ -734,6 +745,16 @@ img{display:block;max-width:100%}
 .field-err{font-size:11px;color:var(--accent);margin-top:5px;display:flex;align-items:center;gap:4px}
 
 /* 开关 */
+/* R47：提前量就地档位（不是弹层里的第二步操作） */
+.lead-row{display:flex;flex-wrap:wrap;gap:7px;margin:-4px 0 12px}
+.lead-chip{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--paper-2);
+  font-size:12.5px;color:var(--ink-2);cursor:pointer}
+.lead-chip.is-on{border-color:var(--accent);background:var(--accent-softer);color:var(--accent-deep);font-weight:600}
+/* R47 第六段：今天会投给谁、投多长，就地列在档位下面（不藏弹层、不写教学文案） */
+.meal-todo{display:flex;flex-direction:column;gap:5px;margin:-2px 0 12px}
+.meal-todo-row{font-size:12.5px;color:var(--ink-2);line-height:1.6}
+.meal-todo-row.is-empty{color:var(--muted)}
+
 .switch{
   width:46px;height:27px;border-radius:var(--r-pill);flex-shrink:0;
   background:rgba(var(--ink-rgb),.18);position:relative;
@@ -1025,6 +1046,25 @@ img{display:block;max-width:100%}
     radial-gradient(22rem 18rem at 12% 96%, rgba(224,163,46,.16), transparent 62%);
 }
 .timer-full-inner{position:relative;z-index:2;flex:1;display:flex;flex-direction:column;padding:16px 24px 30px}
+
+/* R47 · 并行计时器列表（FR-COOK-04）：全屏态里除主环以外，其余各占一行，能各自暂停/关闭/切焦点 */
+.tf-others{margin-top:18px;display:flex;flex-direction:column;gap:7px}
+.tf-other{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:12px;
+  background:rgba(251,246,236,.06);border:1px solid rgba(251,246,236,.10);cursor:pointer}
+.tf-other.is-focus{background:rgba(210,73,28,.18);border-color:rgba(210,73,28,.46)}
+.tf-other .ot{font-variant-numeric:tabular-nums;font-size:14px;color:#FFF3E8;min-width:52px}
+.tf-other .ol{flex:1;font-size:12.5px;color:rgba(251,246,236,.72);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tf-other .ob{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;
+  border:none;border-radius:8px;background:rgba(251,246,236,.10);color:#FFF3E8;cursor:pointer}
+/* 悬浮球上的并行计数：一眼知道后台挂着几个 */
+.fab-count{position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;
+  border-radius:9px;background:var(--accent);color:#FFF3E8;font-size:10px;font-weight:700;
+  display:inline-flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(35,28,21,.35)}
+/* R47：全屏态切表按钮 + 位序。横滑是隐藏手势，这里给它一个看得见、读得到（可访问性）的同义入口 */
+.tf-nav{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(251,246,236,.18);border-radius:9px;background:rgba(251,246,236,.07);color:#FFF3E8;cursor:pointer;flex:none}
+.tf-idx{font-size:11.5px;color:rgba(251,246,236,.6);margin-right:8px;font-variant-numeric:tabular-nums}
+/* ic() 把 class 挂在 svg 上，所以翻转规则直接作用于 svg */
+.tf-flip{transform:scaleX(-1)}
 .tf-top{display:flex;align-items:center;gap:10px}
 .tf-label{
   font-family:var(--font-display);font-size:var(--fs-17);font-weight:600;
@@ -2269,6 +2309,7 @@ const ICON = {
   folder:'<path d="M4 7.2a2 2 0 0 1 2-2h3.4l2 2.6H18a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/>',
   chart:'<path d="M4.2 4v16h15.6"/><path d="M8.2 19.4v-5.8M12.6 19.4V8.6M17 19.4v-8.6"/>',
   bell:'<path d="M6.6 10.2a5.4 5.4 0 0 1 10.8 0c0 4.9 1.9 6 1.9 6H4.7s1.9-1.1 1.9-6Z"/><path d="M10 19.4a2.2 2.2 0 0 0 4 0"/>',
+  sound:'<path d="M4.6 9.4h2.9l4.2-3.4v11.8l-4.2-3.4H4.6z"/><path d="M15.2 9.2a3.9 3.9 0 0 1 0 5.6"/>',
   gear:'<circle cx="12" cy="12" r="3.1"/><path d="M12 2.8v2.3M12 18.9v2.3M4.5 7.1l2 1.1M17.5 15.8l2 1.1M3 12h2.3M18.7 12H21M4.5 16.9l2-1.1M17.5 8.2l2-1.1"/>',
   layers:'<path d="M12 3.4 3.6 8 12 12.6 20.4 8Z"/><path d="m3.6 12.6 8.4 4.6 8.4-4.6M3.6 16.6 12 21.2l8.4-4.6"/>',
   note:'<path d="M6 3.6h8.4L19 8.2v12.2H6Z"/><path d="M14.2 3.6v4.8H19"/><path d="M9 12.4h6M9 16h4"/>',
@@ -2655,6 +2696,25 @@ const MENUS = [
   }
 ];
 
+/* R47 第六段 · 开饭前投待办（FR-SET-01 + FR-PLAN-09）的口径收在这两个函数里。
+   「我的」页那一行与走查脚本吃同一份算法——两处各写一遍必然漂成两种说法
+   （§7.10：卡片与通知共用口径靠的是抽纯函数，不是抄文案）。
+   能被投的餐次 = 今天 + 定了开饭时间；摘要 = 菜数 / 备菜样数（同名归并）/ 步骤数。 */
+function mealTodoTargets(menus) {
+  return (menus || MENUS).filter(function (m) { return m.isToday && m.time; });
+}
+function mealDigest(m) {
+  const ds = (m.dishes || []).map(function (id) { return R_MAP[id]; }).filter(Boolean);
+  const names = {};
+  ds.forEach(function (r) { (r.ings || []).forEach(function (i) { names[i.n] = 1; }); });
+  return {
+    dishes: ds.length,
+    ingredients: Object.keys(names).length,
+    steps: ds.reduce(function (a, r) { return a + (r.steps || []).length; }, 0),
+    names: ds.map(function (r) { return r.name; }),
+  };
+}
+
 /* ─────────── 备菜 / 待办 ─────────── */
 const PREP = [
   { id:'p1', group:'今天 · 晚餐 18:30', title:'取虾解冻，开背去虾线', sub:'蒜蓉粉丝蒸虾 · 约 8 分钟', done:false, kind:'食材准备', remind:'17:00 提醒' },
@@ -2913,7 +2973,20 @@ const S = {
   conflictSel:{},      // R22 裁决草稿：{ 冲突id: 'local' | 'remote' | 'custom' }
   conflictCustom:{},   // R22 手动档的值：{ 冲突id: 文本 }
   conflictResolved:[], // R22 演示：已应用的冲突 id
-  timer:null,          // { total, left, running, label, done, float }
+  timers:[],          // R47 · FR-COOK-04：并行计时器数组，每个 { id, label, total, endAt, left, running, done }
+  timerSeq:0,         // 自增 id，操作按钮靠它认实例（原来只有一份，不需要 id）
+  prefs:{
+    mealReminderOn:true,   // FR-SET-01 开饭前提醒
+    mealLead:90,           // FR-SET-01 提前量（分钟）
+    timerFloatOn:true,     // FR-SET-02 计时器悬浮窗
+    vibrateOn:true,        // FR-SET-03 计时结束震动（默认开，与 App 的 KitchenPrefs 同一份默认值）
+    notifyOn:true,         // FR-COOK-14 计时结束通知（默认开；真机第一次打开要向系统要授权）
+    soundOn:true,          // FR-SET-03 通知带声音（关掉＝只留一条静默横幅）
+    expiryNotifyOn:true,   // FR-PAN-04 库存到期提醒（打开 App 时提醒，同一天不重复）
+  },                      // R47：本机偏好，App 落 local_pref、不参与同步
+  notifyPerm:'default',   // R47 · 系统通知授权态（'default'/'granted'/'denied'）；
+                          //   真机由系统弹框决定，原型只能模拟「用户点了允许」这一种
+  timerFocus:null,    // 全屏态正在看哪一个（null = 看最新的那个）
   fab:{ x:null, y:null },
   addFab:{ x:null, y:null },   // 主页悬浮「添加菜品」按钮的位置（本机偏好，不参与同步）
   toasts:[],
@@ -3237,7 +3310,7 @@ function recipeCard(r) {
   return '<button type="button" class="recipe-card" data-act="nav" data-screen="recipe-detail" data-id="' + r.id + '">' +
     '<div class="recipe-art">' + dishArt(r.art, r.pal) +
       '<div class="art-veil"></div>' +
-      (nu ? '<span class="art-kcal" title="AI 估算，仅供参考">' + ic('sparkle', 10) +
+      (nu ? '<span class="art-kcal" title="' + (nu.src === 'manual' ? '手动填写' : 'AI 估算，仅供参考') + '">' + ic(nu.src === 'manual' ? 'edit' : 'sparkle', 10) +
         '≈ ' + nu.per + ' <small>千卡/份</small></span>' : '') +
       '<div class="art-badges">' +
         '<span class="art-chip">' + chili(r.diff) + diffLabel(r.diff) + '</span>' +
@@ -3350,7 +3423,7 @@ function browserChrome() {
 const TABS = [
   { id:'recipes',  n:'菜谱',  i:'book' },
   { id:'menus',    n:'菜单',  i:'menu' },
-  { id:'prep',     n:'备菜',  i:'basket' },
+  { id:'prep',     n:'厨房',  i:'basket' },
   { id:'calendar', n:'日历',  i:'calendar' },
   { id:'me',       n:'我的',  i:'user' }
 ];
@@ -3372,9 +3445,14 @@ function visibleRecipes() {
   const f = S.filters;
   const q = S.q.trim().toLowerCase();
   if (q) list = list.filter(function (r) {
+    // FR-REC-10：菜名 / 副标题 / 食材 / **标签**都算命中——
+    // 标签是用户自己贴的分类词，搜「红烧」搜不到自己的红烧菜是说不过去的
     return r.name.toLowerCase().indexOf(q) >= 0 ||
       r.sub.toLowerCase().indexOf(q) >= 0 ||
-      r.ings.some(function (i) { return i.n.toLowerCase().indexOf(q) >= 0; });
+      r.ings.some(function (i) { return i.n.toLowerCase().indexOf(q) >= 0; }) ||
+      Object.keys(r.tags || {}).some(function (k) {
+        return (r.tags[k] || []).some(function (t) { return t.toLowerCase().indexOf(q) >= 0; });
+      });
   });
   if (f.favOnly) list = list.filter(isFav);
   ['cuisine', 'ingredient', 'taste', 'method'].forEach(function (k) {
@@ -3435,7 +3513,7 @@ SCREENS.recipes = function () {
 
   return '<div class="screen">' + head +
     '<div class="px"><div class="searchbar">' + ic('search', 18) +
-      '<input type="text" id="qInput" placeholder="搜菜名、食材，如「番茄」「虾」" value="' + esc(S.q) + '" data-act="input-q" aria-label="搜索菜品">' +
+      '<input type="text" id="qInput" placeholder="搜菜名、食材、标签" value="' + esc(S.q) + '" data-act="input-q" aria-label="搜索菜品">' +
       (S.q ? '<button type="button" class="iconbtn" style="width:26px;height:26px" data-act="clear-q" aria-label="清空">' + ic('close', 15) + '</button>' : '') +
     '</div></div>' +
     rail +
@@ -3448,32 +3526,111 @@ SCREENS.recipes = function () {
 };
 
 /* ═══════════════════ 02 · 菜品详情 ═══════════════════ */
-/* 热量卡片：必须标注不确定性，且可手动编辑（FR-AI-24 / FR-AI-25） */
+/* ═══════════ R46 · 热量：AI 估算与手动填写共用一张卡（FR-AI-24/25 + FR-AI-69~74）═══════════
+   三条口径写死在这里：
+   ① 来源只有 ai / manual 两态——手改过的 AI 值 = manual + 结构里留着 ai 原值，不加第三种枚举；
+   ② 份数基数默认跟菜谱的份数走，手改后自己记住（估算基数 ≠ 菜谱属性，Q6）；
+   ③ 数值手填路径与 AI 路径写的是同一份数据，同步照常带走（FR-AI-51），配置不参与同步。 */
+function nutriServ(n, r) {
+  if (n && n.serv) return n.serv;
+  return (r && r.serv) || 4;
+}
+function nutriFmt(v) { return v == null ? '—' : String(Math.round(v * 10) / 10); }
+
+/* 热量卡片：AI 估算 / 手动填写**同一张卡的两种状态**，位置与尺寸一致，只是来源标、免责行与第三枚按钮不同 */
 function nutritionCard(r, n) {
+  const manual = n.src === 'manual';
   const conf = n.conf === 'high' ? ['高', 'badge-ok'] : n.conf === 'medium' ? ['中', 'badge-warn'] : ['低', 'badge-idle'];
-  return '<div class="nutri">' +
-    '<div class="nutri-head">' +
-      '<span class="ai-chip">' + ic('sparkle', 10) + 'AI 估算</span>' +
-      '<span style="flex:1"></span>' +
-      '<span class="badge ' + conf[1] + '">把握度 ' + conf[0] + '</span>' +
-    '</div>' +
+  const chip = manual
+    ? '<span class="ai-chip" style="background:var(--surface-2);color:var(--ink-2)">' + ic('edit', 10) + '手动填写</span>'
+    : '<span class="ai-chip">' + ic('sparkle', 10) + 'AI 估算</span>';
+  const confChip = manual
+    ? '<span class="badge badge-idle">按 ' + nutriServ(n, r) + ' 人份</span>'
+    : '<span class="badge ' + conf[1] + '">把握度 ' + conf[0] + '</span>';
+  // 手改过的：hero 那行追一句 AI 原值，让人一眼知道现在的数是谁说的（FR-AI-71）
+  const aiEcho = manual && n.aiPer != null
+    ? '<span class="nutri-ai-echo">AI 原估 ' + n.aiPer + '</span>' : '';
+  const third = manual
+    ? (aiReady('nutrition')
+        ? '<button type="button" class="btn btn-quiet btn-sm" data-act="nutri-calc" data-id="' + r.id + '">' + ic('sparkle', 13) + '用 AI 重算</button>'
+        : '<button type="button" class="btn btn-quiet btn-sm" data-act="ai-need-setup">' + ic('sparkle', 13) + '用 AI 重算<span class="ai-mini-lock">' + ic('lock', 9) + '未配置</span></button>')
+    : '<button type="button" class="btn btn-quiet btn-sm" data-act="nutri-calc" data-id="' + r.id + '">' + ic('sparkle', 13) + '重新估算</button>';
+  const foot = manual
+    ? esc(n.at) + ' 手填 · 来源：手动填写'
+    : esc(n.model) + ' · ' + esc(n.at) + '<b> AI 估算，仅供参考，不能用于医疗或饮食处方。</b>';
+  return '<div class="nutri' + (manual ? ' is-manual' : '') + '">' +
+    '<div class="nutri-head">' + chip + '<span style="flex:1"></span>' + confChip + '</div>' +
     '<div class="nutri-hero">' +
       '<span class="nutri-v num">≈ ' + n.per + '</span>' +
-      '<span class="nutri-u">千卡 / 每份　·　整锅约 ' + n.total + ' 千卡</span>' +
+      '<span class="nutri-u">千卡 / 每份　·　整锅约 ' + n.total + ' 千卡</span>' + aiEcho +
     '</div>' +
     '<div class="nutri-grid">' +
-      '<div><div class="nutri-gv num">' + n.p + '<small>g</small></div><div class="nutri-gk">蛋白质</div></div>' +
-      '<div><div class="nutri-gv num">' + n.f + '<small>g</small></div><div class="nutri-gk">脂肪</div></div>' +
-      '<div><div class="nutri-gv num">' + n.c + '<small>g</small></div><div class="nutri-gk">碳水</div></div>' +
+      '<div><div class="nutri-gv num">' + nutriFmt(n.p) + '<small>g</small></div><div class="nutri-gk">蛋白质</div></div>' +
+      '<div><div class="nutri-gv num">' + nutriFmt(n.f) + '<small>g</small></div><div class="nutri-gk">脂肪</div></div>' +
+      '<div><div class="nutri-gv num">' + nutriFmt(n.c) + '<small>g</small></div><div class="nutri-gk">碳水</div></div>' +
     '</div>' +
     '<div class="nutri-foot">' +
-      '<span style="font-size:10.5px;color:var(--muted);flex:1;min-width:120px">' + esc(n.model) + ' · ' + esc(n.at) + '</span>' +
+      '<span style="font-size:10.5px;color:var(--muted);flex:1;min-width:120px">' + foot + '</span>' +
       '<button type="button" class="btn btn-quiet btn-sm" data-act="nutri-basis" data-id="' + r.id + '">' + ic('list', 13) + '看依据</button>' +
-      '<button type="button" class="btn btn-quiet btn-sm" data-act="nutri-edit" data-id="' + r.id + '">' + ic('edit', 13) + '手动改</button>' +
+      '<button type="button" class="btn btn-quiet btn-sm" data-act="nutri-edit" data-id="' + r.id + '">' + ic('edit', 13) + '手动改</button>' + third +
     '</div>' +
-    '<p class="nutri-note">' + ic('alert', 10) + ' ' + esc(n.note) +
-      ' <b>AI 估算，仅供参考，不能用于医疗或饮食处方。</b></p>' +
+    (n.note ? '<p class="nutri-note">' + ic('alert', 10) + ' ' + esc(n.note) + '</p>' : '') +
   '</div>';
+}
+
+/* 编辑表单：份数改动**总量不变、每份重算**（FR-AI-72）；总/每份谁后改谁说话（Q5） */
+function nutriFormCalc(f, changed) {
+  const serv = Math.max(1, Math.round(f.serv || 1));
+  if (changed === 'per') { f.total = Math.round((f.per || 0) * serv); }
+  else if (changed === 'total') { f.per = Math.round((f.total || 0) / serv); }
+  else if (changed === 'serv') { f.per = Math.round((f.total || 0) / serv); }
+  f.serv = serv;
+  return f;
+}
+function sheetNutriEdit(rid) {
+  const f = S.nutriForm;
+  const r = R_MAP[rid];
+  const n = nutritionOf(rid);
+  const field = function (k, label, val, hint) {
+    return '<div class="field"><div class="field-label">' + label + (hint ? '<span class="field-hint">' + hint + '</span>' : '') + '</div>' +
+      '<input class="input num" type="text" inputmode="decimal" data-act="input-nf" data-nf="' + k + '" value="' + (val == null ? '' : val) + '"></div>';
+  };
+  return sheet(n ? '手动调整热量' : '手动填写热量',
+    '<div class="nutri-preview">每份 ≈ ' + (f.per == null ? '—' : f.per) + ' 千卡　·　整锅约 ' + (f.total == null ? '—' : f.total) + ' 千卡　·　按 ' + f.serv + ' 人份</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+      field('per', '每份（千卡）', f.per) + field('total', '整锅（千卡）', f.total) +
+    '</div>' +
+    field('serv', '份数基数', f.serv, '改份数：整锅不变，每份重算') +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">' +
+      field('p', '蛋白质 g', f.p) + field('f', '脂肪 g', f.f) + field('c', '碳水 g', f.c) +
+    '</div>' +
+    (n && n.src === 'ai'
+      ? '<p class="nutri-keep">AI 原估 每份 ' + (n.aiPer != null ? n.aiPer : n.per) + ' 千卡会留在「看依据」里对照，不会覆盖掉。</p>'
+      : '') +
+    (f.warn
+      ? '<div class="confirm-inline">' + ic('alert', 14) + '<span style="flex:1">每份 ' + f.per + ' 千卡，超过 20000 的上限线——确定是这个数？</span>' +
+        '<button type="button" class="btn btn-primary btn-sm" data-act="nutri-edit-save">确定保存</button></div>'
+      : ''),
+    '<button type="button" class="btn btn-ghost" style="flex:1" data-act="sheet-close">取消</button>' +
+    '<button type="button" class="btn btn-primary" style="flex:1.4" data-act="nutri-edit-save">' + ic('check', 16) + '保存</button>');
+}
+
+/* 输入即时折算：per / total / serv 三者互相推导，谁后改谁说话（FR-AI-72 + Q5）。
+   重画整个弹层会丢焦点，所以画完把光标放回刚才那个框——与搜索框同一套处理（见 input-pan）。 */
+function nutriFormInput(el) {
+  const f = S.nutriForm;
+  if (!f) return;
+  const k = el.dataset.nf;
+  const raw = el.value.trim();
+  f[k] = raw === '' ? null : (Number(raw) || 0);
+  nutriFormCalc(f, k);
+  // 只在**已经点亮**时负责收回：数值改回正常范围就不该再拦人。
+  // 点亮由「保存」那一步负责——点一次只确认、再点才落库（FR-AI-74 的二次确认）。
+  if (f.warn && !(f.per > 20000)) f.warn = false;
+  S.sheet = sheetNutriEdit(f.rid);
+  renderOverlays();
+  const back = document.querySelector('[data-nf="' + k + '"]');
+  if (back) { back.focus(); try { back.setSelectionRange(back.value.length, back.value.length); } catch (err) {} }
 }
 SCREENS['recipe-detail'] = function (p) {
   const r = R_MAP[p.id] || RECIPES[0];
@@ -3513,11 +3670,17 @@ SCREENS['recipe-detail'] = function (p) {
   const nutriBlock = '<div class="px" style="margin-top:14px">' +
       (nutri
         ? nutritionCard(r, nutri)
-        : '<button type="button" class="btn btn-ghost btn-block btn-sm" data-act="' +
-            (aiReady('nutrition') ? 'nutri-calc' : 'ai-need-setup') + '" data-id="' + r.id + '">' +
-            ic('sparkle', 15) + '估算这道菜的热量' +
-            (aiReady('nutrition') ? '' : '<span class="ai-mini-lock">' + ic('lock', 9) + '未配置</span>') +
-          '</button>') +
+        // 没算过：只显示入口，绝不显示灰色占位数字（FR-AI-27）；
+        // 但**手填入口恒在**（FR-AI-69）——未配置 AI 的人不该被挡在热量之外。
+        : '<div class="nutri-entries">' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-act="' +
+              (aiReady('nutrition') ? 'nutri-calc' : 'nutri-calc') + '" data-id="' + r.id + '">' +
+              ic('sparkle', 15) + '估算热量' +
+              (aiReady('nutrition') ? '' : '<span class="ai-mini-lock">' + ic('lock', 9) + '未配置</span>') +
+            '</button>' +
+            '<button type="button" class="btn btn-quiet btn-sm" data-act="nutri-edit" data-id="' + r.id + '">' +
+              ic('edit', 15) + '手动填写热量</button>' +
+          '</div>') +
     '</div>';
 
   /* 步骤（时间关键词自动高亮为可点计时胶囊） */
@@ -4002,6 +4165,7 @@ SCREENS.prep = function () {
     appbar('厨房', '备菜、库存、推荐都在这里', false,
       '<button type="button" class="iconbtn" data-act="sheet-prep-add" aria-label="添加">' + ic('plus', 20) + '</button>') +
     kitchenSeg('prep') +
+    pantryWatchCard('prep') + 
 
     '<div class="px"><div class="synccard">' +
       '<div style="display:flex;align-items:center;gap:8px">' +
@@ -4351,12 +4515,38 @@ SCREENS.me = function () {
         '<span class="row-main"><span class="row-title">主题</span>' +
         '<span class="row-sub">' + themeById(S.theme).name + ' · ' + themeById(S.theme).hint + ' · 只影响这台设备</span></span>' +
         ic('chevR', 16, 'row-chevr') + '</button>' +
-      '<div class="row"><span class="row-ico">' + ic('bell', 18) + '</span>' +
-        '<span class="row-main"><span class="row-title">开饭前提醒</span><span class="row-sub">提前 1.5 小时推送到待办</span></span>' +
-        '<span class="switch" role="switch" tabindex="0" data-act="toggle-on" aria-checked="true"></span></div>' +
-      '<div class="row"><span class="row-ico">' + ic('maximize', 18) + '</span>' +
-        '<span class="row-main"><span class="row-title">计时器悬浮窗</span><span class="row-sub">离开菜谱页后继续显示</span></span>' +
-        '<span class="switch" role="switch" tabindex="0" data-act="toggle-on" aria-checked="true"></span></div>' +
+      (function () {
+        var leadLabel = function (m) {
+          return m < 60 ? (m + ' 分钟') : ((m / 60) % 1 === 0 ? (m / 60) + ' 小时' : (m / 60).toFixed(1) + ' 小时');
+        };
+        var steps = [30, 45, 60, 90, 120, 180];
+        var todoTargets = mealTodoTargets();
+        return '<div class="row"><span class="row-ico">' + ic('bell', 18) + '</span>' +
+          '<span class="row-main"><span class="row-title">开饭前提醒</span><span class="row-sub">' +
+            (S.prefs.mealReminderOn ? ('提前 ' + leadLabel(S.prefs.mealLead) + '把备菜与制作投进待办') : '不开待办，只在菜单里看') +
+          '</span></span>' +
+          '<span class="switch" role="switch" tabindex="0" data-act="pref-switch" data-pref="mealReminderOn" aria-checked="' + (S.prefs.mealReminderOn ? 'true' : 'false') + '"></span></div>' +
+          /* 提前量就地一排档：不做「点一下→再弹一层」的两段式（项目定了的交互口径） */
+          (S.prefs.mealReminderOn
+            ? '<div class="px"><div class="lead-row">' + steps.map(function (m) {
+                return '<button type="button" class="lead-chip' + (S.prefs.mealLead === m ? ' is-on' : '') + '" data-act="lead-pick" data-min="' + m + '" aria-pressed="' + (S.prefs.mealLead === m) + '">' + leadLabel(m) + '</button>';
+              }).join('') + '</div><div class="meal-todo">' +
+              (todoTargets.length
+                ? todoTargets.map(function (m) {
+                    var d = mealDigest(m);
+                    return '<div class="meal-todo-row' + (d.dishes ? '' : ' is-empty') + '" data-menu="' + m.id + '">' +
+                      esc(m.time + ' ' + m.meal) + ' · ' +
+                      (d.dishes
+                        ? (d.dishes + ' 道菜 · 备菜 ' + d.ingredients + ' 样 · 步骤 ' + d.steps + ' 步')
+                        : '还没排菜') + '</div>';
+                  }).join('')
+                : '<div class="meal-todo-row is-empty">今天没有定了开饭时间的餐次</div>') +
+              '</div></div>'
+            : '') +
+          '<div class="row"><span class="row-ico">' + ic('maximize', 18) + '</span>' +
+          '<span class="row-main"><span class="row-title">计时器悬浮窗</span><span class="row-sub">离开菜谱页后继续显示，可拖动</span></span>' +
+          '<span class="switch" role="switch" tabindex="0" data-act="pref-switch" data-pref="timerFloatOn" aria-checked="' + (S.prefs.timerFloatOn ? 'true' : 'false') + '"></span></div>';
+      })() +
       /* 悬浮按钮被拖到别扭的位置时，需要一个正规的复位入口，
          而不是让用户长按着瞎试 */
       '<button type="button" class="row row-btn" data-act="reset-fab">' +
@@ -4366,7 +4556,32 @@ SCREENS.me = function () {
         ic('chevR', 16, 'row-chevr') + '</button>' +
       '<div class="row"><span class="row-ico">' + ic('timer', 18) + '</span>' +
         '<span class="row-main"><span class="row-title">计时结束震动</span><span class="row-sub">手机端仅在非静音时生效</span></span>' +
-        '<span class="switch" role="switch" tabindex="0" data-act="toggle-on" aria-checked="false"></span></div>' +
+        '<span class="switch" role="switch" tabindex="0" data-act="pref-switch" data-pref="vibrateOn" aria-checked="' + (S.prefs.vibrateOn ? 'true' : 'false') + '"></span></div>' +
+      '<div class="row"><span class="row-ico">' + ic('bell', 18) + '</span>' +
+        '<span class="row-main"><span class="row-title">计时结束通知</span><span class="row-sub">' +
+          (S.prefs.notifyOn
+            ? (S.notifyPerm === 'granted' ? '到点在通知栏提醒一次'
+              : (S.notifyPerm === 'denied' ? '系统已拒绝，去系统设置里开' : '还没拿到系统授权'))
+            : '不开通知，只剩震动与视觉') +
+        '</span></span>' +
+        '<span class="switch" role="switch" tabindex="0" data-act="pref-switch" data-pref="notifyOn" aria-checked="' + (S.prefs.notifyOn ? 'true' : 'false') + '"></span></div>' +
+      (S.prefs.notifyOn && S.notifyPerm !== 'granted'
+        ? '<button type="button" class="row row-btn" data-act="notify-perm">' +
+          '<span class="row-ico">' + ic('bell', 18) + '</span>' +
+          '<span class="row-main"><span class="row-title">开启系统通知授权</span>' +
+          '<span class="row-sub">' + (S.notifyPerm === 'denied' ? '被拒过，得去系统设置里改' : '系统会弹一次确认，只有手势里能调') + '</span></span>' +
+          ic('chevR', 16, 'row-chevr') + '</button>'
+        : '') +
+      (S.prefs.notifyOn && S.notifyPerm === 'granted'
+        ? '<div class="row"><span class="row-ico">' + ic('sound', 18) + '</span>' +
+          '<span class="row-main"><span class="row-title">通知带声音</span><span class="row-sub">' +
+            (S.prefs.soundOn ? '跟着系统的音量与静音档走' : '静音：通知栏只落一条横幅') +
+          '</span></span>' +
+          '<span class="switch" role="switch" tabindex="0" data-act="pref-switch" data-pref="soundOn" aria-checked="' + (S.prefs.soundOn ? 'true' : 'false') + '"></span></div>'
+        : '') +
+      '<div class="row"><span class="row-ico">' + ic('alert', 18) + '</span>' +
+        '<span class="row-main"><span class="row-title">库存到期提醒</span><span class="row-sub">打开 App 时提醒一次，同一天不重复</span></span>' +
+        '<span class="switch" role="switch" tabindex="0" data-act="pref-switch" data-pref="expiryNotifyOn" aria-checked="' + (S.prefs.expiryNotifyOn ? 'true' : 'false') + '"></span></div>' +
     '</div></div>' +
 
     '<div class="px" style="margin-top:26px;text-align:center">' +
@@ -4833,14 +5048,17 @@ SCREENS.cooking = function (p) {
   const hard = allergenSummary(r).hard;
   const imgKind = (st.imgs && st.imgs[0]) || r.art;
 
-  const timers = S.timer
-    ? '<div class="cook-timers"><div class="cook-timer">' +
-        '<span class="tt num">' + mmss(S.timer.left) + '</span>' +
-        '<span class="tl">' + esc(S.timer.label) +
-          (S.timer.done ? ' · 时间到' : S.timer.running ? ' · 计时中' : ' · 已暂停') + '</span>' +
-        '<button type="button" class="tb" data-act="timer-toggle" aria-label="暂停/继续">' + ic(S.timer.running ? 'pause' : 'play', 16) + '</button>' +
-        '<button type="button" class="tb" data-act="timer-reset" aria-label="重置">' + ic('reset', 16) + '</button>' +
-      '</div></div>'
+  const timers = S.timers.length
+    ? '<div class="cook-timers">' + S.timers.map(function (t) {
+        return '<div class="cook-timer">' +
+          '<span class="tt num">' + mmss(t.left) + '</span>' +
+          '<span class="tl">' + esc(t.label) +
+            (t.done ? ' · 时间到' : t.running ? ' · 计时中' : ' · 已暂停') + '</span>' +
+          '<button type="button" class="tb" data-act="timer-toggle" data-id="' + t.id + '" aria-label="暂停/继续">' + ic(t.running ? 'pause' : 'play', 16) + '</button>' +
+          '<button type="button" class="tb" data-act="timer-reset" data-id="' + t.id + '" aria-label="重置">' + ic('reset', 16) + '</button>' +
+          '<button type="button" class="tb" data-act="timer-close" data-id="' + t.id + '" aria-label="关掉这个计时器">' + ic('close', 16) + '</button>' +
+        '</div>';
+      }).join('') + '</div>'
     : '';
 
   const ingList = r.ings.map(function (ing, k) {
@@ -5251,6 +5469,46 @@ function kitchenSeg(cur) {
     }).join('') + '</div></div>';
 }
 
+/* 厨房 tab 顶部的库存告警卡（FR-PAN-06 · R47 第五段）。
+   口径与通知那一路（App 的 PantryWatch）逐字对齐：
+     · 「没有」的条目不算到期——家里本来就没有，提醒它没意义；
+     · 过期（expState warn）与三天内（soon）各一行，快没了（level low）一行；
+     · 名字按到期日近的排前，只列 3 个，多的写成「等 N 样」；
+     · 三组都空 → 整卡不渲染（需求书 FR-PAN-06 的验收判据就是「有数据时出现」）。
+   · 「按库存找菜」只在备菜清单段给：库存段下面本来就有同一颗（去重要按场景查覆盖），
+     推荐段更是已经在目的地——点了没反应的按钮不放。 */
+function pantryWatchCard(cur) {
+  const live = function (p) { return p.level !== 'out'; };
+  const byExp = function (a, b) { return String(a.exp || '9999').localeCompare(String(b.exp || '9999')); };
+  const bad = PANTRY.filter(function (p) { return live(p) && p.expState === 'warn'; }).sort(byExp);
+  const soon = PANTRY.filter(function (p) { return live(p) && p.expState === 'soon'; }).sort(byExp);
+  const low = PANTRY.filter(function (p) { return p.level === 'low'; });
+  const out = PANTRY.filter(function (p) { return p.level === 'out'; });
+  if (!bad.length && !soon.length && !low.length && !out.length) return '';
+  const names = function (arr) {
+    const head = arr.slice(0, 3).map(function (p) { return p.name; }).join('、');
+    return arr.length > 3 ? head + ' 等 ' + arr.length + ' 样' : head;
+  };
+  const row = function (kw, cls, label, arr) {
+    if (!arr.length) return '';
+    return '<div class="pw-row" data-kw="' + kw + '" style="display:flex;align-items:baseline;gap:8px;margin-top:9px">' +
+      '<span class="badge ' + cls + '"><i></i>' + arr.length + ' ' + label + '</span>' +
+      '<span style="flex:1;min-width:0;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(names(arr)) + '</span>' +
+    '</div>';
+  };
+  return '<div class="px" style="margin-top:12px"><div class="synccard" id="pw-card" style="padding:14px 15px">' +
+    '<div style="display:flex;align-items:center;gap:8px">' + ic('alert', 15) +
+      '<span style="font-size:13px;font-weight:700">食材要处理</span></div>' +
+    row('bad', 'badge-err', '已过期', bad) +
+    row('soon', 'badge-warn', '快到期', soon) +
+    row('low', 'badge-idle', '快没了', low) +
+    row('out', 'badge-idle', '没有', out) +
+    (cur === 'prep' ?
+      '<button type="button" class="btn btn-ghost btn-sm btn-block" style="margin-top:11px" id="pw-to-reco" data-act="kitchen-go" data-k="recommend">' +
+        ic('sparkle', 14) + '按库存找菜</button>' : '') +
+  '</div></div>';
+}
+
 /* ═══════════════════ 27 · 食材库存（v1.2） ═══════════════════ */
 SCREENS.pantry = function () {
   const q = S.pantry.q.trim();
@@ -5260,10 +5518,8 @@ SCREENS.pantry = function () {
     return true;
   });
   const cats = ['all'].concat(Array.from(new Set(PANTRY.map(function (p) { return p.cat; }))));
-  const lowN = PANTRY.filter(function (p) { return p.level === 'low'; }).length;
-  const outN = PANTRY.filter(function (p) { return p.level === 'out'; }).length;
-  const soonN = PANTRY.filter(function (p) { return p.expState === 'soon'; }).length;
-  const badN = PANTRY.filter(function (p) { return p.expState === 'warn'; }).length;
+  // 这四枚计数（lowN/outN/soonN/badN）随头部徽标一起去掉了，
+  // 现在唯一的出口是 pantryWatchCard()——一份口径，别再长出第二份。
 
   const byCat = new Map();
   list.forEach(function (p) {
@@ -5311,6 +5567,7 @@ SCREENS.pantry = function () {
       '<button type="button" class="iconbtn" data-act="toast" data-msg="扫码/拍照入库（原型示意）" aria-label="扫描">' + ic('camera', 20) + '</button>' +
       '<button type="button" class="iconbtn is-solid" data-act="toast" data-msg="手动添加食材（原型示意）">' + ic('plus', 20) + '</button>') +
     kitchenSeg('pantry') +
+    pantryWatchCard('pantry') + 
 
     '<div class="px">' +
       '<div class="synccard" style="padding:15px">' +
@@ -5318,18 +5575,13 @@ SCREENS.pantry = function () {
           '<span class="stat-v" style="font-size:30px">' + PANTRY.length + '</span>' +
           '<span style="font-size:12.5px;color:var(--muted)">样食材在家里</span>' +
           '<span style="flex:1"></span>' +
-          (badN ? '<span class="badge badge-err"><i></i>' + badN + ' 今天到期</span>' : '') +
-          (lowN ? '<span class="badge badge-warn"><i></i>' + lowN + ' 快没了</span>' : '') +
-          (outN ? '<span class="badge badge-idle"><i></i>' + outN + ' 没有</span>' : '') +
+          /* 原来这三枚徽标（已过期 / 快没了 / 没有）被厨房顶部那张卡整组取代：
+             同一屏两份计数、卡那份还多带名字。去重前按场景查过覆盖，四个数卡里都在。 */
         '</div>' +
         '<div style="display:flex;gap:9px;margin-top:14px">' +
           '<button type="button" class="btn btn-primary btn-sm" style="flex:1" data-act="kitchen-go" data-k="recommend">' + ic('sparkle', 15) + '按库存找菜</button>' +
           '<button type="button" class="btn btn-ghost btn-sm" style="flex:1" data-act="toast" data-msg="已从购物清单批量入库（原型示意）">' + ic('download', 15) + '购物入库</button>' +
         '</div>' +
-        (soonN || badN
-          ? '<p style="font-size:11px;color:var(--muted);margin-top:11px;line-height:1.7">' +
-            ic('alert', 11) + ' 有 ' + (soonN + badN) + ' 样快过期了，点下面的「按库存找菜」能优先消耗掉它们。</p>'
-          : '') +
       '</div>' +
 
       '<div style="margin-top:14px"><div class="searchbar">' + ic('search', 18) +
@@ -5437,6 +5689,7 @@ SCREENS.recommend = function () {
     appbar('厨房', '备菜、库存、推荐都在这里', false,
       '<button type="button" class="iconbtn" data-act="reco-reset" aria-label="重算">' + ic('reset', 20) + '</button>') +
     kitchenSeg('recommend') +
+    pantryWatchCard('recommend') + 
 
     '<div class="px">' +
       '<div class="synccard" style="padding:15px">' +
@@ -5902,16 +6155,21 @@ function sheetAiRecipe(name) {
 
 /* ═══════════════════ 18 · 计时器（全屏 / 悬浮窗） ═══════════════════ */
 function timerFullHTML() {
-  const t = S.timer || { total:300, left:300, running:false, label:'5分钟', done:false };
+  const t = activeTimer() || { total:300, left:300, running:false, label:'5分钟', done:false };
+  const others = S.timers.filter(function (x) { return x.id !== t.id; });
   const pct = t.total ? (1 - t.left / t.total) : 0;
   const R = 118, C = 2 * Math.PI * R;
   return '<div class="timer-full">' +
     '<div class="timer-full-inner">' +
       '<div class="tf-top">' +
-        '<button type="button" class="iconbtn" data-act="timer-min" aria-label="收起为悬浮窗">' + ic('minimize', 21) + '</button>' +
+        '<button type="button" class="iconbtn" data-act="timer-min" data-id="' + t.id + '" aria-label="收起为悬浮窗">' + ic('minimize', 21) + '</button>' +
         '<span class="tf-label">' + esc(t.label) + '</span>' +
+      (others.length ? '<button type="button" class="tf-nav" data-act="timer-prev" aria-label="上一个">' + ic('back', 16) + '</button>' +
+        '<span class="tf-idx num">' + (S.timers.findIndex(function (x) { return x.id === t.id; }) + 1) + '/' + S.timers.length + '</span>' +
+        '<button type="button" class="tf-nav" data-act="timer-next" aria-label="下一个">' + ic('back', 16, 'tf-flip') + '</button>' +
+        '' : '') +
         '<span style="flex:1"></span>' +
-        '<button type="button" class="iconbtn" data-act="timer-close" aria-label="关闭计时器">' + ic('close', 21) + '</button>' +
+        '<button type="button" class="iconbtn" data-act="timer-close" data-id="' + t.id + '" aria-label="关闭计时器">' + ic('close', 21) + '</button>' +
       '</div>' +
       '<div class="tf-center">' +
         '<div class="tf-ring">' +
@@ -5924,21 +6182,29 @@ function timerFullHTML() {
             '<span class="tf-sub">' + (t.done ? '时间到' : t.running ? '正在计时' : '已暂停') + '</span></div>' +
         '</div>' +
         '<div class="tf-actions">' +
-          '<button type="button" class="tf-btn" data-act="timer-reset" aria-label="重置">' + ic('reset', 22) + '</button>' +
-          '<button type="button" class="tf-btn tf-main" data-act="timer-toggle" aria-label="暂停/继续">' + ic(t.running ? 'pause' : 'play', 30) + '</button>' +
-          '<button type="button" class="tf-btn" data-act="timer-add" data-sec="60" aria-label="加一分钟">' + ic('plus', 22) + '</button>' +
+          '<button type="button" class="tf-btn" data-act="timer-reset" data-id="' + t.id + '" aria-label="重置">' + ic('reset', 22) + '</button>' +
+          '<button type="button" class="tf-btn tf-main" data-act="timer-toggle" data-id="' + t.id + '" aria-label="暂停/继续">' + ic(t.running ? 'pause' : 'play', 30) + '</button>' +
+          '<button type="button" class="tf-btn" data-act="timer-add" data-id="' + t.id + '" data-sec="60" aria-label="加一分钟">' + ic('plus', 22) + '</button>' +
         '</div>' +
       '</div>' +
       '<div class="tf-quick">' + QUICK.map(function (q) {
         return '<button type="button" class="tf-q" data-act="timer-set" data-sec="' + q.s + '">' + q.l + '</button>';
       }).join('') + '</div>' +
+      (others.length ? '<div class="tf-others">' + others.map(function (o) {
+        return '<div class="tf-other" data-act="timer-focus" data-id="' + o.id + '">' +
+          '<span class="ot num">' + mmss(o.left) + '</span>' +
+          '<span class="ol">' + esc(o.label) + (o.done ? ' · 时间到' : o.running ? ' · 计时中' : ' · 已暂停') + '</span>' +
+          '<button type="button" class="ob" data-act="timer-toggle" data-id="' + o.id + '" aria-label="暂停/继续">' + ic(o.running ? 'pause' : 'play', 14) + '</button>' +
+          '<button type="button" class="ob" data-act="timer-close" data-id="' + o.id + '" aria-label="关掉这个计时器">' + ic('close', 14) + '</button>' +
+        '</div>';
+      }).join('') + '</div>' : '') +
       '<p style="text-align:center;font-size:11px;color:rgba(251,246,236,.42);margin-top:16px;line-height:1.7">' +
         '点左上角可收成悬浮窗，边做菜边看火候<br>后台计时不受页面切换影响</p>' +
     '</div>' +
   '</div>';
 }
 function timerFabHTML() {
-  const t = S.timer; if (!t) return '';
+  const t = activeTimer(); if (!t) return '';
   const pct = t.total ? (1 - t.left / t.total) : 0;
   const R = 16, C = 2 * Math.PI * R;
   const x = S.fab.x, y = S.fab.y;
@@ -5953,13 +6219,14 @@ function timerFabHTML() {
       '</svg>' +
       '<span class="t num" id="fabTime">' + mmss(t.left) + '</span>' +
     '</span>' +
+    (S.timers.length > 1 ? '<span class="fab-count num">' + S.timers.length + '</span>' : '') +
     '<span class="fab-info">' +
       '<span class="fab-label">' + esc(t.label) + '</span>' +
     '</span>' +
     '<span class="fab-act">' +
-      '<button type="button" class="fab-btn" data-act="timer-toggle" aria-label="暂停/继续">' + ic(t.running ? 'pause' : 'play', 16) + '</button>' +
-      '<button type="button" class="fab-btn" data-act="timer-reset" aria-label="重置">' + ic('reset', 16) + '</button>' +
-      '<button type="button" class="fab-btn" data-act="timer-max" aria-label="展开">' + ic('maximize', 16) + '</button>' +
+      '<button type="button" class="fab-btn" data-act="timer-toggle" data-id="' + t.id + '" aria-label="暂停/继续">' + ic(t.running ? 'pause' : 'play', 16) + '</button>' +
+      '<button type="button" class="fab-btn" data-act="timer-reset" data-id="' + t.id + '" aria-label="重置">' + ic('reset', 16) + '</button>' +
+      '<button type="button" class="fab-btn" data-act="timer-max" data-id="' + t.id + '" aria-label="展开">' + ic('maximize', 16) + '</button>' +
     '</span>' +
   '</div>';
 }
@@ -6313,8 +6580,9 @@ function renderOverlays() {
   const ov = document.getElementById('overlays');
   if (!ov) return;
   let html = '';
-  if (S.timer && !S.timer.float) html += timerFullHTML();
-  if (S.timer && S.timer.float) html += timerFabHTML();
+  const at = activeTimer();
+  if (at && !at.float) html += timerFullHTML();
+  if (at && at.float) html += timerFabHTML();
   if (S.sheet) html += S.sheet;
   html += '<div class="toast-wrap" id="toastWrap"></div>';
   ov.innerHTML = html;
@@ -6350,14 +6618,53 @@ function tabTo(id) {
 
 /* ═══════════════════ 计时器 ═══════════════════ */
 let lastTick = Date.now();
+
+/* 当前该显示哪一个：显式选过就用选的，否则用最新起的 */
+function activeTimer() {
+  if (!S.timers.length) return null;
+  const f = S.timerFocus && S.timers.find(function (x) { return x.id === S.timerFocus; });
+  return f || S.timers[S.timers.length - 1];
+}
+/* 按目标戳现算剩余秒数并原地落回 left（暂停的实例不动） */
+function syncTimers(now) {
+  var fired = [];
+  S.timers.forEach(function (t) {
+    if (!t.running) return;
+    const left = Math.max(0, (t.endAt - now) / 1000);
+    if (left <= 0) {
+      t.left = 0; t.running = false; t.done = true;
+      fired.push(t);
+    } else {
+      t.left = left;
+    }
+  });
+  return fired;
+}
 function startTimer(sec, label, float) {
-  S.timer = { total:sec, left:sec, running:true, label:label || '计时', done:false, float:!!float };
+  // ★ FR-COOK-05：倒计时**不靠每跳递减**，而是记下「什么时候到点」这个墙上时钟目标戳。
+  //   切后台、息屏、浏览器把 rAF/setInterval 掐掉多久都无所谓——回来一减就是剩余量。
+  //   旧写法（每 250ms 减 0.25s）在后台节流下会少走好几秒，NFR-REL-03 要求的
+  //   「后台 10 分钟误差 < 2 秒」根本不可能达到；真机上做过实测（计划书 R47 细则）。
+  const now = Date.now();
+  const t = {
+    id: 'tm' + (++S.timerSeq),
+    label: label || ('计时 ' + humanDur(sec)),
+    total: sec,
+    endAt: now + sec * 1000,   // running 期间的唯一真相
+    left: sec,                 // 暂停时冻结在这里；running 时由 endAt 现算
+    running: true,
+    done: false,
+    float: !!float
+  };
+  S.timers.push(t);
+  S.timerFocus = t.id;
   S.fab = { x:null, y:null };
   renderOverlays();
-  toast('已开始计时 · ' + (label || humanDur(sec)) + (float ? '（悬浮窗会一直跟着你）' : ''));
+  const n = S.timers.length;
+  toast('已开始计时 · ' + t.label + (n > 1 ? '（并行第 ' + n + ' 个）' : '') + (float ? '（悬浮窗会一直跟着你）' : ''));
 }
 function updateTimerDOM() {
-  const t = S.timer; if (!t) return;
+  const t = activeTimer(); if (!t) return;
   const pct = t.total ? (1 - t.left / t.total) : 0;
   const arcF = document.getElementById('tfArc');
   if (arcF) {
@@ -6378,15 +6685,12 @@ function updateTimerDOM() {
 }
 setInterval(function () {
   const now = Date.now();
-  const dt = Math.min(1.5, (now - lastTick) / 1000);
-  lastTick = now;
-  const t = S.timer;
-  if (!t || !t.running) return;
-  t.left -= dt;
-  if (t.left <= 0) {
-    t.left = 0; t.running = false; t.done = true;
+  const fired = syncTimers(now);
+  if (fired.length) {
+    fired.forEach(function (t) { toast('时间到 · ' + t.label); });
+    // FR-COOK-14：震动这一路在有震动的设备上顺带把「静音时只剩震动与视觉」试出来
+    if (fired.length && navigator.vibrate) { try { navigator.vibrate([180, 90, 180]); } catch (err) {} }
     renderOverlays();
-    toast('时间到 · ' + t.label);
     return;
   }
   updateTimerDOM();
@@ -6417,7 +6721,7 @@ function toast(msg, opts) {
 /* ═══════════════════ 右侧屏幕导航 ═══════════════════ */
 const NAV_INDEX = [
   { g:'主标签', items:[
-    ['recipes','菜谱库'], ['menus','菜单'], ['prep','备菜待办'], ['calendar','日历'], ['me','我的'] ] },
+    ['recipes','菜谱库'], ['menus','菜单'], ['prep','厨房'], ['calendar','日历'], ['me','我的'] ] },
   { g:'做菜', items:[
     ['cooking','做菜模式',{ id:'r1' }], ['schedule','烹饪时间轴'], ['recipe-detail','菜品详情',{ id:'r2' }] ] },
   { g:'厨房', items:[
@@ -6761,6 +7065,28 @@ document.addEventListener('click', function (e) {
     el.setAttribute('aria-pressed', 'true');
     return;
   }
+  /* R47 · 厨房偏好：真状态在 S.prefs，翻了要重渲染（就地改文字与档位） */
+  if (act === 'pref-switch') {
+    var k = el.dataset.pref;
+    if (!(k in S.prefs)) return;
+    S.prefs[k] = !S.prefs[k];
+    /* R47 · 开关只管「要不要通知」；授权是系统弹框，只能由 notify-perm 那一行发起，
+       这里绝不能翻个开关就把自己算成已授权（那是假绿的原型版） */
+    renderScreen();
+    return;
+  }
+  /* R47 · 发起系统通知授权。真机在这里调 requestNotificationsPermission()，
+     原型只能模拟「用户点了允许」；被拒那一支走 denied 文案与入口行的措辞 */
+  if (act === 'notify-perm') {
+    S.notifyPerm = 'granted';
+    renderScreen();
+    return;
+  }
+  if (act === 'lead-pick') {
+    S.prefs.mealLead = parseInt(el.dataset.min, 10) || 90;
+    renderScreen();
+    return;
+  }
   if (act === 'toggle-on') {
     el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     return;
@@ -6780,28 +7106,54 @@ document.addEventListener('click', function (e) {
     return;
   }
   if (act === 'demo-timer') { startTimer(300, '5分钟'); return; }
+  /* ★ 每个操作都按 data-id 认实例：并行计时器要「独立运行、独立提醒」（FR-COOK-04），
+     拿全局那一份来 toggle 会让两个锅共用一个暂停键。 */
+  function timerOf(el) {
+    const id = el && el.dataset ? el.dataset.id : null;
+    return id ? (S.timers.find(function (x) { return x.id === id; }) || null) : activeTimer();
+  }
   if (act === 'timer-toggle') {
-    if (!S.timer) return;
-    if (S.timer.done) { S.timer.left = S.timer.total; S.timer.done = false; }
-    S.timer.running = !S.timer.running;
+    const t = timerOf(el); if (!t) return;
+    if (t.done) { t.left = t.total; t.done = false; t.endAt = Date.now() + t.total * 1000; t.running = true; }
+    else if (t.running) { t.left = Math.max(0, (t.endAt - Date.now()) / 1000); t.running = false; } // 暂停：把剩余量冻结下来
+    else { t.endAt = Date.now() + t.left * 1000; t.running = true; }                                // 续跑：重新算目标戳
     renderOverlays(); return;
   }
   if (act === 'timer-reset') {
-    if (!S.timer) return;
-    S.timer.left = S.timer.total; S.timer.running = false; S.timer.done = false;
+    const t = timerOf(el); if (!t) return;
+    t.left = t.total; t.running = false; t.done = false; t.endAt = Date.now() + t.total * 1000;
     renderOverlays(); toast('计时器已重置'); return;
   }
   if (act === 'timer-set') { startTimer(parseInt(el.dataset.sec, 10), el.textContent.trim()); return; }
   if (act === 'timer-add') {
-    if (!S.timer) return;
-    S.timer.left += parseInt(el.dataset.sec, 10);
-    S.timer.total = Math.max(S.timer.total, S.timer.left);
-    S.timer.done = false;
+    const t = timerOf(el); if (!t) return;
+    // 加时是**改目标戳**，不是改显示值：否则下一次 tick 立刻又把它减回去
+    if (t.running) t.endAt += parseInt(el.dataset.sec, 10) * 1000;
+    else t.left += parseInt(el.dataset.sec, 10);
+    t.total = Math.max(t.total, t.running ? (t.endAt - Date.now()) / 1000 : t.left);
+    t.done = false;
     updateTimerDOM(); return;
   }
-  if (act === 'timer-min') { S.timer.float = true; renderOverlays(); toast('已收成悬浮窗，可拖动'); return; }
-  if (act === 'timer-max') { S.timer.float = false; renderOverlays(); return; }
-  if (act === 'timer-close') { S.timer = null; renderOverlays(); toast('已关闭计时器'); return; }
+  if (act === 'timer-prev' || act === 'timer-next') {
+    if (!S.timers.length) return;
+    const cur = S.timers.findIndex(function (x) { return x.id === (S.timerFocus || (activeTimer() || {}).id); });
+    const step = act === 'timer-next' ? 1 : -1;
+    const next = ((cur < 0 ? 0 : cur + step) + S.timers.length) % S.timers.length;
+    S.timerFocus = S.timers[next].id; renderOverlays(); return;
+  }
+  if (act === 'timer-focus') {
+    const t = timerOf(el); if (!t) return;
+    S.timerFocus = t.id; renderOverlays(); return;
+  }
+  if (act === 'timer-min') { const t = activeTimer(); if (t) t.float = true; renderOverlays(); toast('已收成悬浮窗，可拖动'); return; }
+  if (act === 'timer-max') { const t = activeTimer(); if (t) t.float = false; renderOverlays(); return; }
+  if (act === 'timer-close') {
+    const t = timerOf(el); if (!t) return;
+    S.timers = S.timers.filter(function (x) { return x.id !== t.id; });
+    if (!S.timers.length) S.timerFocus = null;
+    renderOverlays(); toast(S.timers.length ? '已关掉一个计时器（还剩 ' + S.timers.length + ' 个）' : '已关闭计时器');
+    return;
+  }
   if (act === 'fab-drag') return;
 
   /* —— 备菜 —— */
@@ -7237,71 +7589,97 @@ document.addEventListener('click', function (e) {
     return;
   }
 
-  /* —— v1.2：热量估算 —— */
+  /* —— R46：热量估算 / 手填 / 二次编辑 —— */
   if (act === 'nutri-calc') {
     const rid = el.dataset.id;
+    if (!aiReady('nutrition')) { aiNeedSetup(); return; }
     const r = R_MAP[rid];
+    const prev = nutritionOf(rid);
     el.setAttribute('aria-disabled', 'true');
     el.innerHTML = '<span class="ai-spin"></span> 正在让 ' + esc(S.ai.model) + ' 估算…';
     setTimeout(function () {
+      const per = 186 + (r.diff * 24);
+      const serv = nutriServ(prev, r);
       S.nutriEdit[rid] = {
-        per:186 + (r.diff * 24), total:(186 + r.diff * 24) * 4,
-        p:12.4, f:9.1, c:21.6, conf:r.diff >= 3 ? 'medium' : 'high',
-        model:S.ai.model, at:'刚刚', src:'ai',
-        basis:r.ings.slice(0, 4).map(function (i, k) { return { n:i.n, q:i.q, k:40 + k * 36 }; }),
-        note:'按 4 人份估算。实际用油量对结果影响最大。'
+        per: per, total: per * serv, serv: serv,
+        p: 12.4, f: 9.1, c: 21.6, conf: r.diff >= 3 ? 'medium' : 'high',
+        model: S.ai.model, at: '刚刚', src: 'ai',
+        basis: r.ings.slice(0, 4).map(function (i, k) { return { n: i.n, q: i.q, k: 40 + k * 36 }; }),
+        note: '按 ' + serv + ' 人份估算。实际用油量对结果影响最大。'
       };
       if (S.route.name === 'recipe-detail') renderScreen(false);
-      toast('估算完成 · 每份 ≈ ' + S.nutriEdit[rid].per + ' 千卡');
+      toast('估算完成 · 每份 ≈ ' + per + ' 千卡');
     }, 1500);
     return;
   }
   if (act === 'nutri-basis') {
     const n = nutritionOf(el.dataset.id);
     if (!n) return;
+    const r = R_MAP[el.dataset.id];
+    const manual = n.src === 'manual';
+    // 手改过的 AI 值：两段都在，并写明**现在生效的是哪一段**（FR-AI-71）
+    const echo = manual && n.aiPer != null
+      ? '<div class="card pad" style="margin-bottom:14px">' +
+          '<div class="spec"><span class="spec-k">AI 原估 · 每份</span><span class="spec-v" style="color:var(--muted)">≈ ' + n.aiPer + ' 千卡</span></div>' +
+          '<div class="spec"><span class="spec-k">AI 原估 · 整锅</span><span class="spec-v" style="color:var(--muted)">≈ ' + (n.aiTotal || (n.aiPer * nutriServ(n, r))) + ' 千卡</span></div>' +
+          '<div class="divider"></div>' +
+          '<div class="spec"><span class="spec-k"><b>现在生效 · 每份（手填）</b></span><span class="spec-v" style="color:var(--accent);font-weight:700">≈ ' + n.per + ' 千卡</span></div>' +
+        '</div>'
+      : '';
     S.sheet = sheet('热量是怎么算出来的',
+      echo +
       '<p style="font-size:12px;color:var(--ink-2);line-height:1.85;margin-bottom:14px">' +
       '模型按每样食材的常见热量密度逐项折算再求和。<b>估得准不准，主要取决于用油量</b>——这部分模型只能猜。</p>' +
-      '<div class="card pad">' + n.basis.map(function (b) {
+      '<div class="card pad">' + (n.basis || []).map(function (b) {
         return '<div class="spec"><span class="spec-k">' + esc(b.n) + ' · ' + esc(b.q) + '</span>' +
           '<span class="spec-v">≈ ' + b.k + ' 千卡</span></div>';
       }).join('') +
       '<div class="divider"></div>' +
       '<div class="spec"><span class="spec-k">合计（整锅）</span><span class="spec-v">≈ ' + n.total + ' 千卡</span></div>' +
-      '<div class="spec"><span class="spec-k">每份（按 4 人份）</span><span class="spec-v" style="color:var(--ai);font-weight:700">≈ ' + n.per + ' 千卡</span></div>' +
+      '<div class="spec"><span class="spec-k">每份（按 ' + nutriServ(n, r) + ' 人份）</span>' +
+        '<span class="spec-v" style="color:var(--ai);font-weight:700">≈ ' + n.per + ' 千卡</span></div>' +
       '</div>' +
-      '<div class="card pad" style="margin-top:14px;background:var(--amber-bg);border-color:var(--amber-line);padding:12px 14px">' +
-      '<p style="font-size:11px;color:var(--amber);line-height:1.75">' + esc(n.note) + '</p></div>',
+      (n.note ? '<div class="card pad" style="margin-top:14px;background:var(--amber-bg);border-color:var(--amber-line);padding:12px 14px">' +
+        '<p style="font-size:11px;color:var(--amber);line-height:1.75">' + esc(n.note) + '</p></div>' : ''),
       '<button type="button" class="btn btn-primary btn-block" data-act="sheet-close">知道了</button>');
     renderOverlays();
     return;
   }
   if (act === 'nutri-edit') {
-    const n = nutritionOf(el.dataset.id);
-    if (!n) return;
-    S.sheet = sheet('手动调整热量',
-      '<div class="ai-bar" style="margin-bottom:16px">' +
-        '<span class="ico">' + ic('edit', 17) + '</span>' +
-        '<span style="flex:1"><span class="t">自己填的更准</span>' +
-        '<span class="d">改过之后来源会标记为「手动」，不再显示为 AI 估算</span></span></div>' +
-      '<div class="field"><div class="field-label">每份热量（千卡）</div>' +
-        '<input class="input num" value="' + n.per + '" inputmode="numeric"></div>' +
-      '<div class="field"><div class="field-label">份数<span class="field-hint">改份数会自动折算总量</span></div>' +
-        '<input class="input num" value="4" inputmode="numeric"></div>' +
-      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">' +
-        '<div class="field"><div class="field-label">蛋白质 g</div><input class="input num" value="' + n.p + '"></div>' +
-        '<div class="field"><div class="field-label">脂肪 g</div><input class="input num" value="' + n.f + '"></div>' +
-        '<div class="field"><div class="field-label">碳水 g</div><input class="input num" value="' + n.c + '"></div>' +
-      '</div>',
-      '<button type="button" class="btn btn-ghost" style="flex:1" data-act="sheet-close">取消</button>' +
-      '<button type="button" class="btn btn-primary" style="flex:1.4" data-act="nutri-edit-save">' + ic('check', 16) + '保存</button>');
+    const rid = el.dataset.id;
+    const r = R_MAP[rid];
+    const n = nutritionOf(rid);
+    S.nutriForm = {
+      rid: rid,
+      per: n ? n.per : '', total: n ? n.total : '',
+      serv: nutriServ(n, r), p: n ? n.p : '', f: n ? n.f : '', c: n ? n.c : '',
+      warn: false,
+    };
+    S.sheet = sheetNutriEdit(rid);
     renderOverlays();
     return;
   }
   if (act === 'nutri-edit-save') {
-    S.sheet = null;
+    const f = S.nutriForm;
+    if (!f) return;
+    if (f.per == null || f.per <= 0) { toast('每份千卡得填个正数'); return; }
+    if (!f.warn && f.per > 20000) { f.warn = true; S.sheet = sheetNutriEdit(f.rid); renderOverlays(); return; }
+    const rid = f.rid;
+    const prev = nutritionOf(rid);
+    const r = R_MAP[rid];
+    const out = {
+      per: Math.round(f.per), total: Math.round(f.total || f.per * f.serv), serv: f.serv,
+      p: f.p, f: f.f, c: f.c,
+      conf: null, model: prev ? prev.model : null, at: '刚刚', src: 'manual',
+      basis: prev ? prev.basis : null, note: null,
+    };
+    // AI 原值留痕：第一次手改时把 AI 那版的每份/整锅抄下来，之后手改不再覆盖它
+    if (prev && prev.src === 'ai') { out.aiPer = prev.per; out.aiTotal = prev.total; }
+    else if (prev && prev.aiPer != null) { out.aiPer = prev.aiPer; out.aiTotal = prev.aiTotal; }
+    S.nutriEdit[rid] = out;
+    S.nutriForm = null; S.sheet = null;
     renderScreen(false); renderOverlays();
-    toast('已保存为手动数据');
+    toast('已保存 · 每份 ≈ ' + out.per + ' 千卡，来源：手动填写');
     return;
   }
 
@@ -7378,6 +7756,9 @@ document.addEventListener('input', function (e) {
     renderScreen(false);
     const el = document.getElementById('qInput');
     if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (err) {} }
+  } else if (a === 'input-nf') {
+    nutriFormInput(e.target);
+    return;
   } else if (a === 'input-pan') {
     S.pantry.q = e.target.value;
     renderScreen(false);
@@ -7419,7 +7800,7 @@ function boot() {
   renderDevice();
   if (q.timer) {
     startTimer(parseInt(q.timer, 10) || 300, q.label || '5分钟');
-    if (q.float) { S.timer.float = true; renderOverlays(); }
+    if (q.float) { const at = activeTimer(); if (at) at.float = true; renderOverlays(); }
   }
   if (q.sheet === 'filter') { S.sheet = sheetFilter(); renderOverlays(); }
   if (q.sheet === 'prep') { S.sheet = sheetPrep('r2,r8'); renderOverlays(); }
@@ -7435,6 +7816,15 @@ setTimeout(function () { toast('原型已就绪 · 右侧面板可跳转全部�
    boot/S/SCREENS，只能靠这一个显式出口。它不改变任何界面行为。 */
 window.__zaoji = {
   S: S, themes: THEMES, screens: Object.keys(SCREENS),
+  // R47：计时内核的可测出口。S 是 IIFE 里的局部量，以前只暴露了 S 本身，
+  // 走查脚本没法「拨时钟」验证 endAt 法，只能靠真等 10 分钟——那条断言因此一直没被钉过。
+  startTimer: startTimer, syncTimers: syncTimers, activeTimer: activeTimer, renderOverlays: renderOverlays,
+  // R47 第五段：告警卡要能被走查「按同一份数据算期望」与「造空数据」——
+  // 拿 DOM 读数反推 DOM 是假绿，所以把数据本体与重绘口一起交出去。
+  PANTRY: PANTRY, renderScreen: renderScreen,
+  // R47 第六段：投待办的判定与摘要要能被走查「按同一份数据算期望」与「造空数据」，
+  // 拿 DOM 读数反推 DOM 是假绿，所以交出去的是数据本体和算法，不是渲染结果。
+  MENUS: MENUS, mealTodoTargets: mealTodoTargets, mealDigest: mealDigest,
   setTheme: function (id) { setTheme(id); },
   goto: function (screen, theme, mode) {
     location.hash = 'mode=' + (mode || S.mode) + '&theme=' + (theme || S.theme) +
