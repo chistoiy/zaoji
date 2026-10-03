@@ -565,6 +565,33 @@ const List<TableSpec> kTables = [
       ColumnSpec('pref_value', 'TEXT', notNull: true, comment: 'JSON 值'),
     ],
   ),
+  TableSpec(
+    name: 'media_blob',
+    scope: TableScope.localOnly,
+    comment: 'R49：照片字节的本机权威存储。保存必落这里，上传只是异步补传'
+        '（uploaded=0 即待传队列）。不设容量上限，随永久删除清。',
+    columns: [
+      ColumnSpec('sha', 'TEXT', primaryKey: true,
+          comment: '内容寻址，与服务端 /api/media/<sha> 同一个哈希'),
+      ColumnSpec('bytes', 'BLOB', notNull: true),
+      ColumnSpec('size', 'INTEGER', notNull: true, comment: '字节数'),
+      ColumnSpec('created_at', 'TEXT', notNull: true, comment: '毫秒时间戳'),
+      ColumnSpec('uploaded', 'INTEGER', notNull: true, defaultSql: '0',
+          comment: '0=还没传到服务端，1=已确认'),
+    ],
+  ),
+  TableSpec(
+    name: 'pending_purge',
+    scope: TableScope.localOnly,
+    comment: 'R49：欠服务端的永久删除补账队列（离线/老服务端时本机先删，'
+        '同步成功后逐条重放 /api/purge）。在账期间拉取跳过该行 upsert 防复活。',
+    constraints: ['PRIMARY KEY (tbl, row_id)'],
+    columns: [
+      ColumnSpec('tbl', 'TEXT', notNull: true),
+      ColumnSpec('row_id', 'TEXT', notNull: true),
+      ColumnSpec('requested_at', 'TEXT', notNull: true, comment: '入队时刻（毫秒）'),
+    ],
+  ),
 ];
 
 /// 当前 schema 版本。**只增不减**。
@@ -586,7 +613,10 @@ const List<TableSpec> kTables = [
 /// v7 → v8：R44 纯增表 `ai_prompts` + `ai_runs`（都是 serverOnly，客户端不建），
 /// **外加 `ai_usage`（localOnly）补 run_ref/summary 两列——第四例改列**。
 /// 新表靠两端 createSql 幂等补建，改列走逐字共用的 [kSchemaV8AlterSql]。
-const int kSchemaVersion = 8;
+/// v8 → v9：R49 纯增表 `media_blob` + `pending_purge`（都是 localOnly，
+/// 客户端建、服务端按 isSynced 过滤根本不建）——回到"纯增表"安全路径，
+/// 无改列脚本、无协议版本变化。
+const int kSchemaVersion = 9;
 
 /// v4 → v5 的列迁移语句（服务端与 App 的 onUpgrade **逐字共用**）。
 /// UPDATE 里的值都是 64 位小写十六进制（MediaStore 入库前已验格式），
