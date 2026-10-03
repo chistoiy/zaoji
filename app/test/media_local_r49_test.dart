@@ -138,4 +138,26 @@ void main() {
     expect(await e2.putMediaLocal(bytes3), sha);
     expect(await e2.fetchMediaCached(sha), bytes3); // 没网络也读得到
   });
+
+  // ── R49·T3 工装自证：假服务端收得下 PUT、存得回字节、点得死一张 ──
+
+  test('★ 工装自证：PUT 上传入账，GET 回同一字节；failMediaPutSha 一次性', () async {
+    final bytes = Uint8List.fromList([5, 4, 4, 3, 3, 3]);
+    final sha = shaOf(bytes);
+    final t = HttpSyncTransport(Uri.parse(server.url), nodeId: 'testnode01');
+    addTearDown(t.close);
+
+    await t.putBytes('/api/media/$sha', bytes); // open 模式匿名可传（同真服务端）
+    expect(server.putMedia[sha], bytes, reason: '上传必须真的存进假服务端');
+    expect(await t.getBytes('/api/media/$sha'), bytes,
+        reason: 'GET 优先回存过的真字节，不是预置假载荷');
+
+    server.failMediaPutSha = sha;
+    await expectLater(
+      t.putBytes('/api/media/$sha', Uint8List.fromList([0])),
+      throwsA(isA<SyncTransportException>()
+          .having((e) => e.statusCode, 'status', 500)),
+    );
+    expect(server.failMediaPutSha, isNull, reason: '开关是一次性的');
+  });
 }

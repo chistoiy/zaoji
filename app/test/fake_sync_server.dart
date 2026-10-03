@@ -44,9 +44,17 @@ class FakeSyncServer {
   /// 匿名（无 token）请求带来过的 X-Node-Id，测试断言"每一台各自登记"用。
   final visitorNodes = <String>[];
 
-  /// 媒体请求的完整路径（含 query）。用来钉死「列表拉的是 640 档而不是原图」——
-  /// 这类退化不会报错，只会让手机白白多解一张 1600px 的图。
+  /// 媒体请求的完整路径（含 query）。R49 本机优先后正常只该见到**原图**一发——
+  /// 记路径就是为了钉「不再按 ?w= 档位各打一发」（旧 R17 口径随本批作废）。
   final mediaPaths = <String>[];
+
+  /// R49：收到的媒体上传（sha → 真字节）。GET 优先回这里存过的货，
+  /// 补传链路（drain → PUT → 再 GET 对账）才能在测试内闭环。
+  final putMedia = <String, Uint8List>{};
+
+  /// R49：点名这张 sha 的下一发 PUT 回 500（一次性，用完自清）。
+  /// 演「服务端单张拒收」——补传必须不拦其余。
+  String? failMediaPutSha;
 
   // ── R27 AI（镜像真服务端 /api/ai/* 的形状）──
   // 状态是**可编程的**：配置写进来即翻成 configured/enabled，
@@ -177,6 +185,8 @@ class FakeSyncServer {
     lastPullQuery = null;
     latency = Duration.zero;
     mediaPaths.clear();
+    putMedia.clear();
+    failMediaPutSha = null;
     accessMode = 'pairCode';
     passcode = null;
     visitorManualSync = false;
@@ -289,10 +299,22 @@ class FakeSyncServer {
   Future<void> _handle(HttpRequest req) async {
     if (latency > Duration.zero) await Future<void>.delayed(latency);
     try {
-      final body = await utf8.decoder.bind(req).join();
-      final json = body.isEmpty
-          ? <String, Object?>{}
-          : (jsonDecode(body) as Map).cast<String, Object?>();
+      // R49：先按**字节**收体——媒体 PUT 传的是图片本体，utf8/json 解不动；
+      // JSON 接口拿不到 json 会因缺字段自然报错，与旧行为同形。
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in req) {
+        builder.add(chunk);
+      }
+      final raw = builder.takeBytes();
+      Map<String, Object?> json;
+      try {
+        final text = utf8.decode(raw);
+        json = text.isEmpty
+            ? <String, Object?>{}
+            : (jsonDecode(text) as Map).cast<String, Object?>();
+      } catch (_) {
+        json = <String, Object?>{};
+      }
 
       late int status = 200;
       late Map<String, Object?> res;
@@ -374,8 +396,33 @@ class FakeSyncServer {
           return;
         }
         final sha = req.uri.pathSegments.last;
+        // R49：PUT = 上传本体（补传链路的服务端侧）。鉴权已过，直接入账。
+        if (req.method == 'PUT') {
+          if (failMediaPutSha == sha) {
+            failMediaPutSha = null; // 一次性开关，用完自清
+            req.response.statusCode = 500;
+            req.response.write(jsonEncode({'error': 'induced_failure'}));
+            await req.response.close();
+            return;
+          }
+          putMedia[sha] = raw;
+          req.response.statusCode = 200;
+          req.response.write(jsonEncode({'ok': true}));
+          await req.response.close();
+          return;
+        }
         final w = req.uri.queryParameters['w'];
         mediaPaths.add(w == null ? '/api/media/$sha' : '/api/media/$sha?w=$w');
+
+        // 传过的货优先原样回——补传后 GET 对账钉的是真字节往返。
+        final stored = putMedia[sha];
+        if (stored != null) {
+          req.response.statusCode = 200;
+          req.response.headers.contentType = ContentType('image', 'jpeg');
+          req.response.add(stored);
+          await req.response.close();
+          return;
+        }
 
         if (w != null && w != '640' && w != '1280') {
           // 白名单外一律 400，**不做「不认识就回原图」的静默降级**
