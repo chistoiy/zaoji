@@ -608,10 +608,26 @@ class _MePageState extends State<MePage> {
             spacing: 8,
             children: [
               for (final m in SyncMode.values)
+                // R49 补：默认 M3 选中底在这套暖纸色板上几乎看不出来，
+                // 用户点默认那颗（双向合并）读不到任何反馈——选中态必须
+                // 一眼可辨（底色加深 + 勾 + 字重字色），对齐原型 .pick。
                 FilterChip(
                   key: ValueKey('sync-mode-${m.wire}'),
-                  label: Text(m.label, style: const TextStyle(fontSize: 12)),
+                  label: Text(
+                    m.label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: engine.syncMode == m
+                          ? FontWeight.w700
+                          : FontWeight.w400,
+                      color: engine.syncMode == m
+                          ? context.zj.accentDeep
+                          : context.zj.ink2,
+                    ),
+                  ),
                   selected: engine.syncMode == m,
+                  selectedColor: context.zj.aiBg,
+                  checkmarkColor: context.zj.accent,
                   onSelected: (_) => engine.setSyncMode(m),
                 ),
             ],

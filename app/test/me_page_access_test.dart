@@ -357,4 +357,29 @@ void main() {
         reason: 'drain 补传完，账归零，这行就该走');
     engine.dispose();
   });
+
+  testWidgets('R49 补：策略 chip 的选中态一眼可辨且会迁移', (tester) async {
+    // chip 区只在「已接入 / 免配对」下摆出来（未接入点了只会报错）——
+    // 用 open 模式进这个态，同 FR-DATA-05 那条用例的搭法。
+    server.accessMode = 'open';
+    await pumpMe(tester, saveServerUrl: false, presetUrl: server.url);
+    FilterChip chip(String wire) => tester.widget<FilterChip>(
+        find.byKey(ValueKey('sync-mode-$wire')));
+    // 默认双向合并就是选中态——用户点它"没反应"是因为它**已经是它**；
+    // 前提是这份选中必须看得见。
+    expect(chip('bidir').selected, isTrue);
+    expect(chip('upload').selected, isFalse);
+    final bidirLabel = tester.widget<Text>(
+        find.descendant(
+            of: find.byKey(const ValueKey('sync-mode-bidir')),
+            matching: find.byType(Text)));
+    expect(bidirLabel.style?.fontWeight, FontWeight.w700,
+        reason: '选中那颗加粗——色板差异之外要有机可断的视觉差');
+
+    await tester.tap(find.byKey(const ValueKey('sync-mode-upload')));
+    await settleReal(tester, done: () => engine.syncMode == SyncMode.upload);
+    expect(chip('upload').selected, isTrue, reason: '点一下，高亮必须搬家');
+    expect(chip('bidir').selected, isFalse);
+    engine.dispose();
+  });
 }
