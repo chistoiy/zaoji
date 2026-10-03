@@ -942,6 +942,9 @@ class SyncEngine extends ChangeNotifier {
   /// 哈希在**本地**算好当 URL 用——服务端会重算比对，不一致就拒绝，
   /// 所以这里传错了也传不进去。返回内容哈希，给 `recipe.cover_sha256` 引用。
   /// 未配对 / 网络失败原样抛（编辑页决定怎么降级：提示后继续保存无封面）。
+  ///
+  /// ★ R49 起编辑页保存**不再走这条**（改 [putMediaLocal]，上传由
+  /// [_drainLocalQueues] 异步补传）；这里保留给补传出口与既有测试用。
   Future<String> uploadMedia(Uint8List bytes) async {
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
@@ -956,37 +959,96 @@ class SyncEngine extends ChangeNotifier {
     return sha;
   }
 
-  /// 按内容哈希拉取图片字节（带内存缓存，见 [_mediaCacheCap]）。
+  /// R49：把照片字节写进**本机权威存储**（内容寻址，单条自动提交写——
+  /// 不套事务，绕开 R41 Web 冲盘坑）。返回 sha 给 recipe 列引用。
+  /// 已存在就不重写、也不动 uploaded（传过的图不会被倒退回待传）。
+  Future<String> putMediaLocal(Uint8List bytes) async {
+    final sha = crypto.sha256.convert(bytes).toString();
+    await _db.customInsert(
+      'INSERT OR IGNORE INTO media_blob '
+      '(sha, bytes, size, created_at, uploaded) VALUES (?, ?, ?, ?, 0)',
+      variables: [
+        Variable<String>(sha),
+        Variable<Uint8List>(bytes),
+        Variable<int>(bytes.length),
+        Variable<String>('${_now().millisecondsSinceEpoch}'),
+      ],
+    );
+    await refreshPendingMediaCount();
+    return sha;
+  }
+
+  int _pendingMedia = 0;
+
+  /// 还没传到服务端的照片张数（同步卡「N 张照片待上传」读它）。
+  int get pendingMediaCount => _pendingMedia;
+
+  Future<void> refreshPendingMediaCount() async {
+    final rows = await _db
+        .customSelect('SELECT COUNT(*) AS n FROM media_blob WHERE uploaded = 0')
+        .get();
+    final n = (rows.first.data['n'] as num).toInt();
+    if (n != _pendingMedia) {
+      _pendingMedia = n;
+      notifyListeners();
+    }
+  }
+
+  /// 按内容哈希取图片字节（R49 起**本机优先**）。
   ///
-  /// [width] 为 null → **原图**（客户端压过的 1600px/q82）；
-  /// 传档位 → 该档**缩略图**，字节由服务端按需派生并缓存。
-  /// 只有 [MediaWidth] 里那两档有效——服务端是白名单，别的宽度一律 400
-  /// （刻意不做「不认识就回原图」的静默降级）。
+  /// 顺序：内存缓存 → 本机 `media_blob` → 服务端**原图**（拉回必落盘，
+  /// 这张图从此离线可看，且服务端已有 → uploaded=1）。
+  /// [width] 只影响内存缓存分格，不再决定向服务端要哪一档——
+  /// 缩略显示由显示端解码期缩放（`CoverImage` 的 cacheWidth）。
   ///
   /// 未配对 / 404 / 网络失败都返回 null：显示端降级为封面插画，
-  /// 把「没有封面」当常态处理，而不是当错误弹窗。
+  /// 把「没有照片」当常态处理，而不是当错误弹窗。
   Future<Uint8List?> fetchMediaCached(String sha, {int? width}) async {
     final key = _mediaKey(sha, width);
     final hit = _mediaCache[key];
     if (hit != null) return hit;
 
+    final local = await _db
+        .customSelect(
+          'SELECT bytes FROM media_blob WHERE sha = ?',
+          variables: [Variable<String>(sha)],
+        )
+        .getSingleOrNull();
+    if (local != null) {
+      final bytes = local.data['bytes'] as Uint8List;
+      _rememberMedia(key, bytes);
+      return bytes;
+    }
+
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
     if (serverUrl == null) return null;
     try {
-      final path =
-          width == null ? '/api/media/$sha' : '/api/media/$sha?w=$width';
       final bytes = await (await _transportOf(
         serverUrl,
-      )).getBytes(path, token: token);
-      if (_mediaCache.length >= _mediaCacheCap) {
-        _mediaCache.remove(_mediaCache.keys.first);
-      }
-      _mediaCache[key] = bytes;
+      )).getBytes('/api/media/$sha', token: token);
+      await _db.customInsert(
+        'INSERT OR IGNORE INTO media_blob '
+        '(sha, bytes, size, created_at, uploaded) VALUES (?, ?, ?, ?, 1)',
+        variables: [
+          Variable<String>(sha),
+          Variable<Uint8List>(bytes),
+          Variable<int>(bytes.length),
+          Variable<String>('${_now().millisecondsSinceEpoch}'),
+        ],
+      );
+      _rememberMedia(key, bytes);
       return bytes;
     } catch (_) {
       return null;
     }
+  }
+
+  void _rememberMedia(String key, Uint8List bytes) {
+    if (_mediaCache.length >= _mediaCacheCap) {
+      _mediaCache.remove(_mediaCache.keys.first);
+    }
+    _mediaCache[key] = bytes;
   }
 
   // ───────────────────── R38 · 存活 / 差异 / 进度 ─────────────────────

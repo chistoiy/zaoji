@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:drift/drift.dart' show Variable;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -221,54 +223,44 @@ void main() {
     expect(await SyncPrefs(store.dbOrNull!).isPaired(), isFalse);
   });
 
-  group('图片分级拉取（R17）', () {
-    test('★ 列表拉 640 档、详情拉 1280 档——都不去拉 1600px 原图', () async {
+  group('图片本机优先（R49 改口径，原 R17 按档分级作废）', () {
+    test('★ 首次取图只拉**原图**一份并落盘；任何档位再取零请求', () async {
       await paired();
       final sha = 'a' * 64;
 
       final card = await engine.fetchMediaCached(sha, width: MediaWidth.card);
+      // 拿回的是原图字节——缩略显示由 CoverImage 解码期 cacheWidth 负责，
+      // 不再按档位向服务端要派生图（本机有了，档位概念就退场了）。
+      expect(utf8.decode(card!), 'full:$sha');
+      expect(server.mediaPaths, ['/api/media/$sha'],
+          reason: '不带 ?w=：一次拉齐，之后离线可看');
+
       final detail =
           await engine.fetchMediaCached(sha, width: MediaWidth.detail);
-
-      expect(card, isNotNull);
-      expect(detail, isNotNull);
-      expect(utf8.decode(card!), 'w640:$sha');
-      expect(utf8.decode(detail!), 'w1280:$sha');
-      expect(server.mediaPaths,
-          ['/api/media/$sha?w=640', '/api/media/$sha?w=1280']);
-      expect(server.mediaPaths.any((p) => !p.contains('?w=')), isFalse,
-          reason: '原图 200~500 KB，列表根本看不出与 640 档的差别——一屏 6 张就是几 MB');
+      expect(utf8.decode(detail!), 'full:$sha');
+      expect(server.mediaPaths.length, 1,
+          reason: '第二档必须从本机/内存出，不许按档位各打一发');
     });
 
-    test('★ 缓存按 (sha, 档位) 分格：重复 build 不再发请求，三档互不串味', () async {
-      await paired();
-      final sha = 'b' * 64;
-      await engine.fetchMediaCached(sha, width: MediaWidth.card);
-      await engine.fetchMediaCached(sha, width: MediaWidth.detail);
-      final before = server.mediaPaths.length;
-
-      await engine.fetchMediaCached(sha, width: MediaWidth.card);
-      await engine.fetchMediaCached(sha, width: MediaWidth.detail);
-      expect(server.mediaPaths.length, before, reason: '两档各自命中缓存');
-
-      final full = await engine.fetchMediaCached(sha);
-      expect(utf8.decode(full!), 'full:$sha',
-          reason: '原图是第三格缓存，不能被缩略图顶掉（否则详情看到的是缩略图放大的糊图）');
-      expect(server.mediaPaths.length, before + 1);
+    test('★ 本机命中优先于网络：库里有字节就一发请求都不发', () async {
+      final bytes = Uint8List.fromList([9, 9]);
+      final sha = crypto.sha256.convert(bytes).toString();
+      await engine.putMediaLocal(bytes);
+      // 没配对（无 serverUrl）也读得出——照片是本机资产，接入与否不影响看。
+      expect(await engine.fetchMediaCached(sha), bytes);
+      expect(server.mediaPaths, isEmpty);
     });
 
-    test('未配对 / 404 / 档位非法 → 一律 null，绝不把异常抛给 UI', () async {
+    test('未配对 / 服务端没有这张图 → 一律 null，绝不把异常抛给 UI', () async {
       final sha = 'c' * 64;
-      // ① 未配对：没有 token 就不该发请求
+      // ① 未配对：没有地址就不该发请求
       expect(await engine.fetchMediaCached(sha, width: MediaWidth.card), isNull);
       expect(server.mediaPaths, isEmpty);
 
       await paired();
-      // ② 服务端没有这张图
+      // ② 服务端没有这张图（404）
       expect(
           await engine.fetchMediaCached('d' * 64, width: MediaWidth.card), isNull);
-      // ③ 档位不在白名单（服务端 400，不是"回原图"）
-      expect(await engine.fetchMediaCached(sha, width: 333), isNull);
     });
   });
 

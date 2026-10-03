@@ -5,12 +5,13 @@ import 'package:flutter/material.dart';
 import '../data/sync/sync_scope.dart';
 import '../theme.dart';
 
-/// 封面照片（按 sha256 从服务端按需拉取，引擎内存缓存）。
+/// 封面照片（R49 起**本机优先**：字节在 SyncEngine 的 media_blob 里，
+/// 本机没有才去服务端拉原图并落盘；引擎另有 96 条内存缓存）。
 ///
-/// [width] 决定拉原图还是哪一档缩略图（见 `MediaWidth`）：
-/// **列表传 `MediaWidth.card`，详情传 `MediaWidth.detail`**。
-/// 默认 null = 原图——只有在"看到的尺寸确实接近原图"时才该用，
-/// 否则就是在为一张会被缩小显示的图付全额的流量、解码和内存。
+/// [width] 不再决定向服务端要哪一档——它现在是**解码期缩放**的目标宽度
+/// （`cacheWidth`）：列表传 `MediaWidth.card`，详情传 `MediaWidth.detail`。
+/// 默认 null = 按原图尺寸解码——只有在"看到的尺寸确实接近原图"时才该用，
+/// 否则就是在为一张会被缩小显示的图付全额的解码和内存。
 ///
 /// **任何失败都退化为透明**：这个组件叠在封面插画（DishArt）之上，
 /// 未配对 / 不存在 / 网络失败时插画自然透出来，调用方不需要写任何分支——
@@ -41,6 +42,7 @@ class CoverImage extends StatelessWidget {
         return Image.memory(
           bytes,
           fit: fit,
+          cacheWidth: width,
           gaplessPlayback: true,
           errorBuilder: (_, _, _) => const SizedBox.shrink(),
         );
