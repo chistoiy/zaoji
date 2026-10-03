@@ -7,7 +7,6 @@ import 'package:zaoji/data/recipe_store.dart';
 import 'package:zaoji/data/sync/sync_engine.dart';
 import 'package:zaoji/data/sync/sync_prefs.dart';
 import 'package:zaoji/data/sync/sync_transport.dart';
-import 'package:zaoji/models.dart';
 
 import 'fake_sync_server.dart';
 
