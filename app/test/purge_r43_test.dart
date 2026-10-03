@@ -122,12 +122,19 @@ void main() {
       expect((await store.listDeleted()).map((e) => e.id), isNot(contains('r1')));
     });
 
-    test('没接入服务端：一次请求都不发，本机数据一行不动', () async {
-      final before = await countRows(store, 'SELECT COUNT(*) AS c FROM recipe');
+    test('没接入服务端（R49 改口径）：一次请求都不发，本机直删、不入队', () async {
+      // 旧口径"没接入就不许删"把单机手机的回收站钉死了——纯单机没有
+      // "别的设备"要通知，直删就是完整语义（设计 §6 分支①）。
       final err = await engine.purgeRecipePermanently('r1');
-      expect(err, isNotNull, reason: '没接入也要给人看的原话，不是静默失败');
+      expect(err, isNull);
       expect(server.purgeCount, 0, reason: '连地址都没有，不该打任何请求');
-      expect(await countRows(store, 'SELECT COUNT(*) AS c FROM recipe'), before);
+      expect(
+          await countRows(store, "SELECT COUNT(*) AS c FROM recipe WHERE id='r1'"),
+          0);
+      final q = await store.dbOrNull!
+          .customSelect('SELECT COUNT(*) AS c FROM pending_purge')
+          .getSingle();
+      expect(q.read<int>('c'), 0, reason: '没欠任何人的账');
     });
 
     test('服务端说"这行还没进回收站"，本机就不许删（顺序是安全的一部分）', () async {
@@ -173,27 +180,33 @@ void main() {
           await countRows(storeB, "SELECT COUNT(*) AS c FROM recipe WHERE id='r2'"), 1);
     });
 
-    test('★ 服务端太旧（没有 /api/purge 这条路由）：说清是版本问题，本机一行不动', () async {
+    test('★ 服务端太旧（R49 改口径）：本机照删 + 入队，换新 exe 后自动补广播', () async {
       await paired();
       await trash('r1');
-      // 家里那台现在跑的就是 v0.14.3：这条路由不存在，兜底页回的是 **HTML 404**。
-      // 传输层旧写法把"响应不是 JSON"当网络错误抛出，状态码这条事实就丢了，
-      // 于是话术变成"连不上服务端"——明明连得上，只是它不认识这件事。
+      // 家里那台跑 v0.14.3 时这条路由不存在，兜底页回的是 **HTML 404**。
+      // 旧口径"本机一行不动"等于被旧 exe 绑架；现在删照删、账入队，
+      // 服务端换新后由同步收尾的 _drainLocalQueues 逐条补上（设计 §6 分支②）。
       server.supportsPurge = false;
 
       final err = await engine.purgeRecipePermanently('r1');
-      expect(err, contains('版本偏旧'), reason: '要给人一句能照着做下去的话：$err');
-      expect(err, isNot(contains('连不上')), reason: '不是连不上：$err');
+      expect(err, isNull, reason: '本机直删就是成功：$err');
       expect(
-          await countRows(store, "SELECT COUNT(*) AS c FROM recipe WHERE id='r1'"), 1,
-          reason: '服务端没认，本机就不许删——这是"先问服务端"那条纪律的另一半');
-      expect(
-          await countRows(
-              store, "SELECT COUNT(*) AS c FROM ingredient WHERE recipe_id='r1'"),
-          greaterThan(0),
-          reason: '子行也不许被顺手清掉');
-      expect(store.deletedItems.map((e) => e.id), contains('r1'),
-          reason: '回收站里那条还在：换了新 exe 之后可以再点一次');
+          await countRows(store, "SELECT COUNT(*) AS c FROM recipe WHERE id='r1'"),
+          0);
+      final q = await store.dbOrNull!
+          .customSelect(
+            "SELECT COUNT(*) AS c FROM pending_purge WHERE tbl='recipe' "
+            "AND row_id='r1'")
+          .getSingle();
+      expect(q.read<int>('c'), 1, reason: '这笔欠账挂着');
+
+      server.supportsPurge = true; // 家里换了新 exe
+      await engine.sync();
+      expect(server.rows['recipe']!['r1'], isNull, reason: '补广播到了服务端');
+      final q2 = await store.dbOrNull!
+          .customSelect("SELECT COUNT(*) AS c FROM pending_purge")
+          .getSingle();
+      expect(q2.read<int>('c'), 0, reason: '账销');
     });
 
     test('重复点永久删除是幂等的：第二次不再广播', () async {

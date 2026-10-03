@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' as crypto;
@@ -254,47 +255,61 @@ class SyncEngine extends ChangeNotifier {
     }
   }
 
-  /// R43 · 永久删除回收站里的东西（FR-DATA-13）。
+  /// R43 · 永久删除回收站里的东西（FR-DATA-13）；R49 改三分支口径。
   ///
-  /// **顺序是刻意的：先问服务端，服务端认了才删本机。**
-  /// 反过来做会留一条复活路径——别台设备的回收站里那条还在、还能点「恢复」，
-  /// 一推就回到你这台机器上，而用户已经看见"已永久删除"了。
-  /// 这种"删了又回来"比不删更伤信任，所以宁可多一次往返。
+  /// **已接入且连得上：先问服务端，服务端认了才删本机**（R43 原序不变）——
+  /// 反过来会留复活路径：别台设备的回收站里那条还能「恢复」，一推就回来。
   ///
-  /// 返回 null = 成功；否则是给人看的失败原因。不抛（与 [resolveConflicts] 同一口径：
-  /// 这是用户点一下就要看到结果的动作，不能靠上层 try/catch 兜）。
+  /// R49（设计 §6）把另外两种情况放行：
+  /// ① **未接入 = 纯单机**——没有"别的设备"要通知，直删完事（旧行为是拒绝，
+  ///    单机手机的回收站永远清不掉）；
+  /// ② **连不上 / 超时 / 老服务端 404**——本机照删，账入 `pending_purge`，
+  ///    同步成功后由 [_drainLocalQueues] 逐条补广播；在账期间拉取跳过该行
+  ///    upsert（[_applyPulled] 的防复活闸），R43 担心的复活被这道闸堵死。
+  ///
+  /// 返回 null = 成功（含"离线本机直删，欠账待补"）；否则是给人看的失败原因。
+  /// 不抛（用户点一下就要看到结果，不能靠上层 try/catch 兜）。
   Future<String?> purgeRecipePermanently(String recipeId) async {
     final serverUrl = await _prefs.serverUrl();
     if (serverUrl == null) {
-      _fail('还没接入服务端，无法永久删除');
-      return '这台设备还没接入服务端，先完成接入再永久删除（回收站里的东西本身不受影响）';
+      // R49 分支①：纯单机直删，不入队。
+      await _purgeRecipeWithMedia(recipeId);
+      await refreshPendingMediaCount();
+      _lastError = null;
+      notifyListeners();
+      return null;
     }
     final token = await _prefs.token();
     final List<Map<String, Object?>> results;
     try {
-      final res = await (await _transportOf(serverUrl)).post('/api/purge', {
-        'rows': [
-          {'tbl': 'recipe', 'id': recipeId}
-        ]
-      }, token: token);
+      final res = await (await _transportOf(serverUrl))
+          .post('/api/purge', {
+            'rows': [
+              {'tbl': 'recipe', 'id': recipeId}
+            ]
+          }, token: token)
+          // 同 R49 闸门口径：这笔不能无限挂（回收站点删除等半天没反馈）。
+          .timeout(const Duration(seconds: 10));
       results = (res['results'] as List? ?? const [])
           .cast<Map>()
           .map((r) => r.map((k, v) => MapEntry('$k', v)))
           .toList();
     } on SyncTransportException catch (e) {
-      // 404 在这条调用上只有一个意思：**对面那台服务端还没有 /api/purge 这个路由**
-      // （v0.14.3 及更早的 exe 就是这种状态）。这时给人看"连不上"是误导——
-      // 连得上，只是它不认识这件事。本机照样一行不动。
       if (e.statusCode == 404) {
-        _fail('服务端不认识 /api/purge（HTTP 404）');
-        return '这台服务端还不认识永久删除（服务端版本偏旧），'
-            '本机数据一行没动；把服务端的 exe 换到 v0.15.0 及以后就能用';
+        // R49 分支②：老服务端没有这条路由（v0.14.3 及更早的 exe）。
+        // 旧口径是"本机一行不动"——那等于单机被旧 exe 绑架；现在照删 + 入队，
+        // 家里换新版后自动补广播。
+        await _purgeRecipeOffline(recipeId);
+        return null;
       }
       _fail(e.message);
-      return e.message;
-    } on SyncNetworkException catch (e) {
-      _fail('连不上服务端：${e.message}');
-      return '连不上服务端，这笔永久删除没有执行（本机数据一行没动）';
+      return e.message; // 401/409/5xx：语义不变，不删不入队
+    } on SyncNetworkException {
+      await _purgeRecipeOffline(recipeId);
+      return null; // "本机已删"是事实；补广播是引擎的账
+    } on TimeoutException {
+      await _purgeRecipeOffline(recipeId);
+      return null; // 同上；服务端若其实收了，重放是幂等的（行已不在 → 出队认销）
     }
     final bad = results.where((r) => r['outcome'] == 'rejected').toList();
     if (bad.isNotEmpty) {
@@ -303,11 +318,121 @@ class SyncEngine extends ChangeNotifier {
     }
     // 服务端已经收下并广播 purge，本机立刻物理清掉，不等下一轮拉取——
     // 用户点完就该从回收站里消失，"等下次同步再不见"是骗人的。
-    await _purgeLocalRecipe(recipeId);
+    await _purgeRecipeWithMedia(recipeId);
+    await refreshPendingMediaCount();
     await _onDataApplied?.call();
     _lastError = null;
     notifyListeners();
     return null;
+  }
+
+  /// R49 离线直删 + 补账：recipe 连同**它当前的子行 id 一起入队**——
+  /// 只入 recipe 的账，离线期间别端改了某子行，拉回来会撞外键炸整轮同步
+  /// （客户端 `PRAGMA foreign_keys = ON`，R43 的 B 设备测试领教过这个方向）。
+  Future<void> _purgeRecipeOffline(String recipeId) async {
+    final now = '${_now().millisecondsSinceEpoch}';
+    await _enqueuePurge('recipe', recipeId, now);
+    for (final tbl in const ['ingredient', 'step']) {
+      final kids = await _db
+          .customSelect(
+            'SELECT id FROM $tbl WHERE recipe_id = ?',
+            variables: [Variable<String>(recipeId)],
+          )
+          .get();
+      for (final k in kids) {
+        await _enqueuePurge(tbl, k.read<String>('id'), now);
+      }
+    }
+    await _purgeRecipeWithMedia(recipeId);
+    await refreshPendingMediaCount();
+    notifyListeners();
+  }
+
+  Future<void> _enqueuePurge(String tbl, String rowId, String at) =>
+      _db.customInsert(
+        'INSERT OR IGNORE INTO pending_purge (tbl, row_id, requested_at) '
+        'VALUES (?, ?, ?)',
+        variables: [
+          Variable<String>(tbl),
+          Variable<String>(rowId),
+          Variable<String>(at),
+        ],
+      );
+
+  /// 这一行是不是还欠着补广播？在账期间拉取一律跳过它的 upsert。
+  Future<bool> _inPendingPurge(String tbl, String rowId) async {
+    final r = await _db
+        .customSelect(
+          'SELECT 1 FROM pending_purge WHERE tbl = ? AND row_id = ? LIMIT 1',
+          variables: [Variable<String>(tbl), Variable<String>(rowId)],
+        )
+        .get();
+    return r.isNotEmpty;
+  }
+
+  /// 删菜谱（连同子行）并回收**不再被本机任何行引用**的图片字节。
+  /// 引用集合按本机判——同一张图两道菜共用时不误删。
+  Future<void> _purgeRecipeWithMedia(String recipeId) async {
+    final shas = <String>{};
+    final r = await _selectRow(
+        'recipe', ['cover_sha256', 'photos'], recipeId);
+    if (r != null) {
+      final cover = r['cover_sha256'];
+      if (cover is String && cover.isNotEmpty) shas.add(cover);
+      shas.addAll(_jsonShaList(r['photos']));
+    }
+    final steps = await _db
+        .customSelect(
+          'SELECT images FROM step WHERE recipe_id = ?',
+          variables: [Variable<String>(recipeId)],
+        )
+        .get();
+    for (final s in steps) {
+      shas.addAll(_jsonShaList(s.data['images']));
+    }
+    await _purgeLocalRecipe(recipeId);
+    await _gcLocalMedia(shas);
+  }
+
+  /// 照片墙/步骤图的 sha 列是 JSON 字符串数组；解不动就按没图处理。
+  List<String> _jsonShaList(Object? raw) {
+    if (raw is! String || raw.isEmpty) return const [];
+    try {
+      final d = jsonDecode(raw);
+      return d is List
+          ? d.map((e) => '$e').where((s) => s.length == 64).toList()
+          : const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _gcLocalMedia(Set<String> candidates) async {
+    for (final sha in candidates) {
+      final ref = await _db
+          .customSelect(
+            "SELECT 1 FROM recipe WHERE cover_sha256 = ? "
+            "OR photos IS NOT NULL AND photos LIKE ? LIMIT 1",
+            variables: [
+              Variable<String>(sha),
+              Variable<String>('%"$sha"%'),
+            ],
+          )
+          .get();
+      if (ref.isNotEmpty) continue;
+      final stepRef = await _db
+          .customSelect(
+            'SELECT 1 FROM step WHERE images LIKE ? LIMIT 1',
+            variables: [Variable<String>('%"$sha"%')],
+          )
+          .get();
+      if (stepRef.isEmpty) {
+        await _db.customUpdate(
+          'DELETE FROM media_blob WHERE sha = ?',
+          variables: [Variable<String>(sha)],
+        );
+      }
+    }
   }
 
   /// 本机这一侧的永久删除：菜谱连同它的食材行与步骤行一起清。
@@ -778,6 +903,10 @@ class SyncEngine extends ChangeNotifier {
       return 1;
     }
 
+    // R49 防复活：这一行本机已永久删除、还欠着补广播——服务端发来的旧数据
+    // 不能把它诈尸回来。（上面 purge op 已放行：本机早删的行照办无害。）
+    if (await _inPendingPurge(tbl, rowId)) return 0;
+
     if (row is! Map) {
       // 无载荷的 delete：服务端说这行已经不在了。给本地打墓碑（LWW 保护）。
       final existing = await _selectRow(tbl, allowed, rowId);
@@ -1099,7 +1228,42 @@ class SyncEngine extends ChangeNotifier {
       }
     }
     await refreshPendingMediaCount();
+
+    // ② 欠账 purge 逐条重放（R49）。老服务端 404 = 整条路由都没有，本轮别再敲；
+    //    其余 4xx（除鉴权/协议/限流）＝这行在服务端已无意义（早没了），出队认销。
+    final owed = (await _db
+            .customSelect(
+              'SELECT tbl, row_id FROM pending_purge ORDER BY requested_at',
+            )
+            .get())
+        .map((r) => (r.read<String>('tbl'), r.read<String>('row_id')))
+        .toList();
+    for (final (tbl, id) in owed) {
+      try {
+        await t.post('/api/purge', {
+          'rows': [
+            {'tbl': tbl, 'id': id}
+          ]
+        }, token: token);
+        await _dequeuePurge(tbl, id);
+      } on SyncTransportException catch (e) {
+        if (e.statusCode == 404) return; // 老服务端：整轮收工，等换 exe
+        final keep = e.statusCode == 401 ||
+            e.statusCode == 409 ||
+            e.statusCode == 429 ||
+            e.statusCode >= 500;
+        if (!keep) await _dequeuePurge(tbl, id);
+        // keep 的账留着：鉴权/协议修好、服务端缓过来，下轮再补。
+      } on SyncNetworkException {
+        break;
+      }
+    }
   }
+
+  Future<void> _dequeuePurge(String tbl, String rowId) => _db.customUpdate(
+        'DELETE FROM pending_purge WHERE tbl = ? AND row_id = ?',
+        variables: [Variable<String>(tbl), Variable<String>(rowId)],
+      );
 
   // ───────────────────── R38 · 存活 / 差异 / 进度 ─────────────────────
   //
