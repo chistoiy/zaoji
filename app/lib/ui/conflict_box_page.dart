@@ -275,7 +275,11 @@ class _ConflictBoxPageState extends State<ConflictBoxPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    valueText(value),
+                    // 人话值（R49 补）：哈希→有没有照片、JSON→顿号串、
+                    // recipe_id→菜名、0/1→是否——用户要能判断留哪版。
+                    valueTextFor(_tblOf(f), f.field, value,
+                        dishName: (id) =>
+                            StoreScope.of(context).recipeById(id)?.name),
                     style: TextStyle(
                       fontSize: 13.5,
                       color: context.zj.ink,

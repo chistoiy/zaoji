@@ -7,6 +7,7 @@ import 'package:zaoji/data/sync/sync_engine.dart';
 import 'package:zaoji/data/sync/sync_prefs.dart';
 import 'package:zaoji/data/sync/sync_transport.dart';
 import 'package:zaoji/data/zaoji_db.dart';
+import 'package:zaoji_shared/zaoji_shared.dart' show syncWhitelist;
 
 import 'fake_sync_server.dart';
 
@@ -178,6 +179,61 @@ void main() {
       ]);
       expect(results.map((r) => r['outcome']), ['not_found', 'applied']);
       expect(store.recipeById('cf-r')!.name, '合稿');
+    });
+  });
+
+  // ── R49 补 · 冲突箱可读性（用户报：看到的是开发字段名，没法判断）──
+
+  group('可读性闸：白名单业务列必须有中文标签', () {
+    test('每一列都进词表——加同步列不补词表，这条先红', () {
+      const meta = {'id', 'updated_at', 'updated_by', 'rev', 'deleted_at'};
+      final naked = <String>[];
+      for (final e in syncWhitelist.entries) {
+        if (e.key == 'conflict_item') continue; // 冲突箱不为自己的表报冲突
+        for (final c in e.value) {
+          if (meta.contains(c)) continue;
+          if (fieldLabel(e.key, c) == c) naked.add('${e.key}.$c');
+        }
+      }
+      expect(naked, isEmpty, reason: '这些列会在冲突箱里裸奔成英文：$naked');
+    });
+  });
+
+  group('值的人话化', () {
+    test('图片哈希/照片数组：说"有没有、几张"，不贴 64 位哈希', () {
+      final sha = 'a' * 64;
+      expect(valueTextFor('recipe', 'cover_sha256', sha), '有照片');
+      expect(valueTextFor('recipe', 'cover_sha256', ''), '没有照片');
+      expect(valueTextFor('recipe', 'cover_sha256', null), '（空）');
+      expect(valueTextFor('recipe', 'photos', '["$sha","$sha"]'), '2 张照片');
+      expect(valueTextFor('step', 'images', '[]'), '没有照片');
+    });
+
+    test('引用/枚举/布尔/单位：菜名、微辣、是、15 分钟', () {
+      String? dish(String id) => id == 'r2' ? '番茄炒蛋' : null;
+      expect(valueTextFor('menu_item', 'recipe_id', 'r2', dishName: dish),
+          '番茄炒蛋');
+      expect(valueTextFor('menu_item', 'recipe_id', 'gone', dishName: dish),
+          '（一道已删的菜）');
+      expect(valueTextFor('recipe', 'difficulty', 2), '正常辣');
+      expect(valueTextFor('pantry_item', 'stock_status', 'low'), '快没了');
+      expect(valueTextFor('ingredient', 'is_main', 1), '是');
+      expect(valueTextFor('shopping_item', 'bought', 0), '否');
+      expect(valueTextFor('recipe', 'self_time', 15), '15 分钟');
+      expect(valueTextFor('recipe', 'servings', 4), '4 份');
+    });
+
+    test('JSON 串翻成顿号列表；解不动的原样给（不编一个错的）', () {
+      expect(valueTextFor('member', 'allergens', '["花生","虾"]'), '花生、虾');
+      expect(valueTextFor('recipe', 'tags', '{"method":["炒","蒸"]}'), '炒、蒸');
+      expect(valueTextFor('member', 'allergens', '不是JSON'), '不是JSON');
+    });
+
+    test('时间列翻成人话读数；非时间值不误伤', () {
+      final v = valueTextFor('recipe', 'created_at',
+          DateTime.now().subtract(const Duration(hours: 2)).toIso8601String());
+      expect(v, startsWith('今天'));
+      expect(valueTextFor('recipe', 'sub', '家常'), '家常');
     });
   });
 
