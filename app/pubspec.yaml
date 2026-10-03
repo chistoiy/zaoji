@@ -3,11 +3,12 @@ description: "灶记 ZAOJI —— 家庭菜谱手账。Android 用 App，iPhone 
 publish_to: 'none'
 
 # 版本号。Android 的 versionName/versionCode 由它决定。
-# 0.16.0+13：R44（AI 提示词管理 + AI 执行记录，schema v8）。
+# 0.17.0+18：R45~R49（冷启动补加载 / 热量手填 / 计时与唤醒 / 回顾时间线 /
+# 单机完备轮：aiCall 超时闸门 + 照片本机优先 + 永久删除单机放行，schema v9）。
 # versionName 与服务端同号往上走；build 号只增不减——
 # app/android/local.properties 里也钉了 flutter.versionName / versionCode，
 # 改版本两处都要核，build 完用 aapt 复验进包的值（见发版流程）。
-version: 0.16.0+17
+version: 0.17.0+18
 
 environment:
   sdk: ^3.10.8

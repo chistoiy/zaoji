@@ -93,7 +93,11 @@ class ServerConfig {
   ///   `run_ref`/`summary`（客户端本机视角·迁移两端共用 shared 的 kSchemaV8AlterSql）；
   ///   `/api/ai/runs*` 删查 + `/api/ai/prompts*` 读写与回落默认；
   ///   AI 月度用量改读 ai_runs 聚合，废弃 server_setting 里的 kv 计数。
-  static const String version = '0.16.0';
+  /// 0.17.0：R49 单机完备轮。schema v9 纯增 **localOnly** 的 `media_blob` /
+  ///   `pending_purge`（照片本机权威 + 永久删除补账队列）——服务端按 isSynced
+  ///   过滤**不建这两张**，路由与载荷形状零变化、协议版本没 bump；
+  ///   换 exe 只为版本线与前端同号，旧 apk 与新 exe 混跑无害。
+  static const String version = '0.17.0';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
