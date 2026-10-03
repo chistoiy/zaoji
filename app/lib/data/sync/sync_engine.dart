@@ -476,6 +476,8 @@ class SyncEngine extends ChangeNotifier {
     final token = await _prefs.token();
     final serverUrl = await _prefs.serverUrl();
     final pairedServerId = await _prefs.serverId();
+    // R49：待传数按库重算——重启后哪怕没网没配对，账也要如实显示。
+    await refreshPendingMediaCount();
     if (serverUrl == null) {
       _phase = SyncPhase.neverPaired;
       notifyListeners();
@@ -533,6 +535,13 @@ class SyncEngine extends ChangeNotifier {
       _phase = SyncPhase.idle;
       if (pushed > 0 || applied > 0) {
         await _onDataApplied?.call();
+      }
+      // R49：同步收尾补传欠账照片（补删队列在 T5 接进同一个出口）。
+      // 这里的失败**不是同步失败**：不 _fail、不抛——账还在队列里，下轮接着补。
+      try {
+        await _drainLocalQueues(transport, hasToken ? token : null);
+      } catch (e) {
+        debugPrint('[sync] 队列补传异常（留下轮）：$e');
       }
       // 差异刷新**不在这里做**：算待拉数要真的发一次 `/api/changes`，
       // 每轮同步后自动补一发会把服务端的拉取计数与幂等日志都搅浑
@@ -1049,6 +1058,47 @@ class SyncEngine extends ChangeNotifier {
       _mediaCache.remove(_mediaCache.keys.first);
     }
     _mediaCache[key] = bytes;
+  }
+
+  /// R49 静默出口（同步成功后调用）：①逐张补传 `uploaded=0` 的照片；
+  /// ②（T5 接）逐条重放欠账 purge。
+  ///
+  /// 逐张读字节、传完即释放——不把整册相册一口气装进内存。
+  /// 单张被服务端点名拒收（4xx/5xx）跳过它继续其余；根本连不上则整批
+  /// 留下轮（别拿队列去敲一扇关着的门）。
+  Future<void> _drainLocalQueues(SyncTransport t, String? token) async {
+    final shas = (await _db
+            .customSelect(
+              'SELECT sha FROM media_blob WHERE uploaded = 0 ORDER BY created_at',
+            )
+            .get())
+        .map((r) => r.read<String>('sha'))
+        .toList();
+    for (final sha in shas) {
+      final row = await _db
+          .customSelect(
+            'SELECT bytes FROM media_blob WHERE sha = ?',
+            variables: [Variable<String>(sha)],
+          )
+          .getSingleOrNull();
+      if (row == null) continue; // 已被永久删除清掉，账面自然平
+      try {
+        await t.putBytes(
+          '/api/media/$sha',
+          row.data['bytes'] as Uint8List,
+          token: token,
+        );
+        await _db.customUpdate(
+          'UPDATE media_blob SET uploaded = 1 WHERE sha = ?',
+          variables: [Variable<String>(sha)],
+        );
+      } on SyncTransportException {
+        // 服务端点名拒这一张：跳过，其余照传。
+      } on SyncNetworkException {
+        break; // 连不上：整批留下轮
+      }
+    }
+    await refreshPendingMediaCount();
   }
 
   // ───────────────────── R38 · 存活 / 差异 / 进度 ─────────────────────

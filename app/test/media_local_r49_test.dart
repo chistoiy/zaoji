@@ -160,4 +160,33 @@ void main() {
     );
     expect(server.failMediaPutSha, isNull, reason: '开关是一次性的');
   });
+
+  // ── R49·T4 同步收尾静默补传 ──
+
+  test('同步成功后待传照片静默补传，uploaded 翻 1、待传数归零', () async {
+    final bytes = Uint8List.fromList([7, 7, 7]);
+    final sha = await engine.putMediaLocal(bytes);
+    expect(engine.pendingMediaCount, 1);
+
+    await engine.sync(); // open 模式匿名一轮（同 sync_access 的走法）
+    expect(engine.phase, SyncPhase.idle, reason: engine.lastError);
+    expect(server.putMedia[sha], bytes, reason: '照片本体真的到了服务端');
+    expect((await blobRow(sha))!['uploaded'], 1);
+    expect(engine.pendingMediaCount, 0);
+  });
+
+  test('单张被拒不拦其余：坏的那张继续欠账，好的照常翻 1', () async {
+    final b1 = Uint8List.fromList([1, 1]);
+    final b2 = Uint8List.fromList([2, 2]);
+    final s1 = await engine.putMediaLocal(b1);
+    final s2 = await engine.putMediaLocal(b2);
+    server.failMediaPutSha = s1; // 点名第一张 500
+
+    await engine.sync();
+    expect(server.putMedia.containsKey(s2), isTrue, reason: '好的一张照常到');
+    expect(server.putMedia.containsKey(s1), isFalse, reason: '被拒的那张没存进去');
+    expect((await blobRow(s2))!['uploaded'], 1);
+    expect((await blobRow(s1))!['uploaded'], 0, reason: '被拒的那张不假装成功');
+    expect(engine.pendingMediaCount, 1);
+  });
 }
