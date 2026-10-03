@@ -106,6 +106,16 @@ void main() {
       done: () => find.text('服务端地址').evaluate().isNotEmpty,
       seconds: 25,
     );
+    // R49（aiCall 超时闸门）：MePage 的 AI 入口卡会 fire-and-forget 一发
+    // /api/ai/status，闸门在它身上挂一枚 10s 假定时器——用例收尾时回包还没落
+    // 就会被 binding 判 Pending timers。这里补一个真实时间窗让它跑完往返：
+    // 成功会填 aiStatusCache（谓词即中），401/异常同样完成、定时器随手取消
+    // （谓词等不满就吃完窗口，localhost 往返 ~1.4s，6s 富余）。
+    await settleReal(
+      tester,
+      done: () => engine.aiStatusCache != null,
+      seconds: 6,
+    );
   }
 
   testWidgets('★ 首启（偏好里没地址）：预置地址直接填进框里，并按它的真实模式排版', (tester) async {

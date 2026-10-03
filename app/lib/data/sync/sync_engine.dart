@@ -837,11 +837,57 @@ class SyncEngine extends ChangeNotifier {
 
   // ───────────────────────── AI 代理（R27） ─────────────────────────
 
+  /// 挂死服务端复现闸门的测试开关（见 test/ai_hang_timeout_test.dart）。
+  @visibleForTesting
+  static Duration? aiFastTimeoutForTest;
+
+  @visibleForTesting
+  static Duration? aiSlowTimeoutForTest;
+
+  @visibleForTesting
+  static void resetAiTimeoutsForTest() {
+    aiFastTimeoutForTest = null;
+    aiSlowTimeoutForTest = null;
+  }
+
+  /// 服务端自己会等多久的上游（`/api/ai/*` 里代理 LLM 的那几条）。
+  /// 真服务端 ai.dart：能力调用上游封顶 60s、连通测试封顶 30s。
+  /// 客户端预算必须**大于**服务端封顶，否则服务端还在正常等模型时
+  /// 客户端先掐线，把「模型慢」误报成「连不上服务端」。
+  static const _aiUpstreamPaths = {
+    '/api/ai/test',
+    '/api/ai/calories',
+    '/api/ai/recommend',
+    '/api/ai/recipe-fill',
+  };
+
+  /// 超时闸门的统一收口：快路径（读配置/记录/提示词，纯内存回包）10s，
+  /// 上游代理路径（服务端要等 LLM）90s。
+  ///
+  /// 存在的理由是真机报障（2026-10-03）：手机在家庭网外点开「大模型能力」，
+  /// 到家里地址的连接永远不回话，aiCall 没闸门 → 页面钉在转圈。
+  /// 同文件 [refreshAccessConfig] 早就写了 5s 超时并留了同款理由——
+  /// 「半死的服务器不该把页面钉在加载态」。这条通道当时漏装了。
+  Future<T> _aiTimed<T>(String path, Future<T> f) async {
+    final slow = _aiUpstreamPaths.contains(path);
+    final budget = (slow ? aiSlowTimeoutForTest : aiFastTimeoutForTest) ??
+        (slow ? const Duration(seconds: 90) : const Duration(seconds: 10));
+    try {
+      return await f.timeout(budget);
+    } on TimeoutException {
+      throw SyncNetworkException(
+        '连不上服务端（等待超时，超过 ${budget.inSeconds} 秒）——'
+        '确认在家里的 Wi-Fi 下，或服务端还开着',
+      );
+    }
+  }
+
   /// `/api/ai/*` 的统一直达通道：鉴权与同步走同一个 token，
   /// 失败原样抛（`SyncTransportException` 带服务端的 error/message，
   /// UI 按 kind 分支：off=去开开关、auth=Key 被拒、timeout=去设置页…）。
   ///
   /// 服务端返回非 2xx 也走异常；缓存状态留在 [aiStatusCache] 供入口徽标同步读。
+  /// 连不上/挂死的服务端由 [_aiTimed] 兜底：一定在预算内抛，不把 UI 钉在加载态。
   Future<Map<String, Object?>> aiCall(String path,
       [Map<String, Object?>? body]) async {
     final token = await _prefs.token();
@@ -850,9 +896,10 @@ class SyncEngine extends ChangeNotifier {
       throw StateError('还没有可用的服务端地址，无法使用 AI 能力');
     }
     final t = await _transportOf(serverUrl);
-    final res = body == null
-        ? await t.get(path, token: token)
-        : await t.post(path, body, token: token);
+    final res = await _aiTimed(
+      path,
+      body == null ? t.get(path, token: token) : t.post(path, body, token: token),
+    );
     if (path == '/api/ai/status') aiStatusCache = res;
     return res;
   }
@@ -866,8 +913,9 @@ class SyncEngine extends ChangeNotifier {
       throw StateError('还没有可用的服务端地址，无法使用 AI 能力');
     }
     final t = await _transportOf(serverUrl);
-    return await t.delete(path, token: token);
+    return await _aiTimed(path, t.delete(path, token: token));
   }
+
 
   /// 最近一次 `/api/ai/status` 的响应。null = 本会话还没读到。
   /// 入口徽标（FR-AI-10「未配置」）读它——**读不到按未配置渲染**，

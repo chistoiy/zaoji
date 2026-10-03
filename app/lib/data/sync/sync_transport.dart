@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:zaoji_shared/zaoji_shared.dart' show kNodeIdHeader;
 
+import 'sync_http_client.dart';
+
 /// 同步接口的 HTTP 传输层。
 ///
 /// 独立成抽象层的理由：引擎测试要能脱离真网络跑（fake transport），
@@ -66,7 +68,7 @@ class SyncNetworkException implements Exception {
 
 class HttpSyncTransport implements SyncTransport {
   HttpSyncTransport(this.baseUrl, {http.Client? client, this.nodeId})
-    : _client = client ?? http.Client();
+      : _client = client ?? newSyncHttpClient();
 
   /// 形如 `http://192.168.31.141:8666`。收发都用它拼接路径。
   final Uri baseUrl;
