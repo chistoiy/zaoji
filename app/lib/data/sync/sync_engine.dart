@@ -1075,31 +1075,12 @@ class SyncEngine extends ChangeNotifier {
   static String _mediaKey(String sha, int? width) =>
       width == null ? '$sha@full' : '$sha@$width';
 
-  /// 上传图片字节：客户端算 sha256 → `PUT /api/media/<sha>`。
-  ///
-  /// 哈希在**本地**算好当 URL 用——服务端会重算比对，不一致就拒绝，
-  /// 所以这里传错了也传不进去。返回内容哈希，给 `recipe.cover_sha256` 引用。
-  /// 未配对 / 网络失败原样抛（编辑页决定怎么降级：提示后继续保存无封面）。
-  ///
-  /// ★ R49 起编辑页保存**不再走这条**（改 [putMediaLocal]，上传由
-  /// [_drainLocalQueues] 异步补传）；这里保留给补传出口与既有测试用。
-  Future<String> uploadMedia(Uint8List bytes) async {
-    final token = await _prefs.token();
-    final serverUrl = await _prefs.serverUrl();
-    if (serverUrl == null) {
-      throw StateError('还没有可用的服务端地址，无法上传图片');
-    }
-    final sha = crypto.sha256.convert(bytes).toString();
-    // R21：token 可选——开放模式的来访者也能传图（服务端按 X-Node-Id 认它）。
-    await (await _transportOf(
-      serverUrl,
-    )).putBytes('/api/media/$sha', bytes, token: token);
-    return sha;
-  }
-
   /// R49：把照片字节写进**本机权威存储**（内容寻址，单条自动提交写——
   /// 不套事务，绕开 R41 Web 冲盘坑）。返回 sha 给 recipe 列引用。
   /// 已存在就不重写、也不动 uploaded（传过的图不会被倒退回待传）。
+  ///
+  /// 旧的实时上传通道 `uploadMedia`（保存前必打服务端、失败丢图）随本批删除；
+  /// 补传走 [_drainLocalQueues]，直接 `putBytes`。
   Future<String> putMediaLocal(Uint8List bytes) async {
     final sha = crypto.sha256.convert(bytes).toString();
     await _db.customInsert(

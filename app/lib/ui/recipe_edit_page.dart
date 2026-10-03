@@ -184,48 +184,29 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
       final engine = SyncScope.of(context);
       final store = StoreScope.of(context);
 
-      // 封面：选了新照片就先上传（内容寻址）；上传失败不阻塞保存，
-      // 退回原封面哈希（没有就干脆无封面），并在保存后提示。
-      String? coverSha = _coverSha;
-      String? coverWarning;
-      if (_coverBytes != null) {
-        try {
-          coverSha = await engine.uploadMedia(_coverBytes!);
-        } catch (e) {
-          coverSha = _coverSha;
-          coverWarning = '封面上传失败（$e），已保存菜谱但没有封面';
-        }
-      }
+      // R49：照片改**本机优先**——选好的字节直接写进本机 media_blob 并引用 sha，
+      // 保存必成功、照片必留底；上传由同步收尾的 _drainLocalQueues 异步补传。
+      // 旧口径"先传服务端、失败就没封面"随本批作废（离线保存丢图）。
+      final coverSha = _coverBytes != null
+          ? await engine.putMediaLocal(_coverBytes!)
+          : _coverSha;
 
-      // R29：先传照片墙的新增张，再传各步新增图——全部**内容寻址、失败不阻塞保存**
-      // （与封面同一降级口径：图没传上菜照样存住，提示里说清楚）。
       final photos = List<String>.of(_photos);
-      String? wallWarning;
-      if (_pendingPhotos.isNotEmpty) {
-        try {
-          for (final b in _pendingPhotos) {
-            photos.add(await engine.uploadMedia(b));
-          }
-        } catch (e) {
-          wallWarning = '部分成品照上传失败（$e）';
-        }
+      for (final b in _pendingPhotos) {
+        photos.add(await engine.putMediaLocal(b));
       }
-      final uploadedStepImages = <int, List<String>>{};
+      final storedStepImages = <int, List<String>>{};
       for (final e in _pendingStepPhotos.entries) {
         for (final b in e.value) {
-          try {
-            (uploadedStepImages[e.key] ??= []).add(await engine.uploadMedia(b));
-          } catch (_) {
-            wallWarning ??= '有步骤图上传失败';
-          }
+          (storedStepImages[e.key] ??= []).add(await engine.putMediaLocal(b));
         }
       }
-      for (final e in uploadedStepImages.entries) {
+      for (final e in storedStepImages.entries) {
         _stepPhotoShas[e.key] = [...(_stepPhotoShas[e.key] ?? const []), ...e.value];
       }
-      // 上传回来的 sha 按**原控件下标**并进对应步骤的图列表（过滤后的行对回原位）
+      // 本机存的 sha 按**原控件下标**并进对应步骤的图列表（过滤后的行对回原位）
       for (var k = 0; k < stepImages.length; k++) {
-        final up = uploadedStepImages[keptIdx[k]];
+        final up = storedStepImages[keptIdx[k]];
         if (up != null && up.isNotEmpty) {
           stepImages[k] = [...stepImages[k], ...up];
         }
@@ -260,14 +241,6 @@ class _RecipeEditPageState extends State<RecipeEditPage> {
           _saved = true;
           _saving = false;
         });
-        if (coverWarning != null || wallWarning != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text([
-              ?coverWarning,
-              ?wallWarning,
-            ].join('；'))),
-          );
-        }
         Navigator.of(context).pop(true); // 告诉上一页保存成功
       }
     } catch (e) {

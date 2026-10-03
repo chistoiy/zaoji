@@ -459,6 +459,17 @@ class _MePageState extends State<MePage> {
           ],
         ),
         const SizedBox(height: 12),
+        // R49：照片先存本机，这行是"还没传到服务端"的账（同步不能是暗箱）。
+        if (engine.pendingMediaCount > 0) ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              '${engine.pendingMediaCount} 张照片待上传',
+              key: const ValueKey('sync-pending-media'),
+              style: TextStyle(fontSize: 11.5, color: context.zj.muted),
+            ),
+          ),
+        ],
         if (!paired) ...[
           Text(
             '服务端地址',

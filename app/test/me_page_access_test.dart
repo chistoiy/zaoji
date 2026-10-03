@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -330,6 +332,29 @@ void main() {
 
     expect(find.text('冲突箱'), findsOneWidget);
     expect(find.byKey(const ValueKey('conflict-badge')), findsOneWidget);
+    engine.dispose();
+  });
+
+  testWidgets('R49：同步卡「N 张照片待上传」行，补传成功后消失', (tester) async {
+    // 走配对（带 token）而不是 open 匿名：pumpMe 的 transport 没有 nodeId，
+    // 匿名打 /api/media 必 401，drain 根本轮不到跑。
+    await pumpMe(tester);
+    expect(find.byKey(const ValueKey('sync-pending-media')), findsNothing);
+
+    await tester.runAsync(
+        () => engine.pair(serverUrl: server.url, code: 'TEST24'));
+    await tester.pump();
+    await tester.runAsync(() async {
+      await engine.putMediaLocal(Uint8List.fromList([1]));
+      await engine.putMediaLocal(Uint8List.fromList([2]));
+    });
+    await tester.pump();
+    expect(find.text('2 张照片待上传'), findsOneWidget);
+
+    await tester.runAsync(() => engine.sync());
+    await tester.pump();
+    expect(find.byKey(const ValueKey('sync-pending-media')), findsNothing,
+        reason: 'drain 补传完，账归零，这行就该走');
     engine.dispose();
   });
 }

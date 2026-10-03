@@ -15,9 +15,9 @@ import '../theme.dart';
 /// 二是这条查询走真库，Widget 测试的 FakeAsync 里 isolate 的回复进不来
 /// ——第一版就是页面永远停在加载圈，测试找不到卡片。
 ///
-/// 永久删除**必须先问服务端**（[SyncEngine.purgeRecipePermanently]）：
-/// 只删本机这一份的话，别的设备回收站里那条还能恢复，一推就回来——
-/// 对用户来说就是"我说删掉，它又冒出来"，比不删更糟。
+/// 永久删除的口径（R43 立、R49 改，见设计 §6）：**在线先问服务端再删本机；
+/// 未接入直删；连不上/超时/老服务端 404 时本机照删 + 入 pending_purge 补账**，
+/// 同步成功后自动补广播。在账期间拉取跳过该行——别端的旧数据复活不了它。
 class TrashPage extends StatefulWidget {
   const TrashPage({super.key});
 

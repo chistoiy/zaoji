@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
@@ -159,6 +160,14 @@ void main() {
           .having((e) => e.statusCode, 'status', 500)),
     );
     expect(server.failMediaPutSha, isNull, reason: '开关是一次性的');
+  });
+
+  test('源码闸：编辑页不再实时上传（R49 本机优先，回潮即红）', () {
+    final src = File('lib/ui/recipe_edit_page.dart').readAsStringSync();
+    expect(src, isNot(contains('uploadMedia')),
+        reason: '保存路径必须走 putMediaLocal——实时上传会把离线保存打回丢图老路');
+    expect(src, isNot(contains('上传失败')),
+        reason: '「上传失败没封面」这组降级文案随 R49 作废');
   });
 
   // ── R49·T4 同步收尾静默补传 ──
