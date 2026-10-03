@@ -97,7 +97,9 @@ class ServerConfig {
   ///   `pending_purge`（照片本机权威 + 永久删除补账队列）——服务端按 isSynced
   ///   过滤**不建这两张**，路由与载荷形状零变化、协议版本没 bump；
   ///   换 exe 只为版本线与前端同号，旧 apk 与新 exe 混跑无害。
-  static const String version = '0.17.0';
+  /// 0.17.1：纯前端补丁版（R49 补一/补二）——冲突箱词表全量+值人话化+机器闸、
+  /// 同步策略 chip 选中态强化。服务端与协议零改动，同号只为版本线对齐。
+  static const String version = '0.17.1';
 
   bool get bindAllInterfaces => host == '0.0.0.0' || host == '::';
 
